@@ -47,7 +47,13 @@ class ModelOutputs:
 
 
 def get_hds(model):
-    """Build and cache the ``HeadsPlus`` helper for ``model``."""
+    """Build a NEW ``HeadsPlus`` helper for ``model`` on every call, kept as ``model._hds``.
+
+    Not cached: every access re-opens the head file and, when a view asks for
+    ``all_heads``, rebuilds the whole value table. Head TARGETS do not come
+    through here -- they read the OC-declared file's period-end records through
+    ``target_values.read_target_values`` (ledger 557).
+    """
     model._hds = Hp(model=model, vor=model.vor)
     return model._hds
 

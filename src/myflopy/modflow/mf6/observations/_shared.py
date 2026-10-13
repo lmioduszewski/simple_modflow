@@ -1121,14 +1121,20 @@ def _load_locations(
     layer_column: str | None,
     group_column: str | None,
     weight_column: str | None,
+    screen_top_column: str | None = None,
+    screen_bottom_column: str | None = None,
 ) -> pd.DataFrame:
     """Load and validate a head-target locations layer.
 
     The ``layer`` column, when there is one, must hold a zero-based layer NUMBER on
-    every row (:func:`_location_layers`, ledger 501); with no column every
-    target is in layer 0. A name may not repeat within one layer
+    every row (:func:`_location_layers`, ledger 501) -- except a SCREENED row, whose
+    layer may be blank (``<NA>``): its screen says which layers it reads; with no
+    column an unscreened target is in layer 0. A name may not repeat within one layer
     (:func:`_refuse_names_repeated_in_a_layer`, ledger 502); in two layers it
-    is the two-screen well of ledger 234.
+    is the two-screen well of ledger 234 -- two observations -- unless the rows
+    carry screens, and then the name must be ONE row (:func:`_location_screens`,
+    ledger 556). The ``screen_top``/``screen_bottom`` columns are kept
+    only when the table carries the screen columns.
     """
 
     if isinstance(locations, gpd.GeoDataFrame):
@@ -1166,7 +1172,22 @@ def _load_locations(
             cell_column = candidate
             keep_columns.append(candidate)
             break
-    for column in (layer_column, group_column, weight_column):
+    screen_columns = [
+        column for column in (screen_top_column, screen_bottom_column)
+        if column is not None and column in frame.columns
+    ]
+    if len(screen_columns) == 1:
+        given, missing_one = (
+            (screen_top_column, screen_bottom_column) if screen_columns[0] == screen_top_column
+            else (screen_bottom_column, screen_top_column)
+        )
+        raise ValueError(
+            f"Head target locations carry the screen column {given!r} and not "
+            f"{missing_one!r}: a screen is an interval, its top AND its bottom (ledger "
+            "556). Add the other column, or pass "
+            "screen_top_column=None, screen_bottom_column=None to read no screens."
+        )
+    for column in (layer_column, group_column, weight_column, *screen_columns):
         if column is not None and column in frame.columns:
             keep_columns.append(column)
     if isinstance(frame, gpd.GeoDataFrame):
@@ -1188,12 +1209,28 @@ def _load_locations(
         frame = frame.rename(columns={group_column: "group"})
     if weight_column and weight_column in frame.columns:
         frame = frame.rename(columns={weight_column: "weight"})
+    if screen_columns:
+        frame = frame.rename(
+            columns={screen_top_column: "screen_top", screen_bottom_column: "screen_bottom"}
+        )
 
     frame["name"] = frame["name"].astype(str)
+    screened = None
+    if screen_columns:
+        frame["screen_top"], frame["screen_bottom"] = _location_screens(
+            frame["screen_top"], frame["screen_bottom"], frame["name"],
+            columns=(screen_top_column, screen_bottom_column),
+        )
+        screened = frame["screen_top"].notna()
     if "layer" not in frame.columns:
-        frame["layer"] = 0
+        frame["layer"] = (
+            0 if screened is None or not screened.any()
+            else pd.array([pd.NA if flag else 0 for flag in screened], dtype="Int64")
+        )
     else:
-        frame["layer"] = _location_layers(frame["layer"], frame["name"], column=layer_column)
+        frame["layer"] = _location_layers(
+            frame["layer"], frame["name"], column=layer_column, blank_allowed=screened
+        )
 
     if "group" not in frame.columns:
         frame["group"] = pd.NA
@@ -1201,6 +1238,10 @@ def _load_locations(
         frame["weight"] = np.nan
 
     frame["name_key"] = _normalize_identifier_series(frame["name"])
+    if screened is not None:
+        # Before the per-layer check, whose message reads a layer a screened row
+        # may not have.
+        _refuse_screened_names_repeated(frame, screened)
     _refuse_names_repeated_in_a_layer(frame)
     if "cell" in frame.columns:
         frame["cell"] = pd.to_numeric(frame["cell"], errors="coerce")
@@ -1216,7 +1257,9 @@ def _load_locations(
     return frame
 
 
-def _location_layers(layers: pd.Series, names: pd.Series, *, column: str | None) -> pd.Series:
+def _location_layers(
+    layers: pd.Series, names: pd.Series, *, column: str | None, blank_allowed: pd.Series | None = None
+) -> pd.Series:
     """Each target's zero-based layer, read from a PRESENT layer column; anything else raises.
 
     A blank, a non-number (``"2,3"``, ``"L3"``) and a fraction (``0.7``) were read
@@ -1232,22 +1275,31 @@ def _location_layers(layers: pd.Series, names: pd.Series, *, column: str | None)
         Each row's target name, aligned with ``layers``, for the message.
     column : str or None
         The column's name as the caller gave it (``layer_column``), for the message.
+    blank_allowed : pandas.Series of bool or None, optional
+        Rows whose BLANK layer is allowed and kept as ``<NA>``: the screened rows,
+        whose screen says which layers they read (ledger 556). A
+        non-number or a fraction is refused on them too. Default ``None``: none.
 
     Returns
     -------
     pandas.Series
-        The layers as ``int``, aligned with ``layers``.
+        The layers as ``int``, aligned with ``layers``; ``Int64`` with ``<NA>`` on
+        the allowed blanks when there are any.
 
     Raises
     ------
     ValueError
-        When any row's layer is blank, not a number, has a fraction or is
-        negative, naming up to five such rows.
+        When any row's layer is blank (and not allowed to be), not a number, has a
+        fraction or is negative, naming up to five such rows.
     """
 
     numbers = pd.to_numeric(layers, errors="coerce").astype(float)
     values = numbers.to_numpy()
-    bad = ~np.isfinite(values) | (values != np.floor(values)) | (values < 0)
+    allowed = (
+        np.zeros(len(values), dtype=bool) if blank_allowed is None
+        else np.asarray(blank_allowed, dtype=bool) & np.array([_is_blank(raw) for raw in layers])
+    )
+    bad = (~np.isfinite(values) | (values != np.floor(values)) | (values < 0)) & ~allowed
     if bad.any():
         listing = [
             f"{_shown(name)} ({'blank' if _is_blank(raw) else _shown(raw)})"
@@ -1261,8 +1313,118 @@ def _location_layers(layers: pd.Series, names: pd.Series, *, column: str | None)
             "row its layer -- MF6's files number layers from 1, so a table written for them "
             "is one too high -- or drop the column (layer_column=None) to put every target "
             "in layer 0."
+            + (" A screened row may leave its layer blank (ledger 556)."
+               if blank_allowed is not None and bool(np.asarray(blank_allowed).any()) else "")
         )
+    if allowed.any():
+        return numbers.round().astype("Int64").mask(pd.Series(allowed, index=numbers.index))
     return numbers.astype(int)
+
+
+def _location_screens(
+    tops: pd.Series, bottoms: pd.Series, names: pd.Series, *, columns: tuple[str, str]
+) -> tuple[pd.Series, pd.Series]:
+    """Each row's screen top and bottom as floats, ``NaN`` on an unscreened row; anything else raises.
+
+    A row with both entries blank is a LAYER target, as before screens existed; a
+    row with both is a screened target (ledger 556). Refused,
+    naming the rows: one of the two blank, a non-number, a value that is not
+    finite, and a top at or below its bottom.
+
+    Parameters
+    ----------
+    tops, bottoms : pandas.Series
+        The two columns as given, in the model's length units (elevations).
+    names : pandas.Series
+        Each row's target name, for the messages.
+    columns : tuple of (str, str)
+        The two columns' names as the caller gave them, for the messages.
+
+    Returns
+    -------
+    tuple of pandas.Series
+        ``(tops, bottoms)`` as ``float``.
+
+    Raises
+    ------
+    ValueError
+        As above.
+    """
+
+    top_blank = np.array([_is_blank(value) for value in tops])
+    bottom_blank = np.array([_is_blank(value) for value in bottoms])
+    top_values = pd.to_numeric(tops, errors="coerce").astype(float)
+    bottom_values = pd.to_numeric(bottoms, errors="coerce").astype(float)
+    one_sided = top_blank != bottom_blank
+    if one_sided.any():
+        listing = [
+            f"{_shown(name)} ({columns[0]} {'blank' if tb else _shown(t)}, "
+            f"{columns[1]} {'blank' if bb else _shown(b)})"
+            for name, t, b, tb, bb in zip(
+                names[one_sided], tops[one_sided], bottoms[one_sided],
+                top_blank[one_sided], bottom_blank[one_sided], strict=True,
+            )
+        ]
+        raise ValueError(
+            f"Head target locations: {len(listing)} row(s) give one end of a screen and "
+            f"not the other: {_listing(listing)}. A screened target needs its top AND "
+            "its bottom; a layer target leaves both blank (ledger 556)."
+        )
+    given = ~top_blank
+    unreadable = given & (
+        ~np.isfinite(top_values.to_numpy()) | ~np.isfinite(bottom_values.to_numpy())
+    )
+    if unreadable.any():
+        listing = [
+            f"{_shown(name)} ({_shown(t)}, {_shown(b)})"
+            for name, t, b in zip(names[unreadable], tops[unreadable], bottoms[unreadable], strict=True)
+        ]
+        raise ValueError(
+            f"Head target locations: the screen columns {columns[0]!r}/{columns[1]!r} must "
+            f"hold finite elevations, and {len(listing)} row(s) do not: {_listing(listing)}."
+        )
+    inverted = given & (top_values.to_numpy() <= bottom_values.to_numpy())
+    if inverted.any():
+        listing = [
+            f"{_shown(name)} (top {_shown(t)}, bottom {_shown(b)})"
+            for name, t, b in zip(
+                names[inverted], top_values[inverted], bottom_values[inverted], strict=True
+            )
+        ]
+        raise ValueError(
+            f"Head target locations: a screen's top must be above its bottom, and "
+            f"{len(listing)} row(s) are not: {_listing(listing)}. Both are elevations, "
+            "in the model's length units (ledger 556)."
+        )
+    return top_values.where(given), bottom_values.where(given)
+
+
+def _refuse_screened_names_repeated(frame: pd.DataFrame, screened: pd.Series) -> None:
+    """Refuse a name given on several rows when any of them carries a screen.
+
+    A screened well is ONE observation of the transmissivity-weighted head over its
+    whole screen (ledger 556); a second row of its name -- another
+    screen, or a layer row -- would be a second observation of the one measured
+    series, double-weighting it as two layer rows of ledger 234 do. Give one
+    screen spanning the open interval, or two names.
+    """
+
+    flagged = set(frame.loc[np.asarray(screened, dtype=bool), "name_key"])
+    repeated = frame["name_key"].isin(flagged) & frame.duplicated(subset=["name_key"], keep=False)
+    if not repeated.any():
+        return
+    listing = [
+        f"{_shown(group['name'].iloc[0])} ({len(group)} rows)"
+        for _key, group in frame.loc[repeated].groupby("name_key", sort=True)
+    ]
+    raise ValueError(
+        "Head target locations: a SCREENED target is one row -- one observation of the "
+        "head its whole screen reads, weighted by K x saturated open length (ledger "
+        f"556) -- and {_listing(listing)} "
+        f"{'is' if len(listing) == 1 else 'are'} given on several rows (names compared "
+        "ignoring case and surrounding blanks). Give one row whose screen spans the open "
+        "interval, or give each screen its own name."
+    )
 
 
 def _refuse_names_repeated_in_a_layer(frame: pd.DataFrame) -> None:

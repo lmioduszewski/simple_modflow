@@ -60,6 +60,12 @@ from myflopy.modflow.mf6.pest.forward_run import (
     _write_head_target_csv,
 )
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
+from myflopy.modflow.mf6.pest.native_parameters import (
+    _dataset_files,
+    resolve_target,
+    select_packages,
+    staged_model,
+)
 from myflopy.modflow.mf6.pest.specs import (
     ConcObservationSpec,
     DrnFlowObservationSpec,
@@ -69,6 +75,7 @@ from myflopy.modflow.mf6.pest.specs import (
     SfrFlowObservationSpec,
     SfrStageObservationSpec,
 )
+from myflopy.modflow.mf6.target_values import SCREEN_COLUMNS
 
 #: The columns of a prepared set's ``target_frame``: who the target is, the column
 #: of the simulated table it reads, its key as given and as a period, its value
@@ -637,6 +644,7 @@ def _one_writer_table(
     mapping_path: Path,
     simulated_path: Path,
     field_file: dict[str, str],
+    k_sources: list[dict] | None = None,
 ) -> pd.DataFrame:
     """The base copy of a head or concentration table, written by the forward run's own writer.
 
@@ -646,7 +654,9 @@ def _one_writer_table(
     a ``simulated_values`` table the caller supplies cannot be, so the header check
     after it refuses one in any other order. ``field_file`` is the writer's keyword
     for the OC-declared file (``{"head_file": "renamed.hds"}``), which the forward
-    run is given too.
+    run is given too. ``k_sources`` -- a screened set's K files, as ABSOLUTE paths
+    into the staged copy here (the forward run gets them relative) -- reaches the
+    head writer only when given (ledger 556).
     """
 
     if spec.simulated_values is None:
@@ -658,6 +668,7 @@ def _one_writer_table(
                 perlen=period_lengths(project.model),
                 sim_ws=Path(project.model.workspace),
                 **field_file,
+                **({"k_sources": k_sources} if k_sources else {}),
             )
         except FileNotFoundError as error:
             raise _absent_field_file(
@@ -674,7 +685,9 @@ def _one_writer_table(
         _write_frame(simulated, simulated_path)
 
     labels = mapping["obsname"] if "obsname" in mapping.columns else mapping["name"]
-    expected = ["per", *[str(label) for label in labels]]
+    # One column per LABEL, in the order its first map row appears: a screened
+    # well's rows are one column (ledger 556).
+    expected = ["per", *dict.fromkeys(str(label) for label in labels)]
     header = [str(column) for column in simulated.columns]
     if header != expected:
         raise ValueError(
@@ -689,11 +702,96 @@ def _one_writer_table(
     return simulated
 
 
+def screen_k_sources(project, *, absolute: bool = False) -> list[dict]:
+    """Where the staged model's NPF reads each layer's horizontal K: what a screened set weights by.
+
+    The build re-stores NPF ``K`` one array per layer when a head set is screened
+    (``PestProject._stage_model``) and externalizes it, so each layer's K is the
+    file MF6 reads -- the one pyEMU's multipliers and the pilot points rewrite in
+    every realization -- found from FloPy's own records of the staged model, by
+    the rule the parameter recipes use (``native_parameters._dataset_files``,
+    ledger 517), never a file name built from the type (ledger
+    556).
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its staged simulation is read.
+    absolute : bool, default False
+        Give each file as an absolute path into the staged copy (for the base
+        table the build writes) rather than relative to the simulation directory
+        (for the forward run, which runs in a copy of the template).
+
+    Returns
+    -------
+    list of dict
+        One per layer, in order: ``{"layer", "file", "factor"}``, or
+        ``{"layer", "constant"}`` for a layer FloPy holds as a constant.
+
+    Raises
+    ------
+    ValueError
+        When the model has no NPF, or a layer's K is neither in a file nor a
+        constant -- naming the NPF ``k`` recipe.
+    """
+
+    model = staged_model(project, project.model.name)
+    recipe = resolve_target("k")
+    try:
+        (npf,) = select_packages(model, recipe)
+    except ValueError as error:
+        raise ValueError(
+            f"A screened head set weights each layer's head by its K, read from the NPF "
+            f"``k`` of model {model.name!r} (the recipe the 'k' parameter scales), and "
+            f"the run's files cannot give it: {error}"
+        ) from error
+    workspace = Path(model.simulation_data.mfpath.get_sim_path())
+    nlay = int(model.modelgrid.nlay)
+    storage = npf.k._get_storage_obj()
+    elements = list(storage.layer_storage.elements()) if getattr(storage, "layered", False) else []
+    sources: list[dict] = []
+    for _period, layer, filename in _dataset_files(npf.k):
+        layer = 0 if layer is None and nlay == 1 else layer
+        element = elements[layer] if layer is not None and layer < len(elements) else None
+        if layer is None:
+            raise ValueError(
+                f"Model {model.name!r}'s NPF k is one whole-grid array of {nlay} layers; "
+                "a screened head set reads K one file per layer, and the build re-stores "
+                "it so -- this is a defect if you read it."
+            )
+        if filename:
+            path = workspace / filename
+            sources.append({
+                "layer": int(layer),
+                "file": str(path) if absolute else str(filename),
+                "factor": float(getattr(element, "factor", 1.0) or 1.0),
+            })
+            continue
+        constant = getattr(element, "data_const_value", None)
+        if constant is None:
+            raise ValueError(
+                f"Model {model.name!r}'s NPF k layer {layer} is neither in an external file "
+                "nor a constant, so a screened head set has no K to weight it by. Declare "
+                "NPF k on the model."
+            )
+        value = np.asarray(constant, dtype=float).reshape(-1)[0]
+        sources.append({"layer": int(layer), "constant": float(value) * float(
+            getattr(element, "factor", 1.0) or 1.0)})
+    if [entry["layer"] for entry in sources] != list(range(nlay)):
+        raise ValueError(
+            f"Model {model.name!r}'s NPF k names layers {[e['layer'] for e in sources]} of "
+            f"{nlay}; a screened head set needs every layer's K."
+        )
+    return sources
+
+
 def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.DataFrame:
     """A head or concentration target set's values, one row per (screen, time), in the build's shape.
 
     Joined from the VALUES table to the matched locations' labels, so a name
-    screened in two layers is two targets -- one per label.
+    given in two layers is two targets -- one per label (ledger 234) -- and a
+    SCREENED well, whose label spans several map rows, one (ledger
+    556).
 
     Raises
     ------
@@ -737,7 +835,9 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
         .rename(columns={"weight": "row_weight"})
         .assign(per=per.to_numpy())
         .merge(
-            labels.loc[:, ["name_key", "name", "obsname", "weight", "group"]],
+            # One row per LABEL: a screened well's map rows are one observation.
+            labels.drop_duplicates(subset="obsname")
+            .loc[:, ["name_key", "name", "obsname", "weight", "group"]],
             on="name_key",
             how="inner",
         )
@@ -781,9 +881,16 @@ def _prepare_point_observations(
         )
     }
     labels = spec.targets.observation_labels(project.model)
-    mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
+    # A screened well is one label on several map rows, each carrying its
+    # interval in that layer (ledger 556); an unscreened set's map
+    # is the four columns it always was.
+    screened = "open_top" in labels.columns and bool(labels["open_top"].notna().any())
+    mapping = labels.loc[
+        :, ["obsname", "name", "layer", "cell", *(SCREEN_COLUMNS if screened else ())]
+    ]
     mapping_path = project.template_workspace / f"{spec.prefix}_{mapping_name}"
     _write_frame(mapping, mapping_path)
+    k_sources = screen_k_sources(project) if screened else None
     simulated_path = project.template_workspace / f"{spec.prefix}_{simulated_name}"
     simulated = _one_writer_table(
         project,
@@ -794,6 +901,7 @@ def _prepare_point_observations(
         mapping_path=mapping_path,
         simulated_path=simulated_path,
         field_file=field_file,
+        k_sources=screen_k_sources(project, absolute=True) if screened else None,
     )
     _register_table(project, simulated, simulated_path, prefix=spec.prefix)
 
@@ -834,11 +942,13 @@ def _prepare_point_observations(
         "value_column": value_label,
         "n_locations": int(mapping["name"].nunique()),
         "n_rows": int(len(located)),
+        "screened": screened,
         **dating,
     }
     item["mapping_csv"] = mapping_path.name
     item["output_csv"] = simulated_path.name
     item["field_file"] = field_file
+    item["k_sources"] = k_sources
     return item
 
 
@@ -887,6 +997,9 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
         "output_csv": item.pop("output_csv"),
         # The OC's HEAD FILEOUT, relative to the run (ledger 505).
         "head_file": item.pop("field_file").get("head_file"),
+        # A screened set's K files, relative to the template: what each
+        # realization's model read (ledger 556). None otherwise.
+        "k_sources": item.pop("k_sources"),
     }
     return item
 
@@ -937,6 +1050,7 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
         # The transport OC's CONCENTRATION FILEOUT, relative to the run (ledger 505).
         "conc_file": item.pop("field_file").get("conc_file"),
     }
+    item.pop("k_sources", None)
     return item
 
 

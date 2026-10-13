@@ -747,10 +747,23 @@ and named in a warning -- a Python `UserWarning` as well as the log, since a log
 alone reaches nobody by default (ledger 342, ledger 288's rule) -- and none of them
 landing raises. A target given as a
 cell id is checked instead: an id the grid does not have, or one inactive in its
-layer, raises (ledger 233). A name used in TWO layers is two observations,
+layer, raises (ledger 233). A name used in TWO layers (with no screen) is two observations,
 `<name>_lay<layer>`: `targets.observation_labels(model)` is the one definition,
 and the MF6 records, the simulated CSV, the forward-run mapping and the pst all
-carry it (ledger 234). A name used twice in ONE layer is refused, naming it (ledger
+carry it (ledger 234). A location with `screen_top`/`screen_bottom` (elevations;
+`HeadTargets(screen_top_column=, screen_bottom_column=)`,
+`HeadTargets.from_cells(screen_tops=, screen_bottoms=)`, and the same columns in
+`from_records`/`from_hydrographs`) is ONE observation under its bare name: the heads of
+the active layers its screen opens into, weighted by NPF `K` x the saturated open length
+(`myflopy.modflow.mf6.hydraulics.screened_head`, the ICELLTYPE rule `transmissivity`
+states), the deepest open layer's head when all are dry; `observation_labels` gives it
+one row per open layer with `open_bottom`/`open_top`/`icelltype`/`fixed_b`, and the
+PEST forward run weights with each realization's K files (ledger 556).
+Refused: a one-sided or inverted screen, a screened name on two rows, a layer the screen
+does not open into, a screen in no active layer, DISU, `ConcTargets` screens and
+`to_flopy_obs` of a screened set. `compare()`/`simulated_heads()` and the forward-run
+writers read through ONE period-end reader of the OC-declared head file,
+`myflopy.modflow.mf6.target_values.read_target_values` (ledger 557). A name used twice in ONE layer is refused, naming it (ledger
 502): it was two full-weight observations of one series. A `layer` column, when
 present, must give every row a whole number from 0 -- a blank, `"2,3"`, `0.7` or `-1`
 raises naming the rows, where it was read as layer 0 (ledger 501); no column at

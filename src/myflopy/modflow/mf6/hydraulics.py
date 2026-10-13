@@ -16,6 +16,10 @@ conducts through:
 * ``icelltype < 0`` under ``THICKSTRT``: confined, with the thickness taken from
   the STARTING head, ``strt - bottom``, fixed for the run.
 
+The same rule, over a well screen's open interval instead of the whole layer,
+weights a screened head target (:func:`screened_head`, ledger 556):
+both read their thickness from ONE function, :func:`saturated_thickness`.
+
 The maximum -- ``K * (top - bottom)`` -- needs no heads, so it is the one a model
 that has not been run can show.
 
@@ -36,10 +40,14 @@ from myflopy._time_units import MF6_TIME_UNITS
 
 __all__ = [
     "MF6_TIME_UNITS",
+    "FlowProperties",
     "Transmissivity",
     "declared_time_unit",
     "flow_model",
     "length_label",
+    "model_flow_properties",
+    "saturated_thickness",
+    "screened_head",
     "transmissivity",
     "model_transmissivity",
     "unit_labels",
@@ -79,6 +87,150 @@ def _layer_cells(values, nlay: int, ncpl: int, label: str) -> np.ndarray:
         f"{label} must hold one value, one per layer ({nlay}) or one per cell "
         f"({nlay}x{ncpl}); got {array.size} values."
     )
+
+
+def saturated_thickness(heads, top, bottom, *, icelltype=None, start=None) -> np.ndarray:
+    """The thickness MF6 conducts through between ``bottom`` and ``top``, by its ICELLTYPE rule.
+
+    The ONE statement of the rule (see the module docstring), read by
+    :func:`transmissivity` over whole layers and by :func:`screened_head` over a
+    screen's open interval in each layer (ledger 556).
+
+    Parameters
+    ----------
+    heads : float or array_like
+        The head in each cell, broadcast against ``top`` and ``bottom``. A DRY
+        cell's head -- MF6's ``-1e30``, or under NEWTON a finite head below the
+        cell's bottom -- gives zero thickness, through the clip.
+    top, bottom : array_like
+        The interval's top and bottom elevations, same shape as each other: a
+        layer's top and bottom for a transmissivity, or the part of a screen
+        inside each layer (``open_top``/``open_bottom``) for a screened head. An
+        interval with ``top <= bottom`` is zero thickness.
+    icelltype : array_like or None, optional
+        MF6's NPF ``ICELLTYPE`` per cell, broadcast against ``top``: ``0`` is
+        confined (the FULL interval, whatever the head); anything else is
+        convertible (``min(head, top) - bottom``, floored at 0, capped at the full
+        interval). Default ``None``: every cell convertible.
+    start : array_like or None, optional
+        The STARTING heads (``IC`` ``strt``) when the NPF says ``THICKSTRT``: a cell
+        with ``icelltype < 0`` then conducts through ``min(strt, top) - bottom``
+        (floored and capped as above), fixed for the run. Default ``None``: no
+        THICKSTRT, so ``icelltype < 0`` is convertible like any non-zero type.
+
+    Returns
+    -------
+    numpy.ndarray
+        The thickness, in the elevations' length units, broadcast shape of the
+        inputs.
+    """
+
+    top = np.asarray(top, dtype=float)
+    bottom = np.asarray(bottom, dtype=float)
+    heads = np.asarray(heads, dtype=float)
+    full = np.clip(top - bottom, 0.0, None)
+    celltype = np.ones(np.broadcast(top, bottom).shape, dtype=int) if icelltype is None \
+        else np.asarray(icelltype).astype(int)
+    # A DRY cell's head is MF6's DHDRY, -1e30: below every bottom, so the clip
+    # already gives it zero thickness. (A sentinel mask here was deleted as
+    # unfalsifiable -- no head MF6 writes for an ACTIVE cell reaches it; an
+    # inactive cell's +1e30 is masked by idomain by the callers.)
+    saturated = np.clip(np.minimum(heads, top) - bottom, 0.0, full)
+    thickness = np.where(celltype != 0, saturated, full)
+    if start is not None:
+        from_start = np.clip(np.minimum(np.asarray(start, dtype=float), top) - bottom, 0.0, full)
+        thickness = np.where(celltype < 0, from_start, thickness)
+    return thickness
+
+
+def screened_head(heads, k, open_bottom, open_top, *, icelltype=None, fixed_thickness=None):
+    """The head a well screened across several layers reads: their heads weighted by K x saturated open length.
+
+    A screened head target is ONE observation (ledger 556): the heads
+    of the layers its screen opens into, each weighted by that layer's
+    horizontal K times the length of the screen inside the layer that is
+    SATURATED -- :func:`saturated_thickness` over the open interval, MF6's
+    ICELLTYPE rule as :func:`transmissivity` states it. The weighted mean is
+    ``sum(K_i * b_i * h_i) / sum(K_i * b_i)``. When every weight is zero -- every
+    open interval dry -- it is the head of the DEEPEST open layer (the last), which
+    under NEWTON is a finite head below the screen that still moves with the
+    parameters (on Ten Trails 12,290 of 90,446 active cells hold such a head), so
+    a calibration still sees a gradient.
+
+    Pure numpy; the layers run along the LAST axis of every argument.
+
+    Parameters
+    ----------
+    heads : array_like
+        The head in each open layer, ``(..., n)``: one well's ``(n,)``, or
+        ``(ntimes, n)`` for one per time. Ordered shallowest open layer FIRST,
+        so the last is the deepest, which the all-dry case reads. Heads are in
+        the model's length units; a dry head (``-1e30``, or below the interval's
+        bottom) weighs zero.
+    k : array_like
+        Horizontal hydraulic conductivity (NPF ``K``) of the cell in each open
+        layer, ``(n,)`` or broadcast against ``heads``, in length per time; only
+        ratios matter. NaN is not allowed: inactive layers are not open layers.
+    open_bottom, open_top : array_like
+        The screen's interval inside each open layer, ``(n,)``: the screen
+        clipped to the cell (``max(screen bottom, cell bottom)``,
+        ``min(screen top, cell top)``), in the model's length units.
+    icelltype : array_like or None, optional
+        NPF ``ICELLTYPE`` of each open layer's cell, ``(n,)``. ``0`` conducts
+        through the whole open length whatever the head; non-zero through its
+        saturated part. Default ``None``: every layer convertible.
+    fixed_thickness : array_like or None, optional
+        ``(n,)``; where finite, the open length that conducts, used in place of
+        the head-dependent one -- a THICKSTRT layer's, fixed at build from the
+        starting heads. Default ``None``: none fixed.
+
+    Returns
+    -------
+    float or numpy.ndarray
+        The screened head, ``heads.shape[:-1]`` (a float for one well at one
+        time).
+
+    Raises
+    ------
+    ValueError
+        When the arguments do not share their last axis, or that axis is empty.
+
+    Examples
+    --------
+    Two layers, K 10 and 1, each open 5 ft and saturated:
+
+    >>> screened_head([100.0, 90.0], [10.0, 1.0], [80.0, 70.0], [85.0, 75.0],
+    ...               icelltype=[0, 0])
+    99.0909...
+    """
+
+    heads = np.asarray(heads, dtype=float)
+    k = np.asarray(k, dtype=float)
+    open_bottom = np.asarray(open_bottom, dtype=float)
+    open_top = np.asarray(open_top, dtype=float)
+    n = heads.shape[-1] if heads.ndim else 0
+    if n == 0 or open_bottom.shape[-1:] != (n,) or open_top.shape[-1:] != (n,):
+        raise ValueError(
+            "screened_head(...): heads, open_bottom and open_top must share their last "
+            f"axis, one entry per open layer (got {heads.shape}, {open_bottom.shape}, "
+            f"{open_top.shape})."
+        )
+    thickness = saturated_thickness(
+        heads, open_top, open_bottom,
+        icelltype=None if icelltype is None else np.broadcast_to(np.asarray(icelltype), (n,)),
+    )
+    if fixed_thickness is not None:
+        fixed = np.broadcast_to(np.asarray(fixed_thickness, dtype=float), (n,))
+        thickness = np.where(np.isfinite(fixed), fixed, thickness)
+    weight = k * thickness
+    total = weight.sum(axis=-1)
+    # A zero weight times a dry -1e30 is 0, never NaN; masked anyway so a stray
+    # +inf head in a weightless layer cannot reach the sum.
+    weighted = np.where(weight > 0, weight * heads, 0.0).sum(axis=-1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = weighted / total
+    result = np.where(total > 0, mean, heads[..., -1])
+    return float(result) if np.ndim(result) == 0 else result
 
 
 def transmissivity(
@@ -138,18 +290,15 @@ def transmissivity(
             if icelltype is None
             else _layer_cells(icelltype, nlay, ncpl, "icelltype").astype(int)
         )
-        # A DRY cell's head is MF6's DHDRY, -1e30: below every bottom, so the clip
-        # already gives it zero thickness. (A sentinel mask here was deleted as
-        # unfalsifiable -- no head MF6 writes for an ACTIVE cell reaches it; an
-        # inactive cell's +1e30 is masked by idomain below.)
-        saturated = np.clip(np.minimum(heads, layer_top) - botm, 0.0, full)
-        thickness = np.where(celltype != 0, saturated, full)
-        if thickstrt:
-            if strt is None:
-                raise ValueError("thickstrt=True needs strt, the starting heads it reads.")
-            start = _layer_cells(strt, nlay, ncpl, "strt")
-            from_start = np.clip(np.minimum(start, layer_top) - botm, 0.0, full)
-            thickness = np.where(celltype < 0, from_start, thickness)
+        if thickstrt and strt is None:
+            raise ValueError("thickstrt=True needs strt, the starting heads it reads.")
+        thickness = saturated_thickness(
+            heads,
+            layer_top,
+            botm,
+            icelltype=celltype,
+            start=None if not thickstrt else _layer_cells(strt, nlay, ncpl, "strt"),
+        )
 
     values = k * thickness
     if idomain is not None:
@@ -199,11 +348,58 @@ def _option(package, name):
     return getter() if callable(getter) else data
 
 
-def model_transmissivity(model, *, heads=None) -> Transmissivity:
-    """:func:`transmissivity` for a model: its K, layers, idomain and cell types.
+class FlowProperties(NamedTuple):
+    """What MF6's conductance rule reads off a flow model: K, elevations, cell types.
 
-    ``heads`` -- ``(nlay, ncpl)`` at one time -- makes the result saturated; the
-    caller reads them, because which time and how is the caller's question.
+    Read once by :func:`model_flow_properties` for :func:`model_transmissivity` and
+    the screened head targets (ledger 556), so the two cannot
+    read a different K or a different set of elevations.
+
+    Attributes
+    ----------
+    k : numpy.ndarray
+        NPF ``K`` as FloPy holds it (``npf.k.array``, factors applied).
+    top : numpy.ndarray
+        The model top as the grid holds it (``modelgrid.top``).
+    botm : numpy.ndarray
+        The layer bottoms (``modelgrid.botm``).
+    idomain : numpy.ndarray or None
+        ``modelgrid.idomain``.
+    icelltype : numpy.ndarray or None
+        NPF ``ICELLTYPE``, or ``None`` when the package holds none.
+    strt : numpy.ndarray or None
+        IC ``strt`` when the NPF says ``THICKSTRT``, else ``None``.
+    thickstrt : bool
+        Whether the NPF says ``THICKSTRT``.
+    """
+
+    k: np.ndarray
+    top: np.ndarray
+    botm: np.ndarray
+    idomain: np.ndarray | None
+    icelltype: np.ndarray | None
+    strt: np.ndarray | None
+    thickstrt: bool
+
+
+def model_flow_properties(model) -> FlowProperties:
+    """K, elevations and cell types of ``model``'s flow model, as MF6's conductance reads them.
+
+    Parameters
+    ----------
+    model : SimulationBase or object
+        A myflopy model, or anything :func:`flow_model` accepts; its NPF, IC and
+        discretization are read (a run opened with ``mf.load_mf6_run`` loads its
+        simulation once for the NPF).
+
+    Returns
+    -------
+    FlowProperties
+
+    Raises
+    ------
+    ValueError
+        When the model has no flow model or no NPF (:func:`flow_model`).
     """
 
     gwf = flow_model(model)
@@ -215,15 +411,28 @@ def model_transmissivity(model, *, heads=None) -> Transmissivity:
     if thickstrt:
         ic = getattr(gwf, "ic", None)
         strt = getattr(getattr(ic, "strt", None), "array", None)
+    return FlowProperties(
+        npf.k.array, grid.top, grid.botm, grid.idomain, icelltype, strt, thickstrt
+    )
+
+
+def model_transmissivity(model, *, heads=None) -> Transmissivity:
+    """:func:`transmissivity` for a model: its K, layers, idomain and cell types.
+
+    ``heads`` -- ``(nlay, ncpl)`` at one time -- makes the result saturated; the
+    caller reads them, because which time and how is the caller's question.
+    """
+
+    flow = model_flow_properties(model)
     return transmissivity(
-        npf.k.array,
-        grid.top,
-        grid.botm,
-        idomain=grid.idomain,
+        flow.k,
+        flow.top,
+        flow.botm,
+        idomain=flow.idomain,
         heads=heads,
-        icelltype=icelltype,
-        strt=strt,
-        thickstrt=thickstrt,
+        icelltype=flow.icelltype,
+        strt=flow.strt,
+        thickstrt=flow.thickstrt,
     )
 
 

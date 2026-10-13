@@ -43,6 +43,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     pyemu_spatial_reference,
     refuse_an_undeclared_array,
     relayer_array_target,
+    resolve_target,
     select_packages,
     staged_model,
 )
@@ -1807,6 +1808,11 @@ class PestProject:
                 flopy_model_for(self, spec.declared_recipe), spec.declared_recipe, spec.package))
             refuse_an_undeclared_array(self, spec.recipe, spec.package)
             relayer_array_target(self, spec.recipe, spec.package)
+        if self._screened_head_sets():
+            # A screened head set weights by each layer's K, read in every
+            # realization from the per-layer file MF6 reads (ledger 556);
+            # a K given as one whole-grid array has no such file until re-stored.
+            relayer_array_target(self, resolve_target("k"))
         simulation.set_all_data_external()
         simulation.write_simulation(silent=True)
         logger.info(
@@ -1883,6 +1889,14 @@ class PestProject:
                 "overwrite the first. Pass observe(targets, prefix=...) a distinct "
                 "prefix per set."
             )
+
+    def _screened_head_sets(self) -> bool:
+        """Whether any observed or forecast head set carries well screens (ledger 556)."""
+
+        return any(
+            isinstance(spec, HeadTargetObservationSpec) and getattr(spec.targets, "screened", False)
+            for spec in [*self._observation_specs, *self._forecast_specs]
+        )
 
     def _prepare_observation_specs(self):
         """Create simulated observation files and register them with pyEMU."""
@@ -2220,7 +2234,12 @@ class PestProject:
                     f"output_csv='{head_config['output_csv']}', "
                     f"perlen={perlen!r}, "
                     # The file the OC declares (ledger 505).
-                    f"head_file={head_config.get('head_file')!r})",
+                    f"head_file={head_config.get('head_file')!r}"
+                    # A screened set's K files, read after the realization's
+                    # parameters are applied (ledger 556).
+                    + (f", k_sources={head_config['k_sources']!r}"
+                       if head_config.get("k_sources") else "")
+                    + ")",
                     is_pre_cmd=False,
                 )
                 continue

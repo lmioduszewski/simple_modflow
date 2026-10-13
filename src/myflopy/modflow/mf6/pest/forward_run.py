@@ -115,7 +115,6 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
 
     import json
 
-    import numpy as np
     import pandas as pd
 
     if isinstance(array_files, str):
@@ -196,7 +195,9 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
         np.savetxt(array_file, result.reshape(start.shape), fmt="%.10E")
 
 
-def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", head_file=None):
+def _write_head_target_csv(
+    model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", head_file=None, k_sources=None
+):
     """Write simulated heads at each stress period's END for named target locations.
 
     Post-model command in the native forward run, and the ONE writer of this file:
@@ -210,7 +211,13 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
 
     A period's head is the one that ENDS it, picked by the one rule every target
     reads (``myflopy.modflow.mf6.period_end``, ledger 336) on the head file's own
-    clock.
+    clock -- through the ONE period-end reader ``HeadTargets.compare()`` reads too,
+    :func:`myflopy.modflow.mf6.target_values.read_target_values` (ledger
+    557). A SCREENED well's rows (several under one ``obsname``) are
+    ONE column, their heads weighted by K x saturated open length (ledger
+    556), with the K THIS realization's model read: the files
+    ``k_sources`` names, which pyEMU's multipliers and the pilot points have just
+    rewritten.
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so its imports live inside it.
@@ -221,12 +228,15 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         The flow model's name; its head file is ``<model_name>.hds`` in
         ``sim_ws`` unless ``head_file`` names it.
     mapping_csv : str or pathlib.Path
-        The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
-        Its row order IS the column order written, and its labels are read as
-        text, verbatim (a well named ``007`` is not the number 7, ledger 341).
+        The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``,
+        and for a screened well one row per open layer under one ``obsname`` with
+        ``open_bottom``, ``open_top``, ``icelltype`` and ``fixed_b``
+        (``target_values.SCREEN_COLUMNS``). The order in which labels first appear IS the
+        column order written, and its labels are read as text, verbatim (a well
+        named ``007`` is not the number 7, ledger 341).
     output_csv : str or pathlib.Path
-        The simulated CSV to write: ``per``, then one column per mapping row
-        (its ``obsname``, else its ``name``) in mapping order; one row per stress
+        The simulated CSV to write: ``per``, then one column per label (its
+        ``obsname``, else its ``name``) in mapping order; one row per stress
         period the head file saved.
     perlen : list of float, optional
         Each stress period's length, recorded from the TDIS at build time. With
@@ -245,22 +255,27 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         then passes -- reads ``<model_name>.hds``, which is wrong whenever the
         OC named the file otherwise: every realization failed, and the build
         could read a STALE ``<model_name>.hds`` left in the run directory.
+    k_sources : list of dict or None, optional
+        Where this run's horizontal K is, per layer, when the map holds a screened
+        well: ``{"layer", "file", "factor"}`` (the NPF's external file for the
+        layer, relative to the working directory) or ``{"layer", "constant"}``
+        (``target_values.k_from_sources``). The build records it (ledger
+        556). Default ``None``: no screened well, so no K read.
 
     Raises
     ------
     ValueError
-        With ``perlen``, when a period the head file saved lacks its final step.
+        With ``perlen``, when a period the head file saved lacks its final step;
+        when the map holds a screened well and ``k_sources`` is ``None``.
     FileNotFoundError
-        When the head file is not in ``sim_ws`` (from FloPy).
+        When the head file, or a K file ``k_sources`` names, is not there.
     """
 
     # Imported here, not hoisted: pyEMU copies only this function's source.
     from pathlib import Path
 
-    import flopy
-
-    from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
     from myflopy.modflow.mf6.pest.forward_run import read_target_table
+    from myflopy.modflow.mf6.target_values import k_from_sources, read_target_values
 
     # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
     # named NA as a missing value, so the columns written would be 7 and nan while
@@ -269,35 +284,21 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     mapping = read_target_table(mapping_csv)
     # The file the OC declares, which the build recorded (ledger 505).
     head_name = str(head_file) if head_file else f"{model_name}.hds"
-    hds = flopy.utils.HeadFile(str(Path(sim_ws) / head_name))
-    try:
-        ends = period_end_steps(
-            saved_steps(hds), perlen=perlen, file=head_name, saves="HEAD"
-        )
-        rows = []
-        for per, kstpkper in ends.items():
-            data = np.asarray(hds.get_data(kstpkper=kstpkper), dtype=float)
-            row = {"per": int(per)}
-            for target in mapping.itertuples(index=False):
-                layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
-                # The mapping's own label: one column per (name, layer). Keyed on
-                # the bare name, two screens of one well overwrote each other here
-                # while the build read the other one. A mapping written before the
-                # label existed has no such column, and its name still serves.
-                label = str(getattr(target, "obsname", "") or target.name)
-                row[label] = float(layer_values[int(target.cell)])
-            rows.append(row)
-        pd.DataFrame(rows).to_csv(output_csv, index=False)
-    finally:
-        hds.close()
+    # The K this realization's model READ, after pyEMU and the pilot points
+    # rewrote its files (ledger 556); never the build's K.
+    k = None if not k_sources else k_from_sources(k_sources, base=sim_ws)
+    read_target_values(
+        Path(sim_ws) / head_name, mapping, perlen=perlen, file=head_name, saves="HEAD", k=k,
+    ).to_csv(output_csv, index=False)
 
 
 def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", conc_file=None):
     """Write simulated concentrations at each stress period's END for named target locations.
 
     The concentration twin of ``_write_head_target_csv``, and deliberately the
-    same shape: open the binary directly and index it, at the record the one
-    period-end rule picks (ledger 336). The named-series helper would instead
+    same shape: the one period-end reader both use
+    (``target_values.read_target_values``, ledger 557) opens the binary
+    directly and indexes it, at the record the one period-end rule picks (ledger 336). The named-series helper would instead
     reload the whole simulation on every forward run, and its ``all_conc`` read
     is kind-gated, so it would have to resolve to the GWT model rather than the
     flow model it loads by default. Like it, this is the ONE writer of its file:
@@ -344,10 +345,8 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     # Imported here, not hoisted: pyEMU copies only this function's source.
     from pathlib import Path
 
-    import flopy
-
-    from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
     from myflopy.modflow.mf6.pest.forward_run import read_target_table
+    from myflopy.modflow.mf6.target_values import read_target_values
 
     # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
     # named NA as a missing value, so the columns written would be 7 and nan while
@@ -356,27 +355,12 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     mapping = read_target_table(mapping_csv)
     # The file the OC declares, which the build recorded (ledger 505).
     conc_name = str(conc_file) if conc_file else f"{model_name}.ucn"
-    ucn = flopy.utils.HeadFile(str(Path(sim_ws) / conc_name), text="concentration")
-    try:
-        ends = period_end_steps(
-            saved_steps(ucn), perlen=perlen, file=conc_name, saves="CONCENTRATION"
-        )
-        rows = []
-        for per, kstpkper in ends.items():
-            data = np.asarray(ucn.get_data(kstpkper=kstpkper), dtype=float)
-            row = {"per": int(per)}
-            for target in mapping.itertuples(index=False):
-                layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
-                # The mapping's own label: one column per (name, layer). Keyed on
-                # the bare name, two screens of one well overwrote each other here
-                # while the build read the other one. A mapping written before the
-                # label existed has no such column, and its name still serves.
-                label = str(getattr(target, "obsname", "") or target.name)
-                row[label] = float(layer_values[int(target.cell)])
-            rows.append(row)
-        pd.DataFrame(rows).to_csv(output_csv, index=False)
-    finally:
-        ucn.close()
+    # The one period-end reader (ledger 557); a concentration
+    # map never holds a screened well (refused, ledger 556).
+    read_target_values(
+        Path(sim_ws) / conc_name, mapping, perlen=perlen, file=conc_name,
+        saves="CONCENTRATION", text="concentration",
+    ).to_csv(output_csv, index=False)
 
 
 def write_named_series_targets(sets, sim_ws=".", model_name=None):

@@ -371,6 +371,44 @@ at weight 0, holding the base run's own value: reported in every ensemble, never
 history-matched. (Until then each such row carried weight 1, pulling the calibration
 back toward the uncalibrated model at every period nobody measured.)
 
+**A well screened across layers is ONE observation** (ledger 556). Give
+the locations `screen_top` and `screen_bottom` columns (elevations, model length units;
+`screen_top_column=`/`screen_bottom_column=` name others, `from_cells(screen_tops=,
+screen_bottoms=)`, and `from_records`/`from_hydrographs` read them too) and a row with
+both is a screened target, read under its bare name as
+
+    h = sum(K_i * b_i * h_i) / sum(K_i * b_i)
+
+over the ACTIVE layers its screen opens into at its cell: `K_i` the layer's NPF `K`,
+`b_i` the length of the screen inside the layer that conducts -- the whole open length
+for a confined layer (`ICELLTYPE 0`), the part below the head for a convertible one, the
+part below the starting head for a `THICKSTRT` layer -- the rule `map(type="trans")`
+uses for transmissivity (`hydraulics.saturated_thickness`). When every open interval is
+dry it reads the DEEPEST open layer's head: under NEWTON that is a finite head below the
+screen (Ten Trails `ss` holds 16,900 of 101,615 active cells with a head below their
+own bottom, `docs/reproducers/screened_head_targets.py`), and it keeps moving with
+the parameters. `compare()` weights with the model's K; **every PEST realization
+weights with its OWN K**, read after the run from the per-layer `npf_k_layer<n>.txt`
+files MF6 read -- the ones pyEMU's multipliers and the pilot points rewrite (a K
+parameter moves a screened head both through the heads and through the weights).
+
+- A row with both blank is a layer target, and a set with only a `layer` column is
+  exactly what it was: a name in two layers is two observations of the one series, each
+  at full weight (ledger 234). Give such a well a screen to make it one.
+- A screened row may leave `layer` blank; a layer it gives must be one the screen opens
+  into, or it is refused naming the layers it does open into.
+- Refused: one of top/bottom blank, a top at or below its bottom, one column without
+  its twin, a screened name on two rows, a screen opening into no active layer at its
+  cell (above the model, below it, or into inactive layers only), a screened set on a
+  DISU model, screens on `ConcTargets` (a flux-weighted concentration is deferred) and
+  `to_flopy_obs` of a screened set (MF6's OBS has no multi-layer head). A screen
+  reaching past the column or into an inactive layer is clipped, with a warning.
+
+`compare()`, `simulated_heads()` and the forward run read heads through ONE period-end
+reader of the file the OC declares (ledger 557): `compare()` on Ten
+Trails' 38-period run went from 3-9 s and 1.9 GB a call to 0.06 s and 0.45 GB, the same
+numbers.
+
 **A flow target is in MF6's own sign** (ledger 350): an SFR reach's streamflow
 (`SfrFlowTargets`) and a DRN zone's discharge (`DrnFlowTargets`) are water LEAVING the
 reach or the aquifer, which MF6 writes negative, on both routes and in the tables PEST

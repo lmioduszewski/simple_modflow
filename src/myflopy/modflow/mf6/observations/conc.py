@@ -82,6 +82,17 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         Time labels for ``values`` given as a ``dict`` or list/tuple with no
         ``time_column`` column; a length mismatch raises ``ValueError``.
         Ignored for a ``DataFrame``, ``Series`` or CSV. Default ``None``.
+    screen_top_column : str or None, optional
+        Column of ``locations`` that would hold a well's screen-top elevation.
+        Default ``"screen_top"``. A concentration target is not read over a
+        screen: a flux-weighted concentration needs the flow model's heads and K
+        beside the transport file, which is deferred (ledger 556),
+        so a locations table carrying this column and ``screen_bottom_column``
+        raises ``ValueError`` -- give each sampling point its layer, or pass
+        ``None`` for both to ignore the columns.
+    screen_bottom_column : str or None, optional
+        The screen-bottom twin of ``screen_top_column``, refused alike. Default
+        ``"screen_bottom"``.
 
     Examples
     --------
@@ -103,6 +114,8 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
     _STORE_COLUMN: ClassVar[str] = "conc"
     _FIELD_LABEL: ClassVar[str] = "concentration"
     _OBS_KIND: ClassVar[str] = "CONCENTRATION"
+    #: Screens are refused (ledger 556).
+    _SCREENS: ClassVar[bool] = False
 
     #: the long-form input column name callers supply measured values under
     value_column: str = "conc"

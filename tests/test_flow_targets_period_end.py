@@ -406,9 +406,11 @@ def test_a_head_target_is_refused_when_the_head_file_saved_no_period_end(runs):
     heads = mf.HeadTargets(
         locations=pd.DataFrame({"name": ["h"], "cell": [22], "layer": [0]}),
         values=pd.DataFrame({"time": range(NPER), "name": "h", "head": 100.0}))
-    with pytest.raises(ValueError, match=HEAD_REFUSAL.format("the head file")):
+    # The targets read the file the OC declares through the reader PEST's forward
+    # run uses, which names it (ledger 557).
+    with pytest.raises(ValueError, match=HEAD_REFUSAL.format(r"m\.hds")):
         heads.simulated_heads(runs["head_first"])
-    with pytest.raises(ValueError, match=HEAD_REFUSAL.format("the head file")):
+    with pytest.raises(ValueError, match=HEAD_REFUSAL.format(r"m\.hds")):
         heads.compare(runs["head_first"])
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -20,6 +21,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     miss_reason,
     model_cell_polygons,
 )
+from myflopy.modflow.mf6.hydraulics import model_flow_properties, saturated_thickness
 from myflopy.modflow.mf6.observations._shared import (
     _FIELD_FILES,
     _build_values_from_cells,
@@ -29,6 +31,8 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_obs_csv_name,
     _ensure_unique_observation_names,
     _in_grid_crs,
+    _is_blank,
+    _listing,
     _load_locations,
     _measured_periods,
     _normalize_identifier_series,
@@ -47,7 +51,10 @@ from myflopy.modflow.mf6.observations.hydrographs import (
     read_readings,
     refuse_another_clock,
 )
+from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
+from myflopy.modflow.mf6.period_end import period_lengths
+from myflopy.modflow.mf6.target_values import read_target_values, target_value_table
 from myflopy.viz import mpl_axes
 
 logger = get_logger(__name__)
@@ -71,6 +78,57 @@ def _dug_cells(model) -> dict[int, str]:
         for cell, name in excavation_cells(context).items():
             found.setdefault(cell, name)
     return found
+
+
+def _usable(domain, layer, cell: int) -> bool:
+    """Whether a target may land on ``cell``: active in its layer, or -- a screened
+    target with no layer -- active in ANY layer (its screen picks the layers later,
+    ledger 556)."""
+
+    if not _is_blank(layer):
+        return domain_active(domain, int(layer), cell)
+    if domain is None:
+        return True
+    values = np.asarray(domain)
+    if values.ndim == 1:
+        return bool(values[cell] > 0)
+    return bool((values[:, cell] > 0).any())
+
+
+def _layer_key(layers: pd.Series) -> np.ndarray:
+    """A location's layer as a join key: ``-1`` for a screened target with none."""
+
+    return np.array([-1 if _is_blank(value) else int(value) for value in layers], dtype=int)
+
+
+def _records_of_table(frame: pd.DataFrame) -> list[tuple[int, np.ndarray]]:
+    """``(per, (nlay, ncells))`` records from a ``per``/``layer``/``cell``/``sim_head`` table.
+
+    How a test double holding only a value table reaches the one reader
+    (:func:`~myflopy.modflow.mf6.target_values.target_value_table`); a cell the
+    table lacks reads ``NaN``.
+    """
+
+    if frame.empty:
+        return []
+    nlay = int(frame["layer"].max()) + 1
+    ncells = int(frame["cell"].max()) + 1
+    records = []
+    for per, part in frame.groupby("per", sort=True):
+        values = np.full((nlay, ncells), np.nan)
+        values[part["layer"].astype(int).to_numpy(), part["cell"].astype(int).to_numpy()] = (
+            part["sim_head"].astype(float).to_numpy()
+        )
+        records.append((int(per), values))
+    return records
+
+
+def _layer_series(layers: pd.Series) -> pd.Series:
+    """Layers as ``int``, or ``Int64`` with ``<NA>`` when a screened target gives none."""
+
+    if any(_is_blank(value) for value in layers):
+        return pd.array([pd.NA if _is_blank(value) else int(value) for value in layers], dtype="Int64")
+    return layers.astype(int)
 
 
 _DUG_ADVICE = (
@@ -103,8 +161,8 @@ class HeadTargets:
 
         A ``cell``/``node`` column wins over a geometry when both are present.
         Only the ``name_column``, ``cell``/``node``, ``layer_column``,
-        ``group_column`` and ``weight_column`` columns (and the geometry) are
-        kept. Raises ``ValueError`` when ``name_column`` is missing, when a
+        ``group_column``, ``weight_column``, ``screen_top_column`` and
+        ``screen_bottom_column`` columns (and the geometry) are kept. Raises ``ValueError`` when ``name_column`` is missing, when a
         table with no geometry has no ``cell``/``node`` column, when a cell
         value is not numeric, when a present ``layer_column`` holds anything
         but a whole number from 0, or when a name repeats within one layer
@@ -150,10 +208,14 @@ class HeadTargets:
         whole number from 0 (``1.0`` is layer 1): a blank, a non-number
         (``"2,3"``, ``"L3"``), a fraction or a negative raises ``ValueError``
         naming the rows (ledger 501 -- a blank or non-number was read
-        as 0, and a fraction truncated). A name may appear once per layer --
+        as 0, and a fraction truncated) -- except on a SCREENED row (see
+        ``screen_top_column``), whose layer may be blank: its screen says which
+        layers it reads, and a layer it does give must be one its screen opens
+        into. A name may appear once per layer --
         twice in ONE layer raises, naming it (ledger 502); in two
-        layers it is one well screened in both, two observations (ledger 234).
-        A target only matches a cell that is ACTIVE in its own layer
+        layers, with no screens, it is two observations of the one measured
+        series, each at full weight (ledger 234) -- give the well a screen to
+        make it one. A target only matches a cell that is ACTIVE in its own layer
         (:meth:`match_to_model`).
     group_column : str or None, optional
         Column of ``locations`` holding each location's observation-group label,
@@ -210,6 +272,33 @@ class HeadTargets:
         does a dict (from pandas). Ignored for a ``DataFrame``, a ``Series`` or
         a CSV path, and whenever ``values`` already has the column. Default
         ``None``.
+    screen_top_column : str or None, optional
+        Column of ``locations`` holding each well's SCREEN TOP elevation, in the
+        model's length units. Default ``"screen_top"``; ``None``, or a table
+        without the column (and without ``screen_bottom_column``), reads no
+        screens -- every target is a layer target, as before. A row giving both
+        a top and a bottom is a SCREENED target (ledger 556):
+        ONE observation, under its bare name, of the heads of every ACTIVE
+        layer its screen opens into at its cell, each weighted by the layer's
+        horizontal K (NPF ``K``) times the length of the screen inside the layer
+        that is saturated -- MF6's ICELLTYPE rule (a confined layer conducts
+        through its whole open length, a convertible one through the part below
+        the head; a THICKSTRT layer's length is fixed from the starting heads).
+        When every open interval is dry it reads the DEEPEST open layer's head.
+        :meth:`compare` weights with the model's K; the PEST forward run with
+        each realization's K, read from the files MF6 reads. A row leaving both
+        blank is a layer target. Refused (``ValueError``, naming the rows): one
+        of the two blank, a value that is not a finite number, a top at or below
+        its bottom, the column without its twin, and a screened name on more
+        than one row. Refused when the model is read (:meth:`observation_labels`):
+        a layer the screen does not open into, a screen opening into no ACTIVE
+        layer at its cell, and a DISU model; a screen reaching above the model
+        top, below its bottom or into an inactive layer is clipped to what it
+        opens into, with a warning. On ``ConcTargets`` screens are refused.
+    screen_bottom_column : str or None, optional
+        Column of ``locations`` holding each well's SCREEN BOTTOM elevation, in
+        the model's length units; the twin of ``screen_top_column``. Default
+        ``"screen_bottom"``.
 
     Notes
     -----
@@ -233,6 +322,10 @@ class HeadTargets:
     #: The :class:`~myflopy.modflow.mf6.observations.hydrographs.Binning` of a
     #: :meth:`from_hydrographs` set (its report and clock stamp); ``None`` otherwise.
     _binned: ClassVar[Any] = None
+    #: Whether a location may carry a well screen (ledger 556). A
+    #: flux-weighted concentration needs the flow model's heads and K beside the
+    #: transport file, so ``ConcTargets`` refuses screens.
+    _SCREENS: ClassVar[bool] = True
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple
@@ -243,6 +336,8 @@ class HeadTargets:
     time_column: str = "time"
     value_column: str = "head"
     times: list | tuple | pd.Index | pd.Series | None = None
+    screen_top_column: str | None = "screen_top"
+    screen_bottom_column: str | None = "screen_bottom"
 
     def __post_init__(self):
         """Load and normalize locations and target tables."""
@@ -253,7 +348,20 @@ class HeadTargets:
             layer_column=self.layer_column,
             group_column=self.group_column,
             weight_column=self.weight_column,
+            screen_top_column=self.screen_top_column,
+            screen_bottom_column=self.screen_bottom_column,
         )
+        if not self._SCREENS and self.screened:
+            raise ValueError(
+                f"{type(self).__name__}: the locations carry well screens "
+                f"({self.screen_top_column!r}/{self.screen_bottom_column!r}), and a "
+                f"screened {self._FIELD_LABEL} is not read: a flux-weighted value needs "
+                "the flow model's heads and K beside the transport file, which is "
+                "deferred (ledger 556). Give each sampling point its "
+                "layer, or pass screen_top_column=None, screen_bottom_column=None to "
+                "ignore the columns."
+            )
+        self._screen_warned: set[str] = set()
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__, columns=("head_target",)
         )
@@ -289,11 +397,13 @@ class HeadTargets:
         values,
         times=None,
         names=None,
-        layers=0,
+        layers=None,
         groups=None,
         weights=None,
         time_column: str = "time",
         value_column: str = "head",
+        screen_tops=None,
+        screen_bottoms=None,
     ):
         """Create head targets directly from explicit model cell ids.
 
@@ -332,11 +442,14 @@ class HeadTargets:
             them ``OBS_001``, ``OBS_002``, ... A single string is allowed only
             for one cell; a sequence of another length raises ``ValueError``.
         layers : int, sequence of int or None, optional
-            Zero-based model layer of each target. Default ``0``. A scalar
-            applies to every cell and ``None`` means 0; a list, tuple, array or
-            ``Series`` must have one entry per cell (``ValueError``). Each must
-            be a whole number from 0: a blank, a fraction or a negative raises
-            (ledger 501).
+            Zero-based model layer of each target. Default ``None``: layer 0 for
+            a target with no screen, and no layer for a screened one (its screen
+            says which layers it reads). A scalar applies to every cell; a list,
+            tuple, array or ``Series`` must have one entry per cell
+            (``ValueError``). Each must be a whole number from 0: a blank, a
+            fraction or a negative raises (ledger 501), except a blank on a
+            screened target; a layer given for a screened target must be one its
+            screen opens into.
         groups : object, sequence or None, optional
             Observation-group label per target -- its PEST observation group
             (see the constructor's ``group_column``, which says how a label
@@ -357,6 +470,15 @@ class HeadTargets:
             stored on the result. Default ``"head"`` -- also when called on
             :class:`~myflopy.modflow.mf6.observations.conc.ConcTargets`, whose
             class default is ``"conc"``. Unused by array and wide input.
+        screen_tops : float, sequence of float or None, optional
+            Each target's screen-top elevation, in the model's length units
+            (the constructor's ``screen_top_column``, ledger 556): a
+            scalar for every cell, or one entry per cell, ``None``/``NaN`` for a
+            target with no screen. Default ``None``: no screens. Given without
+            ``screen_bottoms`` it raises ``ValueError``.
+        screen_bottoms : float, sequence of float or None, optional
+            Each target's screen-bottom elevation, the twin of ``screen_tops``.
+            Default ``None``.
 
         Returns
         -------
@@ -368,10 +490,31 @@ class HeadTargets:
         count = len(cell_list)
         if count == 0:
             raise ValueError("from_cells(...) requires at least one cell.")
+        if (screen_tops is None) != (screen_bottoms is None):
+            raise ValueError(
+                "from_cells(...): screen_tops and screen_bottoms come together -- a "
+                "screen is an interval (ledger 556)."
+            )
         names_list = _coerce_label_list(names, count=count, default_prefix="OBS")
+        screens = {}
+        if screen_tops is not None:
+            screens = {
+                "screen_top": list(_coerce_scalar_or_list(screen_tops, count=count, default=np.nan)),
+                "screen_bottom": list(
+                    _coerce_scalar_or_list(screen_bottoms, count=count, default=np.nan)
+                ),
+            }
         # Checked where every location table is (``_location_layers``): ``int()``
-        # here truncated a fractional layer in silence (ledger 501).
-        layer_list = list(_coerce_scalar_or_list(layers, count=count, default=0))
+        # here truncated a fractional layer in silence (ledger 501). With no layer
+        # given, a screened target has none (its screen decides) and any other is
+        # in layer 0.
+        if layers is None:
+            layer_list = [
+                pd.NA if screens and not _is_blank(top) else 0
+                for top in screens.get("screen_top", [np.nan] * count)
+            ]
+        else:
+            layer_list = list(_coerce_scalar_or_list(layers, count=count, default=0))
         group_list = _coerce_scalar_or_list(groups, count=count, default=pd.NA)
         weight_list = _coerce_scalar_or_list(weights, count=count, default=np.nan)
         locations = pd.DataFrame(
@@ -381,6 +524,7 @@ class HeadTargets:
                 "cell": cell_list,
                 "group": group_list,
                 "weight": weight_list,
+                **screens,
             }
         )
         values_frame = _build_values_from_cells(
@@ -399,6 +543,8 @@ class HeadTargets:
             weight_column="weight",
             time_column=time_column,
             value_column=value_column,
+            screen_top_column="screen_top",
+            screen_bottom_column="screen_bottom",
         )
 
     @classmethod
@@ -418,11 +564,14 @@ class HeadTargets:
             it. Required columns, matched exactly: ``name``, ``time_column``,
             ``value_column``, and a location given as ``cell`` or ``node`` (the
             zero-based cell index within a layer) or as a point ``geometry``.
-            Optional: ``layer`` (zero-based, default 0), ``group``, and
+            Optional: ``layer`` (zero-based, default 0), ``group``,
+            ``screen_top``/``screen_bottom`` (a screened well, read as the
+            constructor's ``screen_top_column`` reads them; ledger
+            556), and
             ``weight`` -- each RECORD's own PEST weight, a blank meaning 1.0
             (ledger 504; it was the name's first record's, given to
-            every reading). A target's location and group are taken from its
-            FIRST row. A ``geometry``
+            every reading). A target's location, screen and group are taken from
+            its FIRST row. A ``geometry``
             column of plain shapely points (record dicts, a ``DataFrame``)
             carries no CRS, so its coordinates are read in the grid's own
             frame; a ``GeoDataFrame``'s CRS is kept, and reprojected to the
@@ -456,7 +605,10 @@ class HeadTargets:
             raise ValueError("from_records(...) requires 'cell', 'node', or 'geometry' columns.")
         locations_columns = [
             column
-            for column in ["name", "layer", "cell", "node", "group", "geometry", "x", "y"]
+            for column in [
+                "name", "layer", "cell", "node", "group", "screen_top", "screen_bottom",
+                "geometry", "x", "y",
+            ]
             if column in frame.columns
         ]
         locations = frame.loc[:, locations_columns].drop_duplicates(subset=["name"]).copy()
@@ -476,6 +628,8 @@ class HeadTargets:
             weight_column="weight",
             time_column=time_column,
             value_column=value_column,
+            screen_top_column="screen_top",
+            screen_bottom_column="screen_bottom",
         )
 
     @classmethod
@@ -496,6 +650,8 @@ class HeadTargets:
         max_offset=None,
         between=None,
         min_years: int | None = None,
+        screen_top_column: str | None = "screen_top",
+        screen_bottom_column: str | None = "screen_bottom",
     ):
         """Targets from DATED readings, binned onto ``model``'s stress periods by one stated rule.
 
@@ -608,6 +764,14 @@ class HeadTargets:
             this has no target (its :attr:`binning` row says ``measured`` False).
             ``None`` means 1; a whole number from 1. Given in history mode it
             raises.
+        screen_top_column : str or None, default "screen_top"
+            Column of ``locations`` holding each well's screen-top elevation (the
+            constructor's): a screened well is ONE observation of the head its
+            screen reads (ledger 556). ``None`` or an absent column:
+            no screens.
+        screen_bottom_column : str or None, default "screen_bottom"
+            Column of ``locations`` holding each well's screen-bottom elevation (the
+            constructor's).
 
         Returns
         -------
@@ -648,6 +812,8 @@ class HeadTargets:
             layer_column=layer_column,
             group_column=group_column,
             weight_column=weight_column,
+            screen_top_column=screen_top_column,
+            screen_bottom_column=screen_bottom_column,
         )
         calendar, months = model_clock(model, mode=mode, owner=owner)
         long = read_readings(readings, date_column=date_column, value_column=value_column, owner=owner)
@@ -682,6 +848,8 @@ class HeadTargets:
             weight_column=weight_column,
             time_column="time",
             value_column=value_column,
+            screen_top_column=screen_top_column,
+            screen_bottom_column=screen_bottom_column,
         )
         targets._binned = binning
         return targets
@@ -715,6 +883,19 @@ class HeadTargets:
         return None if binned is None else binned.calendar
 
     @property
+    def screened(self) -> bool:
+        """Whether any location carries a well screen (ledger 556).
+
+        A screened location is ONE observation of the transmissivity-weighted head
+        over the layers its screen opens into (see the constructor's
+        ``screen_top_column``).
+        """
+
+        return "screen_top" in self._locations.columns and bool(
+            self._locations["screen_top"].notna().any()
+        )
+
+    @property
     def locations_gdf(self) -> gpd.GeoDataFrame:
         """Normalized observation locations table."""
 
@@ -724,7 +905,8 @@ class HeadTargets:
         """Return the merged long-format target table.
 
         One row per values row and location row sharing its name (two for a well
-        screened in two layers). ``weight`` is the reading's own weight where the
+        given in two layers; one for a SCREENED well, which is one location row,
+        with its ``screen_top``/``screen_bottom``). ``weight`` is the reading's own weight where the
         values table gave one, else its location's (ledger 504) -- the
         weight the PEST build gives the observation, ``NaN`` meaning 1.0 there.
 
@@ -798,8 +980,8 @@ class HeadTargets:
             caller=f"{type(self).__name__}.to_wide()",
         )
         # After the check a (target, period) cell holds at most ONE value, so
-        # "first" only prefers it over blank rows (and, for a two-screen well,
-        # over the copy ``get()`` makes for its second screen).
+        # "first" only prefers it over blank rows (and, for a well given in two
+        # layers, over the copy ``get()`` makes for its second layer row).
         return _wide_by_period(
             self.get(), value_column="head_target", caller=f"{type(self).__name__}.to_wide()",
             names=self._locations["name"],
@@ -863,7 +1045,9 @@ class HeadTargets:
         Returns
         -------
         pandas.DataFrame
-            One row per MATCHED target location, with its ``cell`` and ``layer``.
+            One row per MATCHED target location, with its ``cell`` and ``layer``
+            (``<NA>`` for a screened target given no layer), and its
+            ``screen_top``/``screen_bottom`` when the set carries screens.
 
         Notes
         -----
@@ -887,6 +1071,12 @@ class HeadTargets:
         numbers a DISU model's cells by node and writes its heads as one record of
         every node. A point there resolves to the lowest-numbered node holding it;
         name a deeper node by its ``cell`` (ledger 452).
+
+        A SCREENED target with no layer (ledger 556) matches the
+        lowest-numbered cell holding it that is active in ANY layer; which of its
+        layers it reads is :meth:`observation_labels`' question. A screened set on
+        a DISU model is refused here: a screen reads a column's layers, and DISU has
+        no columns.
         """
 
         self._refuse_layers_off_the_grid(model)
@@ -903,10 +1093,16 @@ class HeadTargets:
                 )
                 matches = matches.drop(columns=["x", "y"], errors="ignore").merge(centroids, on="cell", how="left")
             return _copy_frame(
-                matches.loc[:, ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]]
+                matches.loc[:, ["name", "name_key", "layer", "group", "weight", "cell", "x", "y",
+                                *self._screen_columns()]]
             )
 
         return self._matched_from_geometry(model)
+
+    def _screen_columns(self) -> list[str]:
+        """``["screen_top", "screen_bottom"]`` when the locations carry screens, else none."""
+
+        return [column for column in ("screen_top", "screen_bottom") if column in self._locations.columns]
 
     def _refuse_layers_off_the_grid(self, model) -> None:
         """Refuse a target layer the model's views do not number (ledger 419).
@@ -920,8 +1116,15 @@ class HeadTargets:
         if not has_cell_numbering(model):
             return
         numbering = cell_numbering(model)
+        if numbering.kind == "unstructured" and self.screened:
+            raise ValueError(
+                f"{self._FIELD_LABEL.capitalize()} targets: a screened well reads the "
+                "layers of its COLUMN, and a DISU model has no columns -- its cells are "
+                "numbered by node, in one layer. Give each screened well's node by its "
+                "`cell` with no screen (ledger 556)."
+            )
         try:
-            numbering.check(layers=self._locations["layer"].astype(int))
+            numbering.check(layers=self._locations["layer"].dropna().astype(int))
         except ValueError as error:
             hint = (
                 " A DISU model's cells are numbered by node, in one layer: give a "
@@ -944,7 +1147,7 @@ class HeadTargets:
         ncpl = len(model_cell_polygons(model))
         domain = model_domain(model, ncpl)
         cells = matches["cell"].astype(int)
-        layers = matches["layer"].astype(int)
+        layers = matches["layer"]
         outside = [
             f"{name!r} (cell {cell})"
             for name, cell in zip(matches["name"], cells, strict=True)
@@ -961,7 +1164,7 @@ class HeadTargets:
             + (f", inside excavation {dug[cell]!r}" if cell in dug else "")
             + ")"
             for name, cell, layer in zip(matches["name"], cells, layers, strict=True)
-            if not domain_active(domain, layer, cell)
+            if not _usable(domain, layer, cell)
         ]
         if inactive:
             raise ValueError(
@@ -978,7 +1181,8 @@ class HeadTargets:
         polys = model_cell_polygons(model)
         locations = self._locations_in_grid_crs(model)
         domain = model_domain(model, len(polys))
-        columns = ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]
+        columns = ["name", "name_key", "layer", "group", "weight", "cell", "x", "y",
+                   *self._screen_columns()]
         rows: list[dict[str, Any]] = []
         missed: list[str] = []
         dug: dict[int, str] | None = None
@@ -991,7 +1195,7 @@ class HeadTargets:
                     f"{geometry.geom_type}. A {self._FIELD_LABEL} is measured at a "
                     f"POINT: give its coordinates, or the cell it sits in."
                 )
-            layer = int(row["layer"])
+            layer = row["layer"]
             hits = cell_shares(
                 polys,
                 geometry,
@@ -999,11 +1203,14 @@ class HeadTargets:
                 # so the lowest-numbered usable cell wins a tie without a second
                 # copy of that rule here.
                 usable=lambda cells, layer=layer: [
-                    cell for cell in cells if domain_active(domain, layer, cell)
+                    cell for cell in cells if _usable(domain, layer, cell)
                 ],
             )
             if not hits:
-                reason = miss_reason(polys, geometry, target=f"active cell in layer {layer}")
+                reason = miss_reason(
+                    polys, geometry,
+                    target="active cell" if _is_blank(layer) else f"active cell in layer {int(layer)}",
+                )
                 if dug is None:
                     dug = _dug_cells(model)
                 inside = [cell for cell, _share in cell_shares(polys, geometry)] if dug else []
@@ -1019,7 +1226,7 @@ class HeadTargets:
             self._report_missed(model, missed, total=len(locations))
         frame = pd.DataFrame(rows, columns=columns)
         frame["cell"] = frame["cell"].astype(int)
-        frame["layer"] = frame["layer"].astype(int)
+        frame["layer"] = _layer_series(frame["layer"])
         return _copy_frame(frame)
 
     def _locations_in_grid_crs(self, model) -> gpd.GeoDataFrame:
@@ -1089,21 +1296,166 @@ class HeadTargets:
         Returns
         -------
         pandas.DataFrame
-            :meth:`match_to_model`'s table plus ``obsname``, the label.
+            :meth:`match_to_model`'s table plus ``obsname``, the label. A SCREENED
+            location (ledger 556) is one label -- its bare name --
+            on one row per ACTIVE layer its screen opens into at its cell, each
+            with ``layer`` that layer, ``open_bottom``/``open_top`` the screen
+            clipped to the cell, ``icelltype`` the layer's NPF cell type there and
+            ``fixed_b`` a THICKSTRT layer's open length from the starting heads
+            (``NaN`` otherwise); those four columns are present only for a set with
+            screens, ``NaN`` on its unscreened rows.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`match_to_model`; and for a screened location, when its given
+            layer is not one its screen opens into, when it opens into no active
+            layer at its cell, or when the model has no NPF to weight by.
+
+        Warns
+        -----
+        UserWarning
+            Once per screen reaching above the model top, below its bottom or
+            into an inactive layer: it is clipped to what it opens into.
         """
+
+        return self._expand_screens(self._labelled(model), model)
+
+    def _labelled(self, model) -> pd.DataFrame:
+        """:meth:`match_to_model` plus ``obsname``: one row per matched LOCATION row."""
 
         matches = self.match_to_model(model).copy()
         matches["obsname"] = _ensure_unique_observation_names(matches)
         return matches
+
+    def _expand_screens(self, labelled: pd.DataFrame, model) -> pd.DataFrame:
+        """A screened location as one row per ACTIVE layer its screen opens into (ledger 556).
+
+        Each row carries the screen clipped to that layer's cell (``open_bottom``,
+        ``open_top``), the layer's NPF ``icelltype`` there and, for a THICKSTRT
+        layer, the open length fixed from the starting heads (``fixed_b``; ``NaN``
+        otherwise) -- what :func:`~myflopy.modflow.mf6.hydraulics.screened_head`
+        weights by. An unscreened location is passed through, its screen columns
+        ``NaN``.
+        """
+
+        if not self.screened:
+            return labelled
+        screened = labelled["screen_top"].notna().to_numpy()
+        try:
+            flow = model_flow_properties(model)
+        except ValueError as error:
+            raise ValueError(
+                f"{type(self).__name__}: a screened well's head is weighted by each "
+                "layer's K and saturated open length, read off the model's NPF and "
+                f"discretization, and this model cannot answer: {error}"
+            ) from error
+        botm = np.asarray(flow.botm, dtype=float)
+        nlay = botm.shape[0]
+        botm = botm.reshape(nlay, -1)
+        ncells = botm.shape[1]
+        top = np.asarray(flow.top, dtype=float).reshape(-1)
+        layer_tops = np.vstack([top.reshape(1, -1), botm[:-1]])
+        celltype = (
+            np.ones((nlay, ncells), dtype=int) if flow.icelltype is None
+            else np.broadcast_to(np.asarray(flow.icelltype).reshape(nlay, -1), (nlay, ncells)).astype(int)
+        )
+        start = (
+            None if not flow.thickstrt or flow.strt is None
+            else np.broadcast_to(np.asarray(flow.strt, dtype=float).reshape(nlay, -1), (nlay, ncells))
+        )
+        domain = model_domain(model, ncells)
+        rows: list[dict] = []
+        notes: list[str] = []
+        for index, row in enumerate(labelled.to_dict("records")):
+            if not screened[index]:
+                rows.append(row | {"open_bottom": np.nan, "open_top": np.nan,
+                                   "icelltype": np.nan, "fixed_b": np.nan})
+                continue
+            cell = int(row["cell"])
+            name = str(row["name"])
+            screen_top, screen_bottom = float(row["screen_top"]), float(row["screen_bottom"])
+            open_top = np.minimum(screen_top, layer_tops[:, cell])
+            open_bottom = np.maximum(screen_bottom, botm[:, cell])
+            opens = np.flatnonzero(open_top > open_bottom)
+            given = row["layer"]
+            if not _is_blank(given) and int(given) not in set(opens.tolist()):
+                raise ValueError(
+                    f"{self._FIELD_LABEL.capitalize()} target {name!r} gives layer "
+                    f"{int(given)} and a screen from {screen_bottom:g} to {screen_top:g}, "
+                    f"which at its cell {cell} opens into "
+                    + (f"layer(s) {opens.tolist()}" if len(opens) else "no layer")
+                    + f" (the column runs from {top[cell]:g} down to {botm[-1, cell]:g}). "
+                    "Correct the layer or the screen, or leave the layer blank to let the "
+                    "screen decide (ledger 556)."
+                )
+            active = [layer for layer in opens if domain_active(domain, int(layer), cell)]
+            if not active:
+                where = (
+                    "lies entirely above the model top" if screen_bottom >= top[cell]
+                    else "lies entirely below the model bottom" if screen_top <= botm[-1, cell]
+                    else f"opens only into layer(s) {opens.tolist()}, inactive there"
+                )
+                raise ValueError(
+                    f"{self._FIELD_LABEL.capitalize()} target {name!r}: its screen, from "
+                    f"{screen_bottom:g} to {screen_top:g}, {where} at its cell {cell} "
+                    f"(the column runs from {top[cell]:g} down to {botm[-1, cell]:g}), so "
+                    "MF6 writes no head it reads. Check the screen's elevations (the "
+                    "model's length units and datum) and the well's location (ledger "
+                    "341's rule: a target PEST could never see is refused)."
+                )
+            lost = []
+            if screen_top > top[cell]:
+                lost.append(f"{screen_top - top[cell]:g} above the model top")
+            if screen_bottom < botm[-1, cell]:
+                lost.append(f"{botm[-1, cell] - screen_bottom:g} below the model bottom")
+            idle = [int(layer) for layer in opens if int(layer) not in set(int(a) for a in active)]
+            if idle:
+                lost.append(f"its part in inactive layer(s) {idle}")
+            if lost:
+                notes.append(f"{name!r} ({', '.join(lost)})")
+            for layer in active:
+                layer = int(layer)
+                fixed = np.nan
+                if start is not None and celltype[layer, cell] < 0:
+                    fixed = float(saturated_thickness(
+                        start[layer, cell], open_top[layer], open_bottom[layer],
+                        icelltype=celltype[layer, cell], start=start[layer, cell],
+                    ))
+                rows.append(row | {
+                    "layer": layer,
+                    "open_bottom": float(open_bottom[layer]),
+                    "open_top": float(open_top[layer]),
+                    "icelltype": int(celltype[layer, cell]),
+                    "fixed_b": fixed,
+                })
+        new_notes = [note for note in notes if note not in self._screen_warned]
+        if new_notes:
+            self._screen_warned.update(new_notes)
+            message = (
+                f"{self._FIELD_LABEL.capitalize()} targets: {len(new_notes)} screen(s) reach "
+                f"past what they read, and are clipped to the active layers they open into: "
+                f"{_listing(new_notes)} (ledger 556)."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+        frame = pd.DataFrame(rows)
+        frame["layer"] = frame["layer"].astype(int)
+        frame["cell"] = frame["cell"].astype(int)
+        return _copy_frame(frame)
 
     def simulated_heads(self, model) -> pd.DataFrame:
         """Return simulated heads for the target locations by stress period.
 
         The result is a wide table suitable for pyEMU list-style observation
         setup: one row per stress period and one column per observation LABEL
-        (see :meth:`observation_labels`, which a repeated name disambiguates).
-        Each period's value is the one at its END (ledger 336), read on the
-        head file's own clock.
+        (see :meth:`observation_labels`, which a repeated name disambiguates), in
+        the order the forward run writes them. Each period's value is the one at
+        its END (ledger 336), read on the head file's own clock -- the file the
+        model's OC declares (``HEAD FILEOUT``, ledger 505), through the one
+        period-end reader PEST's forward run uses (ledger 557). A
+        SCREENED well's column is its layers' heads weighted by NPF ``K`` x
+        saturated open length (ledger 556).
 
         Parameters
         ----------
@@ -1126,24 +1478,52 @@ class HeadTargets:
         """
 
         refuse_another_clock(self, model, caller=f"{type(self).__name__}.simulated_heads(...)")
-        matches = self.observation_labels(model)
-        sim = _simulated_field_by_period(
-            model,
-            table_attribute=self._TABLE_ATTRIBUTE,
-            store_column=self._STORE_COLUMN,
+        # The label, not the bare name: one column per (name, layer), so a
+        # two-layer well is two observations rather than one column whose value
+        # depended on which of its rows got there first -- and one column per
+        # SCREENED well, its layers weighted into one head (ledger 556).
+        return self._simulated_table(model, self.observation_labels(model))
+
+    def _simulated_table(self, model, mapping: pd.DataFrame) -> pd.DataFrame:
+        """``per`` plus one column per label of ``mapping``: the ONE period-end reader (ledger 557).
+
+        A run model's values come from the file its OC DECLARES (``HEAD FILEOUT``,
+        ``CONCENTRATION FILEOUT``; ledger 505) through
+        :func:`~myflopy.modflow.mf6.target_values.read_target_values`, the reader
+        PEST's forward run uses, at each period's end on the file's own clock
+        (ledger 336). It read ``<model>.hds`` through a ``HeadsPlus`` built twice
+        per call, with the whole value table (7.0-9.5 s and 1.9 GB per
+        ``compare()`` on Ten Trails at 38 periods). A duck-typed double with no
+        workspace or TDIS is read from its value table, through the same
+        :func:`~myflopy.modflow.mf6.target_values.target_value_table`.
+        """
+
+        k = None
+        if "open_top" in mapping.columns and mapping["open_top"].notna().any():
+            flow = model_flow_properties(model)
+            k = np.asarray(flow.k, dtype=float).reshape(np.asarray(flow.botm).shape[0], -1)
+        kind, saves, text = {
+            "all_heads": ("head", "HEAD", "head"),
+            "all_conc": ("concentration", "CONCENTRATION", "concentration"),
+        }[self._TABLE_ATTRIBUTE]
+        workspace = getattr(model, "workspace", None)
+        perlen = period_lengths(model)
+        if workspace is None or perlen is None:
+            frame = _simulated_field_by_period(
+                model, table_attribute=self._TABLE_ATTRIBUTE, store_column=self._STORE_COLUMN,
+            )
+            return target_value_table(_records_of_table(frame), mapping, k=k)
+        gate = getattr(model, "_require_model_kind", None)
+        if callable(gate) and self._TABLE_ATTRIBUTE == "all_conc":
+            gate("gwt6", "all_conc", "concentration")
+        path = _declared_output_path(Path(workspace), model.name, kind)
+        try:
+            shown = path.relative_to(Path(workspace)).as_posix()
+        except ValueError:
+            shown = str(path)
+        return read_target_values(
+            path, mapping, perlen=perlen, file=shown, saves=saves, text=text, k=k,
         )
-        merged = matches.merge(sim, on=["layer", "cell"], how="left")
-        wide = merged.pivot_table(
-            index="per",
-            # The label, not the bare name: one column per (name, layer), so a
-            # two-screen well is two observations rather than one column whose
-            # value depended on which of its rows got there first.
-            columns="obsname",
-            values="sim_head",
-            aggfunc="first",
-        ).reset_index()
-        wide.columns.name = None
-        return wide
 
     def compare(self, model) -> pd.DataFrame:
         """Compare target heads against simulated heads by stress period.
@@ -1152,8 +1532,13 @@ class HeadTargets:
         reading every target family and PEST's build share (ledger 340): ``1.0``
         is period 1, and a key with a fraction is refused rather than truncated
         (``10.9`` used to read period 10). ``sim_head`` is the head at each
-        period's END (ledger 336), as :meth:`simulated_heads` reads it. A blank
-        target value is a row with ``NaN`` ``head_target`` and ``residual``.
+        period's END (ledger 336), as :meth:`simulated_heads` reads it -- for a
+        SCREENED well the K x saturated-open-length weighted head of its open
+        layers (ledger 556), weighted with this model's NPF ``K``.
+        A blank target value is a row with ``NaN`` ``head_target`` and
+        ``residual``. Every target is matched to the model first
+        (:meth:`match_to_model`), so a target given as a cell id the grid does not
+        have, or one inactive in its layer, raises here too.
 
         Parameters
         ----------
@@ -1189,36 +1574,32 @@ class HeadTargets:
         )
         targets = self.get().copy()
         targets["per"] = _numeric_periods(targets, caller=caller)
-        sim = _simulated_field_by_period(
-            model,
-            table_attribute=self._TABLE_ATTRIBUTE,
-            store_column=self._STORE_COLUMN,
-        )
+        labelled = self._labelled(model)
+        # The ONE period-end reader, shared with PEST's forward run (ledger
+        # 557): one value per label, a screened well's layers weighted
+        # into one (ledger 556).
+        table = self._simulated_table(model, self._expand_screens(labelled, model))
         # A key past the run's periods matched no row, and stats() dropped it in
         # silence while the PEST build refused it (ledger 500).
         _refuse_keys_off_the_periods(
-            targets, sim["per"].unique(), model=model, caller=caller,
+            targets, table["per"].unique(), model=model, caller=caller,
             route=_FIELD_FILES[self._TABLE_ATTRIBUTE][1],
         )
-        if "cell" in targets.columns and targets["cell"].notna().all():
-            merged = targets.merge(sim, on=["per", "layer", "cell"], how="left")
-            if (targets["x"].isna().any() or targets["y"].isna().any()) and hasattr(model, "vor"):
-                matches = self.match_to_model(model).loc[:, ["name", "name_key", "layer", "cell", "x", "y"]]
-                merged = merged.drop(columns=["x", "y"], errors="ignore").merge(
-                    matches,
-                    on=["name", "name_key", "layer", "cell"],
-                    how="left",
-                )
-        else:
-            matches = self.match_to_model(model).loc[:, ["name", "name_key", "layer", "cell", "x", "y"]]
-            # The matched x/y -- in the GRID's frame -- win, as on the cell branch:
-            # both sides carried x/y, so pandas returned x_x/y_x (the targets' own
-            # CRS) beside x_y/y_y and no `x` at all.
-            merged = (
-                targets.drop(columns=["x", "y"], errors="ignore")
-                .merge(matches, on=["name", "name_key", "layer"], how="left")
-                .merge(sim, on=["per", "layer", "cell"], how="left")
-            )
+        sim = table.melt(id_vars="per", var_name="obsname", value_name="sim_head")
+        # Each target row is its location row's label: by name and the location's
+        # own layer (blank for a screened well with none, matched as one key).
+        # The matched cell and x/y -- in the GRID's frame -- win over the targets'
+        # own: both sides carried x/y, so pandas returned x_x/y_x beside x_y/y_y.
+        matches = labelled.loc[:, ["name_key", "layer", "cell", "x", "y", "obsname"]].assign(
+            _layer_key=_layer_key(labelled["layer"])
+        ).drop(columns=["layer"])
+        merged = (
+            targets.drop(columns=["cell", "x", "y"], errors="ignore")
+            .assign(_layer_key=_layer_key(targets["layer"]))
+            .merge(matches, on=["name_key", "_layer_key"], how="left")
+            .merge(sim, on=["per", "obsname"], how="left")
+            .drop(columns=["_layer_key", "obsname"])
+        )
         merged["residual"] = merged["sim_head"] - merged["head_target"]
         merged["abs_residual"] = merged["residual"].abs()
         return _copy_frame(merged)
@@ -1330,6 +1711,14 @@ class HeadTargets:
         """
 
         kind = self._observation_kind(kind)
+        if self.screened:
+            raise ValueError(
+                f"{type(self).__name__}.to_flopy_obs(...): these targets hold screened "
+                "wells, and an MF6 HEAD observation reads ONE cell -- MF6's OBS has no "
+                "multi-layer head. Compare them with compare(), or calibrate them through "
+                "cal.observe(...), which weight each screen's layers by K x saturated "
+                "open length (ledger 556)."
+            )
         matches = self.observation_labels(model)
         # The cellid the model's own OBS reads (ledger 455): `(layer, cell)` was
         # written on every grid, which MF6 refuses on DIS and reads on DISU as node
@@ -1533,7 +1922,9 @@ class BoundHeadTargets:
         Returns
         -------
         pandas.DataFrame
-            One row per MATCHED target location, with its ``cell`` and ``layer``.
+            One row per MATCHED target location, with its ``cell`` and ``layer``
+            (``<NA>`` for a screened target given no layer), and its
+            ``screen_top``/``screen_bottom`` when the set carries screens.
         """
 
         return self.targets.match_to_model(self.model if model is None else model)
@@ -1871,9 +2262,9 @@ class BoundHeadTargetPlots:
             column ignoring case (and the argument's surrounding space). Default
             ``None`` draws the set's only name, and raises ``ValueError`` when
             the set holds more than one; a name matching no row raises
-            ``ValueError`` too. A well screened in two layers is drawn as one
-            line per layer (one line zig-zagged between them until ledger
-            477).
+            ``ValueError`` too. A well given in two layers (no screen) is drawn as
+            one line per layer (one line zig-zagged between them until ledger
+            477); a screened well is one observation, one line.
         baseline : SimulationBase or None, optional
             A second run model whose simulated values for the same target are
             drawn as a "Baseline" line. Default ``None`` draws the bound model

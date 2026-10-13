@@ -1958,6 +1958,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
   `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, `RivFlowTargets`
   (or their pre-built `*ObservationSpec`). All are wired into the native build + forward run.
+- **A screened well is ONE head observation** (ledger 556): `screen_top`/
+  `screen_bottom` on a `HeadTargets` location (on when the columns are present) reads the
+  ACTIVE layers the screen opens into, weighted by NPF `K` x saturated open length --
+  `hydraulics.screened_head`, sharing `saturated_thickness` with `transmissivity()` -- and
+  the deepest open layer's head when all are dry (under NEWTON a finite head; Ten Trails
+  holds ~17% of active cells below their bottom). The forward run weights with the
+  REALIZATION's K files (`k_sources` in the head config, the per-layer `npf_k_layer*.txt`
+  the build re-stores and pyEMU/pilot points rewrite). A set with only `layer` columns keeps
+  ledger 234 (two layers = two full-weight observations). `compare()`/`simulated_heads()` and
+  the forward-run writers read through ONE period-end reader of the OC-declared file,
+  `target_values.read_target_values` (ledger 557) -- do not read a target's
+  heads through `HeadsPlus`/`all_heads` again (7 s and 1.9 GB per `compare()` on Ten Trails).
 - **`RivFlowTargets` (creek baseflow) and `DrnFlowTargets` are ONE zone implementation**
   (ledger 534): `observations/_zones.py`, each family a thin subclass naming its
   MF6 quantity and sign rule -- add a zone family there, never copy `drn.py`. RIV is MF6's

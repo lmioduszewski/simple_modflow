@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 555 entries (560 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 557 entries (562 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 557 | `compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-dec... | 2026-10-12 |
+| 556 | A well screened across layers is ONE observation of its K x saturated-open-length weighted head | 2026-10-12 |
 | 555 | A basin is not a LAYER surface on its own: its `NaN` off the lake is refused | 2026-10-12 |
 | 554 | `mf.Basin` gives a lake an ASSUMED bed where no bathymetry exists | 2026-10-12 |
 | 553 | The majority vote is by VALUE: a unit's features are united before values compete, and a polygon carrying t... | 2026-10-12 |
@@ -8131,8 +8133,12 @@ same day, which is the useful part of the result.
       - An observed row whose target matched no cell is now dropped from the pst
         rows (an inner join) rather than becoming a row for a column that does not
         exist.
-      - **The observed values stay keyed by name.** A well with two screens has one
-        measured series, so both of its observations compare against that series.
+      - **The observed values stay keyed by name.** ~~A well with two screens has one
+        measured series, so both of its observations compare against that series.~~
+        A well given as two LAYER rows (no screen columns) has one measured series, so
+        both of its observations compare against that series -- each at full weight,
+        doubling the well in phi; a well given a SCREEN is one observation of its
+        K x saturated-open-length weighted head instead (ledger 556).
         That is what keying by (name, layer) means here; splitting the measurements
         per screen would need the values table to carry a layer, and it does not.
       - Five mutants and an import probe, all killed: the build pivoting on the
@@ -21250,3 +21256,58 @@ same day, which is the useful part of the result.
       into a unit. **Not widened to every `NaN` layer surface**: a partial raster as a
       unit bottom still writes `NaN` silently (measured, 200 of 400 cells) -- a
       pre-existing gap of the same class, outside this batch.
+
+556. **A well screened across layers is ONE observation of its K x saturated-open-length weighted head (2026-10-12).**
+      `HeadTargets` locations take `screen_top`/`screen_bottom` (elevations); a row
+      giving both reads the ACTIVE layers its screen opens into at its cell as
+      `sum(K_i b_i h_i) / sum(K_i b_i)` (`hydraulics.screened_head`). Decided:
+      - **On whenever both columns are present** (the user's call, item 11), like
+        `layer_column`; a set with only layer columns keeps ledger 234 unchanged (two
+        layers = two full-weight observations).
+      - **`b_i` is MF6's ICELLTYPE rule over the open interval**, from the SAME function
+        `transmissivity()` reads (`saturated_thickness`): confined = whole open length,
+        convertible = the part below the head, THICKSTRT = the part below `strt`, fixed
+        at build (`fixed_b` in the map). Horizontal `K` only; `k22`/`k33` are not read.
+      - **All open layers dry -> the deepest open layer's head**, not the screen bottom:
+        under NEWTON MF6 writes a finite head below the cell bottom rather than -1e30, so
+        it still moves with the parameters. Measured on Ten Trails copies
+        (`docs/reproducers/screened_head_targets.py`): `ss` 16,900 of 101,615 active
+        cells, `hm_mounding_final_flow` 12,185 of 90,446 at its last period, none -1e30.
+        A real column with the water table in layer 0 (cell 15061) read 530.393 from
+        layer heads 531.412 / 479.492 / 416.217 -- layer 0's 0.25 ft of saturated screen
+        at K 411.6 outweighs layer 1's 4.81 ft at K 0.436.
+      - **Dynamic weights**: the forward run reads the REALIZATION's K from the per-layer
+        `npf_k_layer<n>.txt` files MF6 read (pyEMU's multipliers and the pilot points
+        rewrite them first), found through FloPy's records of the staged model
+        (`screen_k_sources`, the ledger-517 rule) and recorded with each layer's
+        FACTOR; the build re-stores a whole-grid NPF `k` one file per layer when any
+        head set is screened. A real build + forward run with a K multiplier of 10 on
+        layer 2 wrote the hand-computed head (`test_the_forward_run_weights_with_the_realizations_k`).
+      - **A row with a layer AND a screen is checked**: the layer must be one the screen
+        opens into, else refused naming those layers. A screened row may leave its layer
+        blank (the only blank layer ledger 501 now allows).
+      - **Refused, not approximated**: a one-sided or inverted screen, one screen column
+        without its twin, a screened name on two rows, a screen opening into no active
+        layer, a screened set on DISU (no columns), screens on `ConcTargets` (a
+        flux-weighted concentration needs the flow model's heads and K beside the
+        `.ucn`: deferred) and `to_flopy_obs` of a screened set (MF6 OBS has no multi-layer
+        head). A screen past the column or into an inactive layer is clipped and warned.
+      - `HeadTargets.from_cells(layers=)` now defaults to `None` (layer 0 for an
+        unscreened target, none for a screened one); `None` already meant 0.
+
+557. **`compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-declared file (2026-10-12).**
+      `target_values.read_target_values` (`period_end_records` + `target_value_table`)
+      replaces two derivations: `compare()` built `HeadsPlus` twice per call and the whole
+      kstpkper x layer x cell table, and opened `<model>.hds` whatever the OC said (the
+      found-not-fixed of ledger 505's lane). Measured on a copy of Ten Trails
+      `hm_mounding_final_flow`, 200 targets x 38 periods: 3.2-4.2 s and 1.89 GB peak per
+      call before (7.0-9.5 s at a load of ~14), 0.06 s (0.91 s on the first call, which
+      loads the simulation for its TDIS) and 0.45 GB after, every value identical.
+      **Kept on purpose:** a duck-typed double with no workspace or TDIS is still read from
+      its `all_heads`/`all_conc` table (`_simulated_field_by_period`), through the same
+      `target_value_table` -- the record SOURCE differs, the selection and the screen
+      weighting do not. `simulated_heads()` now lists its columns in the map's order (the
+      forward run's), not sorted; a period-end refusal names the file (`m.hds`) instead
+      of "the head file". **Not done:** `get_hds` still builds a new `HeadsPlus` on every
+      access (its docstring, which said "Build and cache", now says so); the views still pay
+      that -- caching it needs an invalidation on a rerun, which `_kstpkper` lacks too.
