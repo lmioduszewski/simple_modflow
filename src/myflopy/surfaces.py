@@ -202,6 +202,94 @@ def _refuse_a_basin_gap(surface, values, *, label) -> None:
         )
 
 
+def _describe_source(surface) -> str:
+    """A few words naming where a layer surface's values come from, for a refusal."""
+
+    if surface is None:
+        return ""
+    kind = getattr(surface, "kind", None)
+    if kind == "raster" and surface.path is not None:
+        return f"raster '{Path(surface.path).name}'"
+    if kind == "contours" and surface.contours is not None:
+        return f"contours '{Path(surface.contours).name}'"
+    if surface.is_relative:
+        return "measured from the surface above, which has no value there"
+    return f"a {kind!r} surface"
+
+
+def refuse_unbounded_cells(top, botm, idomain=None, *, labels, surfaces=None) -> None:
+    """Refuse layer elevations that leave a cell of the DISV without a top or a bottom.
+
+    The one rule every layer-stack route to a DISV goes through
+    (``LayerBuildResult.to_disv`` -- so ``stack.to_disv``, ``mf.disv(stack)`` and
+    ``mf.disv(result)`` -- and :meth:`LayerSurfaces.to_disv`): a cell with ``idomain != 0``
+    whose top (the model top, or the bottom of the layer above) or bottom is not finite
+    is refused, naming the elevations, the cells and their source. A raster covering
+    only part of the grid as a unit bottom or a stack top wrote ``NaN`` there in silence
+    (ledgers 555, 587). MF6 runs such a DISV to normal termination
+    (``docs/reproducers/nan_layer_elevations.py``): every head ``NaN`` for an active
+    cell, and a pass-through (``idomain -1``) cell silently disconnecting the cell below
+    it, which kept its starting head. An INACTIVE cell (``idomain 0``) may hold one: MF6
+    reads it and never uses it, and every head comes out as with a finite value there.
+
+    Parameters
+    ----------
+    top : array_like of float, shape (ncpl,)
+        The model top.
+    botm : array_like of float, shape (nlay, ncpl)
+        The layer bottoms, top layer first.
+    idomain : array_like of int, shape (nlay, ncpl), optional
+        ``None`` (the default) counts every cell.
+    labels : sequence of str
+        One name per elevation: the top's, then each layer bottom's.
+    surfaces : sequence of Surface or None, optional
+        The surface each elevation was sampled from, in ``labels`` order, to name the
+        source; ``None`` (the default) names only the labels.
+
+    Raises
+    ------
+    ValueError
+        Naming each elevation with a missing value at a counted cell, how many cells
+        and the first ten, its source, and the spellings that fill it.
+    """
+
+    top = np.asarray(top, dtype=float).reshape(-1)
+    botm = np.asarray(botm, dtype=float).reshape(-1, top.size)
+    elevations = np.vstack([top[None, :], botm])
+    counted = (np.ones(botm.shape, dtype=bool) if idomain is None
+               else np.asarray(idomain).reshape(botm.shape) != 0)
+    # An elevation is needed where a counted cell has it as its top or its bottom.
+    needed = np.zeros(elevations.shape, dtype=bool)
+    needed[:-1] |= counted
+    needed[1:] |= counted
+    missing = needed & ~np.isfinite(elevations)
+    if not missing.any():
+        return
+    sources = list(surfaces) if surfaces is not None else [None] * len(elevations)
+    lines = []
+    for index in np.flatnonzero(missing.any(axis=1)):
+        cells = np.flatnonzero(missing[index])
+        label = labels[index] if index < len(labels) else f"surface {index}"
+        what = "the model top" if index == 0 else f"the bottom of layer {label!r}"
+        source = _describe_source(sources[index] if index < len(sources) else None)
+        lines.append(
+            f"  {what}{f' ({source})' if source else ''}: {cells.size} of {top.size} cells, "
+            f"first {cells[:10].tolist()}"
+        )
+    raise ValueError(
+        "The layer elevations have no value at cells the DISV would make active or "
+        "pass-through:\n" + "\n".join(lines) + "\n"
+        "A raster covering only part of the grid leaves its cells NaN, and MF6 runs a NaN "
+        "elevation to normal termination with NaN heads (or, under a pass-through cell, "
+        "a cell silently disconnected). Fill them: a unit bottom from a raster takes the "
+        "surface above where it has none with mf.Raster(path, fill='propagate'); any "
+        "surface takes another's value where it is blank through mf.Max(<surface>, <other>) "
+        "or mf.Min(...) (nanmax/nanmin) -- the model top has no surface above, so it needs "
+        "a source covering the grid or such a fallback. Or make those cells inactive "
+        "(idomain 0). result.qc() counts them."
+    )
+
+
 def _looks_positional(value) -> bool:
     """Whether ``value`` reads as cell numbers or a boolean mask rather than a place."""
 
@@ -2104,8 +2192,9 @@ class Surface:
             vor, [self.resolve_source(refresh=refresh)], [0], method=method,
             nodata=self.nodata,
             # A raster covering part of the model is normal here: `fill="propagate"`
-            # inherits the rest from the surface above, and the pinch-out rules turn
-            # what is left into idomain. Warning per cell would be noise.
+            # inherits the rest from the surface above, and `.qc()` counts what is
+            # left. Warning per cell would be noise; a NaN that would reach a DISV is
+            # refused there instead (`refuse_unbounded_cells`, ledger 587).
             gaps="ignore",
         )
         # Converted BEFORE the fill: `previous` is in model units already.
@@ -3096,7 +3185,11 @@ class LayerSurfaces:
             An unknown ``length_units``; ``pinch_out=True`` together with an
             ``idomain``; with ``pinch_out=True``, a ``minimum_thickness``/``pinch``
             of the wrong length, an unknown ``pinch``, or ``min_sep`` not below a
-            pinching layer's threshold. None of them has written ``vor``.
+            pinching layer's threshold; a cell with ``idomain != 0`` (every cell,
+            with no ``idomain``) left with no finite top or bottom -- a raster
+            covering only part of the grid -- naming the surfaces and the cells
+            (:func:`refuse_unbounded_cells`; ledger 587). None of them has
+            written ``vor``.
         """
 
         from myflopy.package_api import disv  # lazy: avoid an import cycle
@@ -3121,6 +3214,7 @@ class LayerSurfaces:
             idomain = self._idomain_from_thickness(
                 thickness, minimum_thickness, pinch
             )
+        refuse_unbounded_cells(top, botm, idomain, labels=self.labels, surfaces=self.surfaces)
         props = vor.get_disv_gridprops()
         spec = disv(
             nlay=len(self.surfaces) - 1 if nlay is None else nlay,

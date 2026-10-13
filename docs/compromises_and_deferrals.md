@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 586 entries (591 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 587 entries (592 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 587 | No `NaN` layer elevation reaches a DISV at a cell with `idomain != 0` | 2026-10-12 |
 | 586 | A run lock proven stale is removed when a launch meets it, and said once | 2026-10-12 |
 | 585 | A `mf.Polygons` feature that reaches the grid but sets no cell is warned by name under every rule, with or... | 2026-10-12 |
 | 584 | A map's hover footer dates its period from the TDIS clock when `model.per_dates` is unset, by the period's... | 2026-10-12 |
@@ -21313,9 +21314,12 @@ same day, which is the useful part of the result.
       samples `NaN` at a cell raises naming the cells and the two spellings
       (`stack.excavate(bottom=basin)`, `mf.Min(<surface>, basin)`), so `mf.Min` -- whose
       `nanmin` takes the other surface off the lake -- stays a valid way to bake the bed
-      into a unit. **Not widened to every `NaN` layer surface**: a partial raster as a
+      into a unit. **Not widened to every `NaN` layer surface**: ~~a partial raster as a
       unit bottom still writes `NaN` silently (measured, 200 of 400 cells) -- a
-      pre-existing gap of the same class, outside this batch.
+      pre-existing gap of the same class, outside this batch.~~ (**CHANGED by ledger
+      587**: every route to a DISV refuses a `NaN` elevation at a cell with
+      `idomain != 0`, whatever surface wrote it; this entry's basin refusal at sampling
+      stands, naming the basin's own spellings.)
 
 556. **A well screened across layers is ONE observation of its K x saturated-open-length weighted head (2026-10-12).**
       `HeadTargets` locations take `screen_top`/`screen_bottom` (elevations); a row
@@ -21846,3 +21850,24 @@ same day, which is the useful part of the result.
       no `pestpp*` process working in the folder -- `run_state.run_activity`'s `"stale"`.
       A lock from another host, or on Windows, still counts as live and is never
       touched; the refusal still names the file to delete by hand.
+
+587. **No `NaN` layer elevation reaches a DISV at a cell with `idomain != 0` (2026-10-12).**
+      A raster covering only part of the grid as a unit bottom or a stack top left
+      `NaN` in `top`/`botm` (`Surface.values` samples with `gaps="ignore"`, ledger 248,
+      because `fill="propagate"` fills the gaps of a unit), and `stack.to_disv`,
+      `mf.disv(stack)` eager and lazy, `mf.disv(result)` and `LayerSurfaces.to_disv`
+      wrote it. Measured in MF6 (`docs/reproducers/nan_layer_elevations.py`): an active
+      cell bounded by `NaN` runs to normal termination with all 18 heads `NaN`; under a
+      pass-through (`idomain -1`) cell the cell below silently keeps its starting head
+      (90.0 against 91.67); an INACTIVE cell holding `NaN` changes no head. **Chosen:**
+      ONE rule, `surfaces.refuse_unbounded_cells`, refuses a non-finite top or bottom of
+      any cell with `idomain != 0`, naming each elevation, its cells and its source
+      (`raster 'dem.tif'`, or "measured from the surface above"), and the fills:
+      `fill="propagate"` for a unit bottom, `mf.Max`/`mf.Min` (nan-aware) for any
+      surface -- the top's only route, having no surface above. Checked where the DISV
+      is MADE, not at sampling: `build()`, `.qc()` and the stack's pictures keep
+      showing the gap (`qc().nan_active_cells` is its report), and a `NaN` in a cell
+      made inactive (`idomain 0`) still passes, which MF6 never reads. A result built
+      by hand or through `dataclasses.replace` names labels only (the surfaces ride on
+      `LayerStack.build`'s result, not as a field). Hand-written `mf.disv(top=, botm=)`
+      is not checked: no stack, no source to name.

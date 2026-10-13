@@ -56,6 +56,7 @@ from myflopy.surfaces import (
     _excavate_layers,
     _refuse_overlapping_excavations,
     _resolve_excavation,
+    refuse_unbounded_cells,
 )
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
@@ -1067,6 +1068,10 @@ class LayerBuildResult:
     excavated: np.ndarray | None = None
     #: (nlay, ncpl) each absorbed cell's OWN thickness under the bed (None when nothing was dug).
     absorbed: np.ndarray | None = None
+    # NOT a field: the surfaces this result was sampled from (top, then each layer
+    # bottom), set by `LayerStack.build` so a refusal in `to_disv` can name a source.
+    # A result made any other way -- by hand, `dataclasses.replace` -- names labels only.
+    _surfaces = None
 
     def per_layer(self, mapping, *, default=_UNSET) -> list:
         """Expand a ``{unit: value}`` mapping to one value per MODEL layer.
@@ -1254,7 +1259,11 @@ class LayerBuildResult:
         ------
         ValueError
             No grid: ``vor`` omitted and the result carries none (``result.vor`` is
-            ``None``). Or ``vor``'s cell count differs from the result's. Or the
+            ``None``). Or a cell with ``idomain != 0`` has no finite top or bottom --
+            a raster covering only part of the grid as a unit bottom or the stack's
+            top -- naming the elevations, the cells and their source
+            (:func:`~myflopy.surfaces.refuse_unbounded_cells`; ledger 587).
+            Or ``vor``'s cell count differs from the result's. Or the
             result's ``length_units`` is not a spelling the stack knows (see
             ``LayerStack(length_units=)``), which MF6 would read as undefined.
 
@@ -1276,6 +1285,12 @@ class LayerBuildResult:
         grid = self.vor if vor is None else vor
         if grid is None:
             raise ValueError("No grid; pass vor= or build the stack with a grid.")
+        # NaN must never reach a DISV: a partial raster as a unit bottom or a stack top
+        # left NaN elevations at cells MF6 then solves (ledgers 555, 587).
+        refuse_unbounded_cells(
+            self.top, self.botm, self.idomain, labels=["top", *self.names],
+            surfaces=self._surfaces,
+        )
         props = grid.get_disv_gridprops()
         ncpl = int(props["ncpl"])
         if ncpl != int(np.asarray(self.top).size):
@@ -4926,6 +4941,7 @@ class LayerStack:
         )
         if excavate and self._excavations:
             result = result._excavated_by(self._excavations, refresh=refresh)
+        result._surfaces = tuple(ls.surfaces)
         return result
 
     def qc(

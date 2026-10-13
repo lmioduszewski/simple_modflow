@@ -528,6 +528,11 @@ release-group boundnames; without them it names the fix and offers
   its base; the result carries
   `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
   per-layer lists `mf.npf`/`sto`/`ic` take.
+  A raster covering only part of the grid leaves `NaN` elevations, which `build()` and
+  `.qc()` report and every route to a DISV (`to_disv`, `mf.disv(stack)` eager or lazy,
+  `mf.disv(result)`) REFUSES at a cell with `idomain != 0`, naming the elevations, the
+  cells and the raster: give a unit bottom `mf.Raster(path, fill="propagate")`, or any
+  surface a fallback, `mf.Max(<raster>, <surface>)` (ledger 587).
   `length_units=` (default `"feet"`) takes `feet`/`ft`/`foot`/`us-ft`/`usft`,
   `meters`/`meter`/`metres`/`m` or `centimeters`/`centimeter`/`cm` and refuses any other spelling
   at the call; `to_disv` writes it as MF6's own word, `FEET`/`METERS`/`CENTIMETERS`
