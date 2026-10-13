@@ -3180,7 +3180,7 @@ class IesResults:
 
         Parameters
         ----------
-        realization : str, optional
+        realization : str or int, optional
             The realization's label, compared as text (``1`` finds ``"1"``). Default
             ``"base"``: the realization PESTPP-IES starts at the prior mean and
             updates with the ensemble (not the ensemble's mean; it was run, so its

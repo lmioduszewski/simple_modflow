@@ -62,7 +62,7 @@ def _project(root: Path):
     quarter = [int(c) for c in np.flatnonzero(np.abs(xy[:, 0] - (xmin + 3 * xmax) / 4) < 40)]
     east_line = root / "east.gpkg"
     gpd.GeoDataFrame(
-        {"head": [101.0], "cond": [30.0], "layer": [1], "name": ["east"]},
+        {"head": [101.0], "cond": [30.0], "layer": [1], "name": ["East_L1"]},
         geometry=[LineString([(xmax - 20.0, ymin + 1.0), (xmax - 20.0, ymax - 1.0)])],
         crs=grid.crs,
     ).to_file(east_line, layer="east")
@@ -86,7 +86,7 @@ def _project(root: Path):
         # A second RIV, as Ten Trails carries: named, with boundnames (an identity field).
         # Both carry boundnames: pyEMU refuses one parameter over list files of
         # different widths ("shape mismatch for array style").
-        mf.riv(stress_period_data={0: [[(0, c), 100.5, 20.0, 99.5, "crisp"] for c in quarter]},
+        mf.riv(stress_period_data={0: [[(0, c), 100.5, 20.0, 99.5, "Crisp_Creek"] for c in quarter]},
                name="crisp", boundnames=True),
         mf.ref("rch/base"),
         mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
@@ -218,14 +218,16 @@ def _period_groups_and_list_targets_come_back_with_their_own_values(calibration,
     crisp = base.get("crisp", "stress_period_data")
     assert np.allclose(crisp["stage"], 100.5 + offset, rtol=0, atol=1e-6)
     assert np.allclose(crisp["rbot"], 99.5 + offset, rtol=0, atol=1e-6)
-    assert set(crisp["boundname"]) == {"crisp"}
+    # FloPy reads a boundname lower-cased; the run declared it mixed-case (Ten Trails
+    # carries `ghb_L3`), and the write-back keeps the run's spelling.
+    assert set(crisp["boundname"]) == {"crisp_creek"}
     # ... and the package written back carries both: stage AND rbot moved, cond kept.
     records = base.packages()["riv"].options["stress_period_data"][0]
     assert np.allclose([r[1] for r in records], 99.0 + offset, rtol=0, atol=1e-6)
     assert np.allclose([r[3] for r in records], 97.0 + offset, rtol=0, atol=1e-6)
     assert np.allclose([r[2] for r in records], 40.0)
     crisp_records = base.packages()["crisp"].options["stress_period_data"][0]
-    assert [r[4] for r in crisp_records] == ["crisp"] * len(crisp_records)
+    assert [r[4] for r in crisp_records] == ["Crisp_Creek"] * len(crisp_records)
     assert np.allclose([r[3] for r in crisp_records], 99.5 + offset, rtol=0, atol=1e-6)
     summary = base.summary().set_index("package")
     assert summary.loc["riv", "change"] == "offset"
@@ -388,6 +390,27 @@ def test_a_list_record_on_another_cell_is_refused():
     assert substituted[0][1] == [(1, 0), 99.5, 40.0, 97.5]
 
 
+def test_a_boundname_differing_only_in_case_is_the_same_record():
+    """FloPy reads a boundname lower-cased; the run's mixed-case spelling is kept.
+
+    Ten Trails' GHB carries ``ghb_L3``: compared verbatim, every such package was refused
+    as "not this run's" (ledger 562).
+    """
+
+    from myflopy.modflow.mf6.pest.calibrated import _substituted_records
+
+    read = np.empty(1, dtype=[("cellid", "O"), ("bhead", "<f8"), ("cond", "<f8"),
+                              ("boundname", "O")]).view(np.recarray)
+    read["cellid"][0], read["bhead"], read["cond"], read["boundname"][0] = \
+        (2, 11902), 555.0, 2.5, "ghb_l3"
+    run = {0: [[(2, 11902), 555.0, 1.0, "ghb_L3"]]}
+    substituted = _substituted_records(run, {0: read}, ("cond",), "ghb")
+    assert substituted[0] == [[(2, 11902), 555.0, 2.5, "ghb_L3"]]
+    read["boundname"][0] = "ghb_l4"
+    with pytest.raises(ValueError, match="record 0's boundname is 'ghb_l3'"):
+        _substituted_records(run, {0: read}, ("cond",), "ghb")
+
+
 # -- refusals ---------------------------------------------------------------------------
 
 
@@ -460,6 +483,29 @@ def _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         base.to_library(mf.Project(tmp_path / "other", name="o"))
 
 
+def _to_library_refuses_a_simulation_the_run_did_not_run(calibration, base):
+    """The fork keeps the LIBRARY's other packages, so one edited since the run is refused
+    -- before any package is registered (ledger 562)."""
+
+    project = calibration.project
+    original = project.simulations["s"]
+    moved = original.with_packages(
+        mf.chd(stress_period_data={0: [[(0, 0), 90.0]]}), slot="chd", on="m")
+    keys = {"npf/base": "npf/moved", "rch/base": "rch/moved", "ghb": "ghb/moved",
+            "riv": "riv/moved", "crisp": "crisp/moved"}
+    project.simulations["s"] = moved
+    try:
+        with pytest.raises(ValueError, match="inline package 'chd' changed"):
+            base.to_library(project, keys=keys, simulation="s/moved")
+        assert not set(keys.values()) & set(project.packages)
+        assert "s/moved" not in project.simulations
+        # The packages alone are still registered on request.
+        base.to_library(project, keys=keys, simulation=False)
+        assert set(keys.values()) <= set(project.packages)
+    finally:
+        project.simulations["s"] = original
+
+
 # -- the replay's cut, and the fork rule ------------------------------------------------
 
 
@@ -517,3 +563,4 @@ def test_every_refusal_names_what_to_do(calibration, base, tmp_path):
     _a_run_without_a_frozen_snapshot_is_refused(calibration, tmp_path)
     _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         calibration, base, tmp_path)
+    _to_library_refuses_a_simulation_the_run_did_not_run(calibration, base)

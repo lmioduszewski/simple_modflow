@@ -2115,8 +2115,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `<case>.<it>.base.par` (16 digits), any other label the par ensemble (6). The base of
   the substitution is the RUN's frozen snapshot and library copies, never the library now;
   values-only, so a list package keeps its pin after every cell is checked and drops its
-  `.gpkg` move recipe; forks to `f"{label}/{pest}"` keys plus a forked simulation, never
-  edits. A fork/edit/`with_options` override over a recipe-filled option REPLACES the
+  `.gpkg` move recipe (a boundname is compared without regard to case: FloPy LOADS it
+  lower-cased); forks to `f"{label}/{pest}"` keys plus a forked simulation, never
+  edits -- the fork is refused when the library's other packages moved since the run
+  (ledger 562). A fork/edit/`with_options` override over a recipe-filled option REPLACES the
   recipe (ledger 561).
   **A review reads ONE run** (ledgers 507, 508): a serial launch deletes
   an earlier run's `<name>.*` outputs from the template (`runs.pestpp_ies_outputs`, the

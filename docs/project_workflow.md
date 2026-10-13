@@ -329,7 +329,10 @@ Fork, never edit: the run and every earlier one keep what they recorded. Each pa
 carries `metadata["calibrated_from"]` (calibration, realization, iteration, run, source
 label and digest, the parameters and forward-run lines replayed) and names the
 parameter file as its `source_path`, so `project.runs.drift()`'s `source` column reads
-`ok`/`edited`/`missing` for a run that used it.
+`ok`/`edited`/`missing` for a run that used it. The forked simulation keeps the
+library's other packages, so it is refused when any of them -- an inline package, a TDIS
+or IMS, a library key it keeps -- changed since the run (ledger 562);
+`simulation=False` registers the packages alone.
 
 ## The run ledger
 

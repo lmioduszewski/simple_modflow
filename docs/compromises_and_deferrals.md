@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 561 entries (566 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 562 entries (567 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 562 | A write-back compares text without regard to case, and refuses to fork a simulation the run did not run | 2026-10-12 |
 | 561 | An edit's override REPLACES a recipe that fills the same option | 2026-10-12 |
 | 560 | A calibrated realization comes back as library packages, rebuilt by replaying its own forward run | 2026-10-12 |
 | 559 | One parameter set over packages whose records differ in width is refused, not split; and `zones=` leaves no... | 2026-10-12 |
@@ -21430,3 +21431,22 @@ same day, which is the useful part of the result.
       `stress_period_data` stays refused at the edit, since dropping it leaves a builder
       with nothing to resolve). A hand-built spec carrying both is still refused at build
       (ledger 299).
+
+562. **A write-back compares text without regard to case, and refuses to fork a simulation the run did not run (2026-10-12).**
+      Review of ledger 560. **Case:** the cell-identity check compared a
+      record's text verbatim, and FloPy LOADS every string lower-cased, so a run whose
+      GHB/RIV carried a capital in a boundname -- Ten Trails' `ghb_L3` -- was refused as
+      "not this run's" (measured on the test model with `East_L1`/`Crisp_Creek`). Text
+      is compared lower-cased (MF6 reads boundnames and keywords without regard to case)
+      and the run's spelling is what is written back. **Fork:** `to_library` forked the
+      LIBRARY's current entry under the run's simulation name, so an inline package, a
+      TDIS/IMS or a kept library key edited after the run rode into the "calibrated"
+      simulation in silence and it no longer reproduced the realization. Chosen: REFUSE
+      (naming `simulation=False` and `drift()`), comparing labels against the manifest,
+      inline and simulation-level packages against the run's DECLARED recipe, kept keys
+      against the digests the run recorded -- not rebuilding the run's simulation from
+      its recipe, whose kept keys would still read the library now. **Not compared:** a
+      run whose recipe could not be stored (an inline array) has no declared inline
+      packages to compare (logged); an unfingerprinted package (`package_digest` None)
+      passes. The fork is also validated (`register=False`) before any package is
+      registered, so a refused swap leaves nothing behind.

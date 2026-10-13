@@ -1059,7 +1059,9 @@ ensemble's 6 significant digits.
 `to_library` starts from what the RUN built -- its frozen snapshot and its own library
 copies -- not from the library as it is now, and forks to new keys: earlier runs and
 `project.runs.drift()` are untouched, and drift's `source` column follows the parameter
-file the values came from. A calibrated array is `unverifiable` on a grid move, and
+file the values came from. The forked simulation keeps the library's OTHER packages, so it
+is refused when one of them was edited since the run (ledger 562):
+`simulation=False` registers the calibrated packages alone, to fork by hand. A calibrated array is `unverifiable` on a grid move, and
 `with_grid(remap=True)` is its route (ledger 300). Written back as resolved arrays and
 records; a RECIPE form -- a pilot-point multiplier recipe on a K recipe -- is not built.
 

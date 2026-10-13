@@ -1228,8 +1228,12 @@ returns a `CalibratedInputs`:
 Refused by name: an unknown realization (`base` naming `best(criterion="min_phi")`), an
 iteration not this run's, a template built before the parameter records (rebuild with
 `cal.build()`), a tied parameter, a replay that fails (its stderr in the message), a run
-with no frozen snapshot, a record on another cell (the template is not this run's), a
-project that does not own the run, and an existing key without `overwrite=True`. A
+with no frozen snapshot, a record on another cell (the template is not this run's -- a
+boundname compared without regard to case, since FloPy reads it lower-cased), a
+project that does not own the run, a simulation fork whose other packages are no longer
+what the run ran (an inline package or kept library key edited since; ledger
+562 -- `simulation=False` registers the packages alone), and an existing
+key without `overwrite=True`. A
 calibrated array moves `unverifiable` and goes through `with_grid(remap=True)` (ledger
 300); a calibrated list package keeps its pin, drops its `.gpkg` move recipe and reads
 `stale`. A `packages.fork`/`edit`/`with_options` override over an option a RECIPE fills

@@ -56,7 +56,7 @@ from myflopy.grid_identity import SOURCE_SHA, source_fingerprint
 from myflopy.modflow.mf6.pest.ies import IesResults
 from myflopy.modflow.mf6.pest.project import _simulation_input_files
 from myflopy.project.freeze import thaw_simulation
-from myflopy.specs import PackageRef, PackageSpec, substitute_values
+from myflopy.specs import PackageRef, PackageSpec, package_digest, substitute_values
 from myflopy.workspace import Run, _read_package_snapshot
 
 logger = get_logger(__name__)
@@ -157,8 +157,9 @@ def _parameter_values(results: IesResults, realization, iteration: int) -> tuple
     if not path.exists():
         raise FileNotFoundError(
             f"No base parameter file {path}: PESTPP-IES writes one per iteration for the "
-            "'base' realization. Without it the base realization's values exist only at "
-            "the ensemble's 6 significant digits; pass its label to read those."
+            "'base' realization, and 'base' is read from it alone (16 digits; the "
+            "ensemble's 6 would not reproduce its run). Any other realization's label "
+            "reads the parameter ensemble."
         )
     frame = results.pyemu.pst_utils.read_parfile(str(path))
     values = pd.to_numeric(frame["parval1"], errors="raise").astype(float)
@@ -477,7 +478,14 @@ def _records_frame(value, fields: tuple[str, ...]) -> pd.DataFrame:
 
 
 def _identity(value) -> Any:
-    """A record field's identity form: cellids as int tuples, numbers as numbers, text as text."""
+    """A record field's identity form: cellids as int tuples, numbers as numbers, text
+    LOWER-CASED.
+
+    FloPy lower-cases every string it LOADS (a boundname ``ghb_L3`` reads back
+    ``ghb_l3``), and MODFLOW 6 reads a boundname or keyword without regard to case, so
+    text compared verbatim refused every package whose run declared a capital letter --
+    Ten Trails' GHB carries ``ghb_L3`` (ledger 562).
+    """
 
     if isinstance(value, (tuple, list)):
         return tuple(int(item) for item in value)
@@ -486,7 +494,7 @@ def _identity(value) -> Any:
     if isinstance(value, (int, np.integer)):
         return int(value)
     if isinstance(value, (str, np.str_)):
-        return str(value)
+        return str(value).lower()
     return value
 
 
@@ -496,7 +504,9 @@ def _substituted_records(base, read, fields: tuple[str, ...], label: str):
     ``base`` is the package option -- ``{period: [record, ...]}`` or ``[record, ...]``;
     ``read`` what FloPy read of it -- ``{period: recarray}`` or a recarray. Every field
     of ``read`` that is not a float (the cellid, a feature number, a boundname) must
-    equal the base record's by position, or the template is not this run.
+    equal the base record's by position -- text without regard to case
+    (:func:`_identity`) -- or the template is not this run. The run's own values of
+    those fields are kept, its spelling of a boundname included.
     """
 
     def _one(records, recarray, where):
@@ -949,7 +959,17 @@ class CalibratedInputs:
         through the library's pickle path; on a later grid move a calibrated array
         reads ``unverifiable`` and its route is ``with_grid(remap=True)`` (ledger 300),
         while a list package keeps its pin and reads ``stale`` (re-declare it). Every
-        refusal is checked before anything is registered.
+        refusal is checked before anything is registered, the simulation fork included.
+
+        The forked simulation is the LIBRARY's entry under the run's simulation name,
+        with the calibrated packages swapped in -- so every package it keeps comes from
+        the library as it stands now. It is refused when that is not what the run ran
+        (ledger 562): a model whose package labels differ from the run's
+        manifest, an inline package (or a TDIS/IMS) whose digest differs from the run's
+        declared one, or a library key it keeps whose digest differs from the one the
+        run recorded (what ``project.runs.drift()`` calls ``edited``/``removed``).
+        Otherwise the calibrated values would ride beside packages the calibration
+        never ran with, and the fork would not reproduce the realization -- in silence.
 
         Parameters
         ----------
@@ -985,8 +1005,9 @@ class CalibratedInputs:
         Raises
         ------
         ValueError
-            When ``project`` does not own the calibration's run; and what
-            :meth:`packages` raises.
+            When ``project`` does not own the calibration's run; when the simulation
+            to fork is no longer what the run ran (above; pass ``simulation=False``
+            to register the packages alone); and what :meth:`packages` raises.
         KeyError
             For a ``keys`` label the calibration did not touch, a key or simulation
             already registered without ``overwrite=True``, or a run whose simulation is
@@ -1027,6 +1048,16 @@ class CalibratedInputs:
                     f"The simulation library already has {name!r}. Pass overwrite=True to "
                     "replace it, or simulation= to pick another name."
                 )
+        swap: dict[str, dict[str, str]] = {}
+        for (model, _package), label in (self._labels or {}).items():
+            swap.setdefault(model, {})[label] = chosen[label]
+        if name is not None:
+            self._refuse_a_moved_simulation(project, run, source_simulation, swap)
+            # Validated before anything is registered: a swap the fork refuses must
+            # not leave the packages behind.
+            project.simulations.fork(
+                source_simulation, name, swap=swap, overwrite=overwrite, register=False
+            )
         for label, package in packages.items():
             if note is not None:
                 provenance = dict(package.metadata.get("calibrated_from") or {})
@@ -1034,11 +1065,84 @@ class CalibratedInputs:
                 package = package.with_metadata(calibrated_from=provenance)
             project.add_package(chosen[label], package, overwrite=overwrite)
         if name is not None:
-            swap: dict[str, dict[str, str]] = {}
-            for (model, _package), label in (self._labels or {}).items():
-                swap.setdefault(model, {})[label] = chosen[label]
             project.simulations.fork(source_simulation, name, swap=swap, overwrite=overwrite)
         return chosen
+
+    def _refuse_a_moved_simulation(self, project, run: Run, source: str, swap) -> None:
+        """Refuse to fork ``source`` when the library entry is not what ``run`` ran.
+
+        Compared: each model's package labels against the run's manifest; each inline
+        package and simulation-level package against the run's DECLARED spec (its
+        manifest recipe -- skipped, with a log line, for a run whose recipe could not
+        be stored); and each library key the fork keeps against the digest the run
+        recorded (ledger 562).
+        """
+
+        library = project.simulations[source]
+        declared = self._run()  # the manifest, reopened: labels, digests, recipe
+        recorded_keys = declared.package_keys
+        recorded_digests = declared.package_digests or {}
+        declared_spec = declared.spec if declared.spec_recipe is not None else None
+        problems: list[str] = []
+
+        def _label(entry) -> str:
+            return entry.key if isinstance(entry, PackageRef) else str(entry.name)
+
+        def _inline_digests(packages) -> dict[str, str | None]:
+            return {
+                _label(entry): package_digest(entry)
+                for entry in packages if not isinstance(entry, PackageRef)
+            }
+
+        if declared_spec is not None:
+            ran = _inline_digests(declared_spec.packages)
+            now = _inline_digests(library.packages)
+            problems += [
+                f"simulation package {label!r} changed"
+                for label in sorted(set(ran) | set(now)) if ran.get(label) != now.get(label)
+            ]
+        else:
+            logger.info(
+                "run %r stored no recipe, so the inline packages of simulation %r are "
+                "not compared with what it ran", run.name, source,
+            )
+        declared_models = {m.name: m for m in declared_spec.models} if declared_spec else {}
+        for model in library.models:
+            labels = tuple(_label(entry) for entry in model.packages)
+            if labels != tuple(recorded_keys.get(model.name, ())):
+                problems.append(
+                    f"model {model.name!r} carries {list(labels)} where the run carried "
+                    f"{list(recorded_keys.get(model.name, ()))}"
+                )
+                continue
+            replaced = set((swap or {}).get(model.name, {}))
+            if model.name in declared_models:
+                ran = _inline_digests(declared_models[model.name].packages)
+                now = _inline_digests(model.packages)
+                problems += [
+                    f"{model.name}: inline package {label!r} changed"
+                    for label in sorted(set(ran) | set(now))
+                    if label not in replaced and ran.get(label) != now.get(label)
+                ]
+            for entry in model.packages:
+                if not isinstance(entry, PackageRef) or entry.key in replaced:
+                    continue
+                if entry.key not in project.packages:
+                    problems.append(f"{model.name}: library key {entry.key!r} was removed")
+                    continue
+                then, current = recorded_digests.get(entry.key), package_digest(
+                    project.packages[entry.key])
+                if then is not None and current is not None and then != current:
+                    problems.append(f"{model.name}: library key {entry.key!r} was edited")
+        if problems:
+            raise ValueError(
+                f"The simulation library's {source!r} is not what run {run.name!r} ran, "
+                f"so a fork of it would pair the calibrated packages with others the "
+                f"calibration never ran with: {'; '.join(problems)}. Pass "
+                "simulation=False to register the packages alone (project.runs.drift() "
+                "lists the library's edits), then fork the simulation you mean with "
+                "project.simulations.fork(..., swap=...)."
+            )
 
     def _owning_run(self, project) -> Run:
         """The run of ``project`` the calibration was built from, or a refusal."""
@@ -1063,7 +1167,23 @@ def calibrated_inputs(results: IesResults, realization="base", *, iteration=None
 
     The engine of :meth:`IesResults.calibrated
     <myflopy.modflow.mf6.pest.ies.IesResults.calibrated>`, which documents the
-    parameters and refusals.
+    refusals.
+
+    Parameters
+    ----------
+    results : IesResults
+        The PESTPP-IES run to read (its master directory for a parallel run).
+    realization : str or int, optional
+        The realization's label, compared as text. Default ``"base"``, read from
+        ``<case>.<iteration>.base.par``; any other label from the iteration's
+        parameter ensemble.
+    iteration : int or None, optional
+        One of ``results.iterations``. Default ``None``: the posterior iteration.
+
+    Returns
+    -------
+    CalibratedInputs
+        The rebuilt datasets, held in memory; the replay's directory is deleted.
     """
 
     records = _refuse_old_metadata(results)
