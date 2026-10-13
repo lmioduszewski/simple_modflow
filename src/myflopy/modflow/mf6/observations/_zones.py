@@ -10,6 +10,7 @@ rule and its defaults.
 
 from __future__ import annotations
 
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,11 +34,13 @@ from myflopy.modflow.mf6.observations._shared import (
     _check_inequality,
     _compare_without_values,
     _copy_frame,
+    _declared_observations,
     _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
     _in_grid_crs,
     _is_blank,
+    _listing,
     _measured_periods,
     _named_package,
     _normalize_compare_time,
@@ -749,6 +752,54 @@ def _zone_labels(
     return labels
 
 
+def _warn_on_labels_of_the_one_layer_form(
+    model, quantity: _ObservedQuantity, labels: dict, *, package: str | None
+) -> None:
+    """Warn when the OBS declares a layered zone's labels in their ONE-LAYER form (ledger 579).
+
+    A zone reaching several layers is labelled ``<name>_lay<layer>_c<cell>``; one
+    in one layer ``<name>_c<cell>``. A zone listed with no layer reads every
+    layer since ledger 550, so an OBS package written for it before declares
+    the one-layer labels, which no longer match: the set reads the budget file
+    -- the right flows, but not the route the modeller declared, and nothing
+    said so. Called only once the set has taken the budget route; it warns
+    (``warnings.warn`` and the logger, ledger 288) naming the declared labels
+    and the route read, and changes nothing.
+    """
+
+    old: dict[str, str] = {}
+    for zone_name, entries in labels.items():
+        if len({cellid[0] for _label, cellid in entries}) <= 1:
+            continue
+        for _label, (_layer, cell) in entries:
+            old[_observation_label(f"{zone_name}_c{cell}").upper()] = zone_name
+    if not old:
+        return
+    packages = (
+        _packages_of_type(model, quantity.package_type) if package is None
+        else [_named_package(model, quantity, package)]
+    )
+    declared = sorted({
+        observation.obsname.upper()
+        for observation in _declared_observations(packages, cellid=quantity.cellid)
+        if observation.obsname.upper() in old and observation.obstype == quantity.obstype
+    })
+    if not declared:
+        return
+    zones = list(dict.fromkeys(old[label] for label in declared))
+    message = (
+        f"{quantity.owner}: zone(s) {_zone_listing(zones)} reach several layers, so their "
+        "MF6 observations are labelled <name>_lay<layer>_c<cell> (a zone listed with no "
+        f"layer reads every layer, ledger 550), and the {quantity.package_type.upper()} "
+        f"package's OBS declares {_listing(declared)} -- the one-layer labels written for "
+        f"them before. They are read from {quantity.file_route} instead (ledger "
+        "579). Write the OBS again (to_flopy_obs / attach_flopy_obs) for the "
+        "observation route, or give each zone its layer."
+    )
+    logger.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=4)
+
+
 #: Where a reading's own weight waits while its values meet the zone table, which
 #: carries a ``weight`` column of its own (ledger 504).
 _READING_WEIGHT = "_reading_weight"
@@ -1066,27 +1117,49 @@ class _CellZoneFlowTargets:
         return _wide_by_period(self._values, value_column="flow_target", caller=caller)
 
     def summary(self, model=None) -> pd.DataFrame:
-        """Return a compact summary (zone count, resolved cell count, row count).
+        """Return a compact summary (zone count, cell and column counts, row count).
 
         Parameters
         ----------
         model : SimulationBase or None, optional
             When given, zones are resolved through :meth:`zone_definitions`
-            first, whose ``Raises`` apply. Default ``None``: geometry rows and
-            rows with no ``layer`` are unresolved and count no cells.
+            first, whose ``Raises`` apply. Default ``None``: a geometry row is
+            unresolved, and a row listing cells with no ``layer`` names columns
+            whose layers only the model says (ledger 550), so ``n_cells`` is
+            ``<NA>`` when the set holds either -- it read 0, as if the zones were
+            empty (ledger 579) -- while ``n_columns`` counts the
+            columns the rows list.
 
         Returns
         -------
         pandas.DataFrame
             One row: ``n_zones`` (distinct names), ``n_cells`` (distinct
             ``(layer, cell)`` pairs over the whole set -- a cell is counted once
-            however many rows or zones name it) and ``n_rows`` (observed values).
+            however many rows or zones name it; ``<NA>`` as above), ``n_columns``
+            (distinct cell numbers, any layer: the resolved pairs' with a model,
+            the listed ones without) and ``n_rows`` (observed values).
         """
 
         definitions = self.zone_definitions(model) if model is not None else self._locations.copy()
         zone_count = int(definitions["name"].nunique())
         cells = set().union(*_zone_members(definitions).values()) if len(definitions) else set()
-        return pd.DataFrame([{"n_zones": zone_count, "n_cells": len(cells), "n_rows": int(len(self._values))}])
+        columns = {cell for _layer, cell in cells}
+        unresolved = False
+        if model is None:
+            for row in definitions.itertuples(index=False):
+                listed = getattr(row, "cells", None)
+                if not listed:
+                    unresolved = unresolved or getattr(row, "geometry", None) is not None
+                    continue
+                if _is_every_layer(getattr(row, "layer", None)):
+                    unresolved = True
+                    columns.update(int(value) for value in listed)
+        return pd.DataFrame([{
+            "n_zones": zone_count,
+            "n_cells": pd.NA if unresolved else len(cells),
+            "n_columns": len(columns),
+            "n_rows": int(len(self._values)),
+        }]).astype({"n_cells": "Int64"})
 
     def _zone_flow_table(self, model, zones: pd.DataFrame) -> tuple[pd.DataFrame, list[int]]:
         """Each zone's flow at each stress period's END, from the model's budget file.
@@ -1221,6 +1294,7 @@ class _CellZoneFlowTargets:
         }
         chosen = _declared_route(model, quantity, wanted, package=self.package)
         if chosen is None:
+            _warn_on_labels_of_the_one_layer_form(model, quantity, labels, package=self.package)
             return zones, None
         observed = _read_declared_observations(model, chosen, owner=quantity.owner)
         result = pd.DataFrame({"time": observed["time"]})

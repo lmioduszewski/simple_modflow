@@ -19,6 +19,7 @@ from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.package_plotting import normalize_backend
+from myflopy.modflow.mf6.target_values import screen_label
 
 logger = get_logger(__name__)
 
@@ -207,7 +208,7 @@ def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
     tuples = list(
         zip(
             frame["name"].astype(str),
-            pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int),
+            _layer_labels(frame),
             [(0, int(value)) for value in time_values], strict=False,
         )
     )
@@ -215,6 +216,42 @@ def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
     observed = pd.DataFrame({"elev": frame["head_target"].to_numpy()}, index=index)
     simulated = pd.DataFrame({"elev": frame["sim_head"].to_numpy()}, index=index)
     return observed, simulated
+
+
+def _layer_labels(frame: pd.DataFrame) -> list:
+    """Each compare row's layer as the heads plot labels it: its layer, or its screen.
+
+    A SCREENED target has no layer (ledger 556) -- it reads every layer its
+    screen opens into -- and ``fillna(0)`` drew it as layer 0. It is labelled by
+    its screen (:func:`screen_label`) now; a blank layer with no screen beside it
+    is refused, naming the rows, rather than read as layer 0.
+    """
+
+    layers = pd.to_numeric(frame["layer"], errors="coerce")
+    tops = frame["screen_top"] if "screen_top" in frame.columns else pd.Series(np.nan, index=frame.index)
+    bottoms = (
+        frame["screen_bottom"] if "screen_bottom" in frame.columns
+        else pd.Series(np.nan, index=frame.index)
+    )
+    labels = []
+    unplaced = []
+    for name, layer, top, bottom in zip(frame["name"], layers, tops, bottoms, strict=True):
+        if pd.notna(layer):
+            labels.append(int(layer))
+        elif pd.notna(top) and pd.notna(bottom):
+            labels.append(screen_label(top, bottom))
+        else:
+            labels.append(None)
+            unplaced.append(str(name))
+    if unplaced:
+        shown = ", ".join(repr(name) for name in list(dict.fromkeys(unplaced))[:5])
+        raise ValueError(
+            "CalibrationPlot.from_compare(type='heads') draws one pair of lines per "
+            f"location and layer, and {shown} has a blank layer and no screen "
+            "(screen_top/screen_bottom): it was drawn as layer 0. Give the rows their "
+            "layer, or the screen they read."
+        )
+    return labels
 
 
 def _infer_compare_value_columns(
@@ -325,8 +362,11 @@ class CalibrationPlot(f.Fig):
             - ``"heads"``: target and simulated values against the period, one
               pair of lines per location and layer it has rows in (a location
               in two layers gets a pair per layer, its legend naming the
-              layer). A table without ``name`` or ``layer`` raises
-              ``ValueError``. The period is ``per``, else ``time``: a table
+              layer; a SCREENED target, whose layer is blank, is named by its
+              screen, ``"screen 70 to 20"``). A table without ``name`` or
+              ``layer`` raises ``ValueError``, and so does a blank layer with
+              no ``screen_top``/``screen_bottom`` beside it (it was drawn as
+              layer 0). The period is ``per``, else ``time``: a table
               with neither, or a non-numeric or missing value, raises
               ``ValueError``. Untitled by default;
             - ``"residuals_by_period"``: mean ``abs_residual`` per ``time``
@@ -1296,7 +1336,12 @@ class CalibrationPlot(f.Fig):
         simulated_pairs = set(self.simulated.index.droplevel(2))
 
         for loc, layer in pairs:
-            label = loc if len(layers_of[loc]) == 1 else f'{loc} layer {layer}'
+            # A screened well's "layer" is its screen (`_layer_labels`), named always:
+            # it was drawn as layer 0.
+            label = (
+                f'{loc} ({layer})' if isinstance(layer, str)
+                else loc if len(layers_of[loc]) == 1 else f'{loc} layer {layer}'
+            )
 
             # get observed data for location and layer
             loc_obs = self.observed.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(

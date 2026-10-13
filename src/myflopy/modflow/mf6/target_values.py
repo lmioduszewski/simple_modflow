@@ -45,6 +45,7 @@ __all__ = [
     "k_from_sources",
     "period_end_records",
     "read_target_values",
+    "screen_label",
     "target_differences",
     "target_value_table",
 ]
@@ -55,6 +56,26 @@ __all__ = [
 #: the length follows the head). A map without them -- every map written before
 #: screens, and every map of an unscreened set -- reads one cell per label.
 SCREEN_COLUMNS = ("open_bottom", "open_top", "icelltype", "fixed_b")
+
+
+def screen_label(top, bottom) -> str:
+    """How a screened target names where it reads: ``"screen 70 to 20"``.
+
+    The one spelling the calibration plot's legend and the IES review's panel
+    title and hover give a well with a screen and no layer (ledger 556).
+
+    Parameters
+    ----------
+    top, bottom : float
+        The screen's top and bottom elevations, in the model's length units.
+
+    Returns
+    -------
+    str
+        ``"screen <top> to <bottom>"``, each number in its shortest form (``:g``).
+    """
+
+    return f"screen {float(top):g} to {float(bottom):g}"
 
 
 def period_end_records(

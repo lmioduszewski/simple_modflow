@@ -176,19 +176,24 @@ def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
     still map, just wrong. Targets built from coordinates already carry a
     geometry; targets built from cell ids do not, so their coordinates come from
     ``match_to_model``, which resolves cell centroids.
+
+    A SCREENED target (ledger 556) carries its ``screen_top``/``screen_bottom``
+    and a BLANK layer -- it reads every layer its screen opens into -- so the IES
+    review can name the screen (ledger 580); an unscreened target's
+    screen columns are blank. The snapshot dropped both columns, so a screened
+    well reached the review as a layer of ``NaN`` and nothing else.
     """
 
+    columns = ["name", "layer", "group", "weight", "screen_top", "screen_bottom"]
     locations_frame = targets.locations_gdf.copy()
     if isinstance(locations_frame, gpd.GeoDataFrame):
         # Only the targets that MATCHED: one left out of the mapping must not be
         # written to the snapshot, or counted in `n_locations`, as if it were used.
         matched = set(targets.match_to_model(project.model)["name"].astype(str))
-        return locations_frame.loc[
-            locations_frame["name"].astype(str).isin(matched),
-            ["name", "layer", "group", "weight", locations_frame.geometry.name],
-        ].copy()
-    snapshot = targets.match_to_model(project.model).loc[
-        :, ["name", "layer", "group", "weight", "x", "y"]
+        snapshot = locations_frame.loc[locations_frame["name"].astype(str).isin(matched)].copy()
+        return _with_screen_columns(snapshot).loc[:, [*columns, locations_frame.geometry.name]]
+    snapshot = _with_screen_columns(targets.match_to_model(project.model)).loc[
+        :, [*columns, "x", "y"]
     ].copy()
     crs = model_cell_polygons(project.model).crs
     return gpd.GeoDataFrame(
@@ -196,6 +201,17 @@ def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
         geometry=gpd.points_from_xy(snapshot["x"], snapshot["y"], crs=crs),
         crs=crs,
     )
+
+
+def _with_screen_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with ``screen_top``/``screen_bottom`` as floats, blank where it has none."""
+
+    for column in ("screen_top", "screen_bottom"):
+        frame[column] = (
+            pd.to_numeric(frame[column], errors="coerce").astype(float)
+            if column in frame.columns else np.nan
+        )
+    return frame
 
 
 def _column_key(label) -> str:

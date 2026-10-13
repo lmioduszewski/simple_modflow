@@ -33,11 +33,14 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 578 entries (583 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 581 entries (586 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 581 | The head targets have one reader; the value-table route kept for test doubles is gone | 2026-10-12 |
+| 580 | A screened well is named by its screen in the PEST snapshot, the IES review and the heads calibration plot | 2026-10-12 |
+| 579 | A layered zone whose OBS still declares its one-layer labels warns; `summary()` without a model counts list... | 2026-10-12 |
+| 578 | `conflict()` and `obs_residuals()` carry the period-end dates the build recorded | 2026-10-12 |
 | 577 | A values table `get()` returned is read back; a WIDE table with a column named like the value column is ref... | 2026-10-12 |
 | 576 | A target reads the head or concentration file the OC declares, and an OC that declares none is refused | 2026-10-12 |
 | 575 | `sensitivity()` and `parameters_at_bounds()` say how many realizations they read, and warn below half | 2026-10-12 |
@@ -21722,6 +21725,34 @@ same day, which is the useful part of the result.
       column, the location's, is read as each reading's own: the same weight). A WIDE
       table carrying such a column beside target columns is refused naming it, since it
       would otherwise melt into a target of that name.
+
+578. **`conflict()` and `obs_residuals()` carry the period-end dates the build recorded (2026-10-12).**
+      `conflict()` gains `date` beside `time`: each observation's period END date when
+      its set recorded the model's calendar (ledger 544), `NaT` otherwise. `obs_residuals()`
+      summarizes a location over time, so it has no one date: **chosen** `first_date` and
+      `last_date`, the end dates of the first and last period measured there, `NaT` for a
+      run built before.
+
+579. **A layered zone whose OBS still declares its one-layer labels warns; `summary()` without a model counts listed columns (2026-10-12).**
+      Since ledger 550 a zone listed with no layer reads every layer and is labelled
+      `<name>_lay<k>_c<cell>`; an OBS written for it before declares `<name>_c<cell>`, so
+      the set read the budget file -- the right flows, but not the declared route -- in
+      silence. **Chosen:** a WARNING (`warnings.warn` and the logger, ledger 288) naming
+      the declared labels and the route read, raised only once the set has taken the
+      budget route and only for labels of exactly that one-layer form for the zone's own
+      cells; nothing is refused, because the flows read are right. `summary()` with no
+      model read 0 cells for a `{name: cells}` zone, as if empty: `n_cells` is now `<NA>`
+      when any row is unresolved (geometry, or listed with no layer) and a new
+      `n_columns` counts the columns the rows list (the resolved pairs' with a model).
+
+580. **A screened well is named by its screen in the PEST snapshot, the IES review and the heads calibration plot (2026-10-12).**
+      `<prefix>_target_locations.gpkg` carries `screen_top`/`screen_bottom` (blank on a
+      layer target) and a blank layer for a screened well, and the review reads them:
+      `obs_residuals()` columns, the residual map's hover and the `plot_vs_obs()` panel
+      title say `screen 70 to 20` (`target_values.screen_label`, the one spelling).
+      `CalibrationPlot.from_compare(type="heads")` labelled such a well layer 0
+      (`fillna(0)`); it names its screen now, and a blank layer with NO screen beside it
+      is refused rather than drawn as layer 0 (**behaviour change** for a hand-made table).
 
 581. **The head targets have one reader; the value-table route kept for test doubles is gone (2026-10-12).**
       Ledger 557 kept `_simulated_field_by_period` so a duck-typed double with an

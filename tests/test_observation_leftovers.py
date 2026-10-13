@@ -22,6 +22,7 @@ three-cell DRN zone and a two-cell lake). What each pins:
 from __future__ import annotations
 
 import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -191,6 +192,102 @@ def test_a_wide_table_with_a_head_target_column_beside_targets_is_refused_naming
             r"named 'head_target'")):
         mf.HeadTargets(locations=pd.DataFrame({"name": ["W"], "cell": [3]}),
                        values=pd.DataFrame({"time": [0], "head_target": [1.0], "W": [2.0]}))
+
+
+# -- the IES review's tables carry the period-end dates (ledger 544) ----------
+
+
+def test_conflict_and_obs_residuals_carry_the_period_end_dates_the_build_recorded(tmp_path):
+    """The panels drew dates since ledger 544 while both tables kept period numbers only."""
+
+    from types import SimpleNamespace
+
+    from tests.test_mf6_pest import _stub_ies_results
+
+    results = _stub_ies_results(tmp_path)
+    ends = ["2024-01-31T00:00:00", "2024-02-29T00:00:00"]
+    results.__dict__["_metadata"]["observation_sets"][0]["period_end_dates"] = ends
+    prior = results.posterior._df.copy()
+    type(results).prior = property(lambda self: SimpleNamespace(_df=prior))
+
+    residuals = results.obs_residuals().set_index("location")
+    assert list(residuals["first_date"]) == [pd.Timestamp(ends[0])] * 2
+    assert list(residuals["last_date"]) == [pd.Timestamp(ends[1])] * 2
+    conflict = results.conflict()
+    by_period = conflict.groupby("time")["date"].unique()
+    assert list(by_period.loc[0]) == [pd.Timestamp(ends[0])]
+    assert list(by_period.loc[1]) == [pd.Timestamp(ends[1])]
+    assert list(conflict.columns[:3]) == ["obgnme", "time", "date"]
+
+    # A run built before the calendar was recorded: the columns are there, NaT.
+    undated = _stub_ies_results(tmp_path / "undated")
+    type(undated).prior = property(lambda self: SimpleNamespace(_df=prior))
+    assert undated.obs_residuals()["first_date"].isna().all()
+    assert undated.conflict()["date"].isna().all()
+
+
+# -- ledger 580: a screened well is named by its screen -------------
+
+
+@pytest.fixture(scope="module")
+def screened_ies(tmp_path_factory):
+    """A screened well and a layer well, calibrated for one PESTPP-IES iteration.
+
+    The 3-layer model of ``tests/test_screened_head_targets.py``; the screened
+    well ``W1`` (70 to 20) has no layer, ``L`` is in layer 1.
+    """
+
+    from tests.test_screened_head_targets import _screened, _write_run
+
+    root = tmp_path_factory.mktemp("screened_ies")
+    model = mf.load_mf6_run(_write_run(root / "run"))
+    cal = model.pest("scr", workspace=root / "scr", start_datetime="2024-01-01")
+    cal.observe(_screened(extra=[{"name": "L", "cell": 3, "layer": 1}]))
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("scr.pst", noptmax=0)
+        results = cal.run_ies(reals=3, iterations=1)
+    return cal, results, model
+
+
+@pytest.mark.slow
+def test_the_locations_snapshot_carries_the_screen_and_a_blank_layer(screened_ies):
+    import geopandas as gpd
+
+    cal, _results, _model = screened_ies
+    snapshot = gpd.read_file(cal.template_workspace / "hds_target_locations.gpkg").set_index("name")
+    assert snapshot.loc["W1", ["screen_top", "screen_bottom"]].tolist() == [70.0, 20.0]
+    assert pd.isna(snapshot.loc["W1", "layer"])
+    assert snapshot.loc["L", "layer"] == 1 and snapshot.loc["L", ["screen_top", "screen_bottom"]].isna().all()
+
+
+@pytest.mark.slow
+def test_the_ies_review_names_a_screened_wells_screen(screened_ies):
+    _cal, results, _model = screened_ies
+    residuals = results.obs_residuals().set_index("location")
+    assert residuals.loc["w1", ["screen_top", "screen_bottom"]].tolist() == [70.0, 20.0]
+    assert pd.isna(residuals.loc["w1", "layer"]) and residuals.loc["l", "layer"] == 1
+    titles = [panel["title"] for panel in results._location_panels(None, 12)]
+    assert sorted(titles) == ["hds: L [hds]", "hds: W1 (screen 70 to 20) [hds]"]
+    figure = results.plot_obs_residuals()
+    hover = {row[0]: row[5] for row in figure.data[-1].customdata}
+    assert hover == {"w1": "screen 70 to 20", "l": "layer: 1"}
+
+
+@pytest.mark.slow
+def test_the_heads_calibration_plot_names_a_screen_not_layer_zero(screened_ies):
+    from myflopy.modflow.calcs.calibration import CalibrationPlot
+    from tests.test_screened_head_targets import _screened
+
+    _cal, _results, model = screened_ies
+    compare = _screened(extra=[{"name": "L", "cell": 3, "layer": 1}]).compare(model)
+    names = [trace.name for trace in CalibrationPlot.from_compare(compare, type="heads").data]
+    assert names == ["W1 (screen 70 to 20) observed", "W1 (screen 70 to 20) simulated",
+                     "L observed", "L simulated"]
+    with pytest.raises(ValueError, match=r"'W1' has a blank layer and no screen"):
+        CalibrationPlot.from_compare(compare.drop(columns=["screen_top", "screen_bottom"]),
+                                     type="heads")
 
 
 # -- ledger 344: from_series / from_records name the LAK package ------------------

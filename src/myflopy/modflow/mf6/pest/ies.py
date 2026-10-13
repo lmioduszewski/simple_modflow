@@ -50,6 +50,7 @@ from myflopy.modflow.mf6.package_plotting import (
     normalize_backend,
 )
 from myflopy.modflow.mf6.pest.forward_run import read_target_table
+from myflopy.modflow.mf6.target_values import screen_label
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
@@ -289,6 +290,17 @@ def _parse_cell_list(value) -> list[int]:
         int(cell) for cell in str(value).split(",")
         if cell.strip() and cell.strip().lower() != "nan"
     ]
+
+
+def _where_it_reads(row) -> str:
+    """A point target's hover line: its layer, or its screen (ledger 580)."""
+
+    top = getattr(row, "screen_top", np.nan)
+    bottom = getattr(row, "screen_bottom", np.nan)
+    if pd.notna(top) and pd.notna(bottom):
+        return screen_label(top, bottom)
+    layer = getattr(row, "layer", np.nan)
+    return "layer: " if pd.isna(layer) else f"layer: {int(layer)}"
 
 
 def _hover_column(values, *, reason: str = "undefined (prior mean 0)") -> list:
@@ -1104,6 +1116,7 @@ class IesResults:
         group = obs["obgnme"].astype(str).str.lower()
         wanted = None if groups is None else {str(name).strip().lower() for name in groups}
         snapshot = self._target_snapshot()
+        screens = self._screens_by_location()
         panels = []
         for column in pd.unique(base[measured]):
             members = base.index[base == column]
@@ -1115,6 +1128,9 @@ class IesResults:
             if len(known):
                 row = snapshot.loc[known[0]]
                 title = f"{row['prefix']}: {row['target']}"
+                screen = screens.get((str(row["prefix"]).lower(), str(row["target"]).strip().lower()))
+                if screen:
+                    title += f" ({screen})"
                 if their_groups != [str(column).lower()]:
                     title += f" [{', '.join(their_groups)}]"
             else:
@@ -1137,6 +1153,22 @@ class IesResults:
             if len(panels) >= int(max_locations):
                 break
         return panels
+
+    def _screens_by_location(self) -> dict[tuple[str, str], str]:
+        """``{(prefix, location): "screen <top> to <bottom>"}`` for every SCREENED point target.
+
+        Read from the locations snapshot the build wrote (ledger 580),
+        keyed as :meth:`_observation_locations` keys a location -- lower-cased
+        set prefix and target name. Empty for a run whose snapshot carries no
+        screen columns (built before them, or with no screened target).
+        """
+
+        locations = self._observation_locations()
+        screened = locations.loc[locations["screen_top"].notna() & locations["screen_bottom"].notna()]
+        return {
+            (str(row.prefix), str(row.location)): screen_label(row.screen_top, row.screen_bottom)
+            for row in screened.itertuples()
+        }
 
     def plot_vs_obs(self, *, groups: list[str] | None = None, max_locations: int = 12,
                     iteration: int | None = None, backend: str = "plotly"):
@@ -2026,6 +2058,8 @@ class IesResults:
         -------
         pandas.DataFrame
             Indexed by observation name with columns ``obgnme``, ``time``,
+            ``date`` (the period's END date when the build recorded the model's
+            calendar for the set, ledger 544; ``NaT`` otherwise),
             ``measured``, ``bound`` (``"at_most"``, ``"at_least"`` or ``None``),
             ``prior_lo``, ``prior_hi``, ``prior_mean`` and ``in_conflict``.
         """
@@ -2057,6 +2091,7 @@ class IesResults:
             {
                 "obgnme": obs["obgnme"].to_numpy(),
                 "time": meta["_time"].to_numpy(),
+                "date": pd.DatetimeIndex(meta["_date"]),
                 "measured": measured.to_numpy(),
                 "bound": sides.to_numpy(dtype=object),
                 "prior_lo": lo.to_numpy(),
@@ -2794,8 +2829,8 @@ class IesResults:
     )
 
     _LOCATION_COLUMNS = (
-        "prefix", "kind", "value_kind", "location", "layer", "cell", "x", "y",
-        "cells",
+        "prefix", "kind", "value_kind", "location", "layer", "screen_top",
+        "screen_bottom", "cell", "x", "y", "cells",
     )
 
     #: Geometry for observation families built before the metadata carried a
@@ -2915,6 +2950,11 @@ class IesResults:
                     frame["y"] = table.geometry.y.to_numpy()
                 if "layer" in table.columns:
                     frame["layer"] = table["layer"].to_numpy()
+                # A screened well's interval (ledger 580); a snapshot
+                # written before it carries none.
+                for column in ("screen_top", "screen_bottom"):
+                    if column in table.columns:
+                        frame[column] = pd.to_numeric(table[column], errors="coerce").to_numpy()
                 # Each family names its own map file (heads and concentration
                 # do not share one); the default is the pre-`mapping_file`
                 # layout, which only heads ever wrote.
@@ -3090,9 +3130,15 @@ class IesResults:
             One row per (``prefix``, ``location``) with ``kind``,
             ``value_kind``, ``measured``, ``simulated``, ``residual`` (the mean of
             PEST++'s residuals, a bound's 0 where it holds), ``raw_residual``
-            (mean simulated minus mean measured), ``weight``, ``n``, and
+            (mean simulated minus mean measured), ``weight``, ``n``,
+            ``first_date``/``last_date`` (the END dates of the first and last
+            period measured there, when the build recorded the model's calendar
+            for the set, ledger 544; ``NaT`` otherwise), and
             whichever location the run recorded:
-            ``cell``/``x``/``y`` for point targets (heads, concentration),
+            ``cell``/``x``/``y`` and ``layer`` for point targets (heads,
+            concentration) -- a SCREENED well's layer blank and its
+            ``screen_top``/``screen_bottom`` given (ledger 580; blank
+            for every other target, and on a run built before),
             ``cells`` (the zone's cell list) for DRN and RIV zones -- one row per
             zone, its cells the columns any of its rows covers. Empty when the run
             recorded no locatable observation sets.
@@ -3102,8 +3148,9 @@ class IesResults:
         if locations.empty:
             return pd.DataFrame(
                 columns=["prefix", "location", "kind", "value_kind", "measured",
-                         "simulated", "residual", "raw_residual", "weight", "n", "cell",
-                         "x", "y", "cells"]
+                         "simulated", "residual", "raw_residual", "weight", "n",
+                         "first_date", "last_date", "layer", "screen_top",
+                         "screen_bottom", "cell", "x", "y", "cells"]
             )
         locations = self._select_prefixes(locations, prefix)
 
@@ -3134,8 +3181,13 @@ class IesResults:
             weight=("weight", "mean"),
             n=("obsval", "size"),
             residual=("residual", "mean"),
+            first_date=("_date", "min"),
+            last_date=("_date", "max"),
         )
         summary["raw_residual"] = summary["simulated"] - summary["measured"]
+        summary = summary.loc[:, [column for column in summary.columns
+                                  if column not in ("first_date", "last_date")]
+                              + ["first_date", "last_date"]]
         merged = summary.merge(locations, on=["prefix", "location"], how="inner")
         return merged.sort_values(["prefix", "location"]).reset_index(drop=True)
 
@@ -3169,7 +3221,8 @@ class IesResults:
             are drawn at their map position whatever layer they were screened in
             -- filtering them would hide data on a plan-view figure -- and a DRN
             zone colours the cells its in-layer numbers name, whatever layer the
-            zone lies in. A point target's hover names its layer; read it there
+            zone lies in. A point target's hover names its layer -- a screened
+            well's its screen (ledger 580); read it there
             rather than off the map.
         backend : str, default 'plotly'
             ``"plotly"`` (or ``"interactive"``) returns the interactive figure
@@ -3342,8 +3395,7 @@ class IesResults:
                 },
                 customdata=[
                     [row.location, float(row.measured), float(row.simulated),
-                     float(row.residual), int(row.n),
-                     "" if pd.isna(row.layer) else int(row.layer)]
+                     float(row.residual), int(row.n), _where_it_reads(row)]
                     for row in points.itertuples()
                 ],
                 hovertemplate=(
@@ -3352,7 +3404,7 @@ class IesResults:
                     "measured: %{customdata[1]:.4g}<br>"
                     "simulated: %{customdata[2]:.4g}<br>"
                     "observations: %{customdata[4]}<br>"
-                    "layer: %{customdata[5]}<extra></extra>"
+                    "%{customdata[5]}<extra></extra>"
                 ),
             ))
         return choro.fig.update_layout(title=heading, margin={"t": 40})

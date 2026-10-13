@@ -891,7 +891,10 @@ of its columns**, each layer holding those active in it, whether DRAWN as geomet
 both read layer 0 alone: 1.3% of the Ten Trails `ss` south drains, 245 of their 935
 records. The `{name: cells}` dict carries no layer, so it reads every layer; record dicts
 with a `layer` read one, and `to_flopy_obs(None)` refuses a zone with none, naming the
-spelling. A zone by BOUNDNAME is not offered (ledger 539).
+spelling; `summary()` with no model then gives `n_cells` `<NA>` and the listed
+`n_columns`, and an OBS still declaring such a zone's one-layer labels warns, naming
+them, while the set reads the budget file (ledger 579). A zone by BOUNDNAME is
+not offered (ledger 539).
 
 A lake, reach or zone target reads one of two routes: MF6's own observation, when
 EVERY target of the set is DECLARED in the owning package's OBS, else the output file.

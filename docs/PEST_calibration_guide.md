@@ -500,7 +500,7 @@ cal.observe(baseflow)                              # group "riv_flow" unless the
 |---|---|
 | budget route (no OBS declared — the default) | the model's cell-budget file, by the package NAME MF6 writes on each record: `package="crisp"` reads that package alone; `package=None` sums EVERY package of the type in the zone's cells (`riv` + `crisp`). Every package read must be declared `save_flows=True`, or reading raises naming it (ledger 536). |
 | observation route | the package's declared `DRN`/`RIV` observations (`to_flopy_obs` / `attach_flopy_obs`), one per zone cell; with several packages of the type, `package=` is required (ledger 352). |
-| a zone given no `layer` | EVERY layer of its columns, each layer holding those active in it -- the columns a geometry COVERS (ledger 535) or the `cells` it LISTS (ledger 550); both read layer 0 alone. A `layer` picks one. The `{name: cells}` dict carries no layer, so it reads every layer; give record dicts with a `layer` to read one. `to_flopy_obs(None)` refuses such a zone (the layers are the model's): pass the model, or give the `layer`. |
+| a zone given no `layer` | EVERY layer of its columns, each layer holding those active in it -- the columns a geometry COVERS (ledger 535) or the `cells` it LISTS (ledger 550); both read layer 0 alone. A `layer` picks one. The `{name: cells}` dict carries no layer, so it reads every layer; give record dicts with a `layer` to read one. `to_flopy_obs(None)` refuses such a zone (the layers are the model's): pass the model, or give the `layer`. An OBS written for such a zone before ledger 550 declares its one-layer labels (`<name>_c<cell>`), which no longer match its `<name>_lay<k>_c<cell>`: the set reads the budget file and WARNS naming them (ledger 579). `summary()` with no model gives `n_cells` `<NA>` and counts the listed `n_columns`. |
 | a period with no boundary in the zone's cells | 0.0, on both routes (ledger 537). |
 | a zone whose cells hold no boundary of the packages read in ANY period the budget file saved | REFUSED on the budget route and so at the build, naming the zone, its layer(s) and `package=` (ledger 537, as amended): a zone in the wrong layer or package, not one of zero flow. A zone given a `layer` reads that layer alone. |
 
@@ -868,7 +868,7 @@ fix (structure, bounds, weights), not something to calibrate away.
 ```python
 prior = cal.prior(reals=50)      # run the prior ensemble once (NOPTMAX=-1), no iterations
 prior.plot_prior_vs_obs()        # grey prior spaghetti vs measured (conflicts highlighted orange)
-prior.conflict()                 # table: which observations the prior can't reach
+prior.conflict()                 # table: which observations the prior can't reach (with each one's period-end `date`)
 prior.plot_conflict()            # % of observations in prior-data conflict, by group
 ```
 
@@ -1149,7 +1149,12 @@ in). A DRN zone's seepage is in MF6's own sign, negative -- water leaving the aq
 entered as `-Q` (ledger 350) -- so on a zone "over-simulated" (blue) means it drains
 LESS than was measured. Each location is summarized over time, so a target measured in six stress periods
 is one point showing its mean bias, with the count in the hover. `obs_residuals()`
-returns the same numbers as a DataFrame.
+returns the same numbers as a DataFrame, with `first_date`/`last_date` -- the end dates of
+the first and last period measured there, when the build recorded the model's calendar
+(ledger 544). A SCREENED well (ledger 556) has no layer: the hover, the
+`plot_vs_obs()` panel title and `obs_residuals()`' `screen_top`/`screen_bottom` name its
+screen (`screen 70 to 20`, ledger 580), as the heads calibration plot's legend
+does.
 
 Lake and SFR targets are *not* on this map: they record only a lake or reach number, with
 no geometry, so they cannot be placed from the run directory alone. They are absent from

@@ -505,7 +505,10 @@ def test_a_listed_zone_with_no_layer_reads_every_layer_of_its_columns(toy):
         np.testing.assert_allclose(compare["sim_flow"], expected, rtol=1e-12)
         assert compare["cells"].iloc[0] == pairs
         assert zone.summary(toy).loc[0, "n_cells"] == len(pairs)
-        assert zone.summary().loc[0, "n_cells"] == 0  # unresolved without the model
+        # Without the model the layers are unknown: no cell count, the listed columns
+        # counted (it read 0 cells, ledger 579).
+        assert zone.summary().loc[0, "n_cells"] is pd.NA
+        assert zone.summary().loc[0, "n_columns"] == len(listed)
         assert [record[2] for record in zone.to_flopy_obs(toy)["drn_flow_targets.csv"]] == pairs
         assert zone.to_flopy_obs(toy)["drn_flow_targets.csv"][0][0] == "z_lay0_c20"
     one = mf.DrnFlowTargets(locations=[{"name": "z", "layer": 1, "cells": listed}])
@@ -619,3 +622,25 @@ def test_a_one_column_zone_over_an_inactive_layer_runs_forward(tmp_path):
     cells = read_target_table(snapshot)["cells"].tolist()
     assert cells == ["", str(pinched)]
     assert [_parse_cell_list(value) for value in cells] == [[], [pinched]]
+
+
+def test_an_obs_declaring_a_layered_zones_one_layer_labels_is_named_not_ignored(toy):
+    """``{"deep": ZONE}`` (no layer) reads both layers since ledger 550, so it is
+    labelled ``deep_lay<k>_c<cell>``; the model's OBS declares ``deep_c20``/``_c21``/
+    ``_c27`` -- the one-layer labels -- so the set reads the budget file, which it did
+    without a word (ledger 579)."""
+
+    zone = mf.DrnFlowTargets(locations={"deep": ZONE})
+    with pytest.warns(UserWarning, match=(
+            r"DrnFlowTargets: zone\(s\) 'deep' reach several layers, so their MF6 observations "
+            r"are labelled <name>_lay<layer>_c<cell> .* the DRN package's OBS declares "
+            r"DEEP_C20; DEEP_C21; DEEP_C27 -- the one-layer labels written for them before\. "
+            r"They are read from the model's cell-budget file instead")):
+        flows = zone.simulated_series(toy)
+    expected = _raw(toy, [(k, cell) for k in (0, 1) for cell in ZONE])
+    np.testing.assert_allclose(flows["deep"], expected, rtol=1e-12)
+    # A zone whose labels the OBS does not declare in any form reads the budget in silence.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mf.DrnFlowTargets(locations={"other": ZONE}).simulated_series(toy)
+        mf.DrnFlowTargets(locations=OBSERVED[:1]).simulated_series(toy)  # the declared route
