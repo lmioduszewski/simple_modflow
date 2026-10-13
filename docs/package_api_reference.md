@@ -1266,21 +1266,26 @@ so one declaration builds on two meshes, `move_report` reads it `rebuilt`, and
 | `layer_field` | column naming the model layer, numbered from `layer_base`. Omitted, the map is areal and applies to every layer. A value below `layer_base`, past the last layer, fractional or NULL is REFUSED naming the feature |
 
 **The rule is named, not inherited, because the three disagree.** `majority` gives a
-cell whichever polygon covers most of it and so writes only values the map contains;
+cell the VALUE whose polygons cover most of it -- the features carrying one value are
+united first, so a unit drawn as two touching features (30% + 30% of a cell) beats
+another unit's 40%, and a tie between values goes to the value of the lowest row among
+their features (ledger 553) -- and so writes only values the map contains;
 `mean` is the area-weighted mean and blends across a contact — on a 64-cell grid with
 one contact it wrote 12 distinct conductivities where the map holds 2, and its
 area-integral ran 0–60% from `majority`'s across 19 contact positions. `centroid`
 matches `ZoneSpec.from_polygons`; it differs from `majority` on at most one cell in 64.
 
 **With `default=` the uncovered part of a cell is a competitor** (ledger
-551). Under `majority` it votes for the default: the polygon winning among
-the polygons takes a cell only when the polygons carrying its VALUE together cover more
-of it than the part no polygon covers -- a single-valued map (a multiplier) exactly the
+551). Under `majority` it votes for the default, joined by any polygon whose value
+EQUALS the default (ledger 553): a value takes a cell only when its polygons together
+cover more of it than that vote -- a single-valued map (a multiplier) exactly the
 cells it covers more than half of, however it is split into features (ledger
-552) -- and a tie with that part (to 1e-9 of the cell) leaves the default. Under `mean` it is averaged in
-at the default, by area. `centroid` is unchanged. A map tiling the grid paints what it
-painted without `default=`; a feature on the grid that so takes no cell is warned by
-name. Without `default=` nothing competes: a partly covered cell takes its polygon(s).
+552) -- and a tie with that vote (to 1e-9 of the cell) leaves the default. Under `mean`
+it is averaged in at the default, by area. `centroid` is unchanged. A map tiling the
+grid, none of its values equal to the default, paints what it painted without
+`default=`; a feature on the grid that so takes no cell is warned by name. Without
+`default=` nothing competes with the values: a partly covered cell takes the value
+covering most of it.
 
 `icelltype` and `iconvert` are **refused** — integer flags, and every rule returns a
 float. So is a `Surface` or `LayerStack` in any array slot: those describe an elevation

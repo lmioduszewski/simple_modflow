@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 552 entries (557 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 553 entries (558 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 553 | The majority vote is by VALUE: a unit's features are united before values compete, and a polygon carrying t... | 2026-10-12 |
 | 552 | The uncovered part of a cell competes against a VALUE's cover, not one feature's | 2026-10-12 |
 | 551 | A polygon given `default=` competes with it for the part of each cell it does not cover | 2026-10-12 |
 | 550 | A DRN/RIV zone given as a `cells` list with no `layer` reads EVERY layer of those columns, like a drawn zone | 2026-10-12 |
@@ -12482,8 +12483,13 @@ same day, which is the useful part of the result.
       Measured: it does not -- ``gpd.overlay`` returns ONE row per (cell, zone) and keeps
       a multi-part intersection WHOLE (a two-lobe unit covering 60% of a cell comes back
       as a single MultiPolygon of area 60, not two pieces of 30). Swapping the ``sum``
-      for a ``max`` passed every test. The groupby went, and the behaviour it claimed to
-      protect is held by a test that fails loudly if ``overlay`` ever changes.
+      for a ``max`` passed every test. ~~The groupby went, and the behaviour it claimed to
+      protect is held by a test that fails loudly if ``overlay`` ever changes.~~
+      (**CHANGED by ledger 553**: the vote is by VALUE -- the pieces of every feature
+      carrying one value are UNITED per cell before the values compete, so different
+      FEATURES of one value now combine, which a two-feature unit beside a larger single
+      feature kills; one overlay row per (cell, zone) is still what keeps a multi-part
+      feature whole, and that test still holds it.)
       **The adversarial pass found a defect of its own, and it is the interesting one.**
       The builder first recorded its resolved arrays on a private attribute of its own
       (``_myflopy_resolved_arrays``) that read as the obvious sibling of
@@ -21108,8 +21114,11 @@ same day, which is the useful part of the result.
       The user's answer A. Under `mf.Polygons` `rule="majority"` the uncovered part of a
       cell votes for `default`: ~~a polygon takes the cell only when it covers MORE of it
       than that part (and than any other polygon)~~ (**CHANGED by ledger
-      552**: the winning polygon takes it only when the polygons carrying
-      its VALUE cover more of it than that part), so `Polygons("pit.gpkg", value=0.1,
+      552**: ~~the winning polygon takes it only when the polygons carrying
+      its VALUE cover more of it than that part~~ -- **CHANGED again by ledger 553**: the
+      value covering most of the cell, its features united, takes it only when it covers
+      more than the default's vote, that part plus any polygon carrying the default's own
+      value), so `Polygons("pit.gpkg", value=0.1,
       default=1.0)` multiplies exactly the cells it covers more than half of; under
       `rule="mean"` the part is averaged in at the default, by area; `centroid` is
       unchanged. ONE rule, `grid/geometry.polygon_cell_values(default=)`, so the column
@@ -21120,8 +21129,10 @@ same day, which is the useful part of the result.
       **Chosen:** a tie with the uncovered part goes to the DEFAULT (a polygon at
       exactly half holds no majority), judged to 1e-9 of the cell's area because the
       overlay rounds: a half cut through a cell's centre at 13 or 73 degrees came back
-      1.4e-14 / 2.8e-14 OVER half, which a bare `>` hands to the polygon. Two polygons
-      tying still go to the lower row. A remainder under that 1e-9 is rounding and
+      1.4e-14 / 2.8e-14 OVER half, which a bare `>` hands to the polygon. ~~Two polygons
+      tying still go to the lower row.~~ (**CHANGED by ledger 553**: two VALUES tying go to
+      the value of the lowest row among their features in the cell -- the lower row,
+      when each value is one feature.) A remainder under that 1e-9 is rounding and
       counts as NONE, so a map that tiles the grid paints BIT FOR BIT what it painted
       before -- the 19-contact sweep, every rule, asserted (ledger 299's majority /
       centroid / mean measurements therefore stand). The remainder is cell area minus
@@ -21142,13 +21153,53 @@ same day, which is the useful part of the result.
       one winning FEATURE's piece, so the answer depended on how a map was digitized:
       a pit drawn as two touching `value=0.1` features covering a cell 30% + 30% (40%
       bare) gave it the default, while the dissolved pit (60%) took it -- measured on
-      two unit squares, `[1.0, 0.1]` against `[0.1, 0.1]`. **Chosen:** which polygon
+      two unit squares, `[1.0, 0.1]` against `[0.1, 0.1]`. **Chosen:** ~~which polygon
       wins AMONG the polygons is unchanged (largest piece, ties to the lower row --
       ledger 299's per-feature vote, so no tiling map moves); that winner then takes
       the cell only when the UNION of the pieces carrying its value outcovers the bare
-      part. A single-valued map (every multiplier) is therefore judged by its union,
-      however it is split. **Not done:** making the whole vote by value -- two features
-      of one unit at 30% + 30% beside another unit at 40% still go to the 40% unit with
-      or without `default=`, as they always have; changing that moves tiling maps and
-      ledger 299's sweep. A piece whose value EQUALS `default` does not add to the bare
-      part's vote either.
+      part.~~ (**CHANGED by ledger 553**: the whole vote is by value -- each value's
+      features are united before the values compete, and the winner takes the cell
+      only when that union outcovers the default's vote.) A single-valued map (every
+      multiplier) is therefore judged by its union, however it is split. ~~**Not
+      done:** making the whole vote by value -- two features of one unit at 30% + 30%
+      beside another unit at 40% still go to the 40% unit with or without `default=`,
+      as they always have; changing that moves tiling maps and ledger 299's sweep. A
+      piece whose value EQUALS `default` does not add to the bare part's vote either.~~
+      (**CHANGED by ledger 553**: both done; the claim that it moves tiling maps was
+      wrong -- a map of one feature per unit is unchanged bit for bit.)
+
+553. **The majority vote is by VALUE: a unit's features are united before values compete, and a polygon carrying the default's value votes with it (2026-10-12).**
+      Settled after ledger 552's review left it open, and reported to the user. In
+      `grid/geometry.polygon_cell_values(rule="majority")` the pieces of every feature
+      carrying one value are UNITED per cell (`_union_area`, the union so
+      an overlap counts once) before the values compete with each other and, with
+      `default=`, with the bare part -- so an array never depends on how a unit was
+      digitized: two touching features of one unit covering 30% + 30% of a cell beat
+      another unit's 40%, with or without `default=` (the vote by feature gave it to the
+      40%). Ties between values go to the value of the LOWEST row among the tied values'
+      features in that cell. With `default=` the default is one more value whose vote is
+      the bare part PLUS the cover of any polygon whose value EQUALS `default`, and it
+      wins a tie (to `_UNCOVERED_TIE`, as in 551). `mean` and `centroid` are untouched.
+      **Measured, not argued:** a map whose units are each ONE feature paints BIT FOR
+      BIT what the vote by feature painted -- a (cell, value) group of one piece keeps
+      that piece's own area, and the tie key is that feature's row. Against the code
+      before this entry, over 2,394 answers (6x6, 8x8 and 10x10 meshes; ledger 299's 19
+      contact positions; two and three units; tiling and with a bare strip; `default`
+      None, -5.0 and each unit's own value; all three rules) the painted values,
+      `reached` and the painters were identical except where a strip was bare AND a
+      unit carried the default's value -- the decision itself. The multiplier
+      reproducer still reads 6 / 15 / 64 cells. A test in `tests/test_polygon_arrays.py`
+      holds the sweep against the vote by feature written out
+      (`test_a_map_whose_units_are_each_one_feature_paints_what_the_vote_by_feature_painted`),
+      so it is not certified by the code it checks.
+      **Behaviour change:** a column map with a unit drawn as several features writes a
+      different array where those features together outcover another unit that each
+      alone does not; a map with a polygon valued exactly at `default=` writes the
+      default where that polygon and the bare part together outcover the rest. As in
+      551, the recipe did not change, so a stored package's digest does not move and
+      `runs.drift()` cannot see it; a frozen run keeps the arrays it built.
+      **Chosen:** values tie EXACTLY, as features always did -- a union's area rounds
+      like a piece's, so a split unit tying another to the last bit is decided by that
+      bit; only the default's vote carries a tolerance. A default-valued polygon in a
+      cell the default wins reads `reached` and paints (it is part of the winning vote),
+      so it is never warned as painting nothing.

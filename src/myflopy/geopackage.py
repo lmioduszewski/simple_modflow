@@ -751,12 +751,13 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
     The build-time half of ``mf.npf(k=mf.Polygons(...))``. It reads the file, refuses a
     NULL naming the feature (or paints the recipe's one ``value`` into every polygon),
     paints each cell by the recipe's own ``rule``, and fills what no polygon reached
-    with ``default`` -- or refuses when there is none. With ``default`` the part of a
-    cell no polygon covers COMPETES as the default (``majority``: the winning polygon
-    takes a cell only when the polygons carrying its value cover more of it than that
-    remainder; ``mean``: the remainder is
-    averaged in at the default), and a feature that reaches the grid but so paints no
-    cell is warned by name (ledger 551). Products and per-layer lists
+    with ``default`` -- or refuses when there is none. ``majority`` votes by VALUE: the
+    features carrying one value are united before the values compete (ledger 553).
+    With ``default`` the part of a cell no polygon covers COMPETES as the default
+    (``majority``: a value takes a cell only when it covers more of it than that
+    remainder plus any polygon carrying the default's own value; ``mean``: the
+    remainder is averaged in at the default), and a feature that reaches the grid but
+    so paints no cell is warned by name (ledger 551). Products and per-layer lists
     reach it through :func:`resolve_array_recipe`.
 
     **Refusing an unfilled cell is the point, not a convenience.** The array goes
@@ -817,10 +818,10 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
         )
 
     painted = np.full((int(nlay), len(cells)), np.nan, dtype=float)
-    # Whether each feature decides (or, under `mean`, contributes to) any cell. With
-    # `default=` the part of a cell no polygon covers competes as the default's vote
-    # (ledger 551), so a polygon smaller than half of every cell it
-    # touches can be on the grid and paint nothing.
+    # Whether each feature decides (under `majority`: carries the value that wins; under
+    # `mean`: contributes to) any cell. With `default=` the part of a cell no polygon
+    # covers competes as the default's vote (ledger 551), so a polygon smaller than
+    # half of every cell it touches can be on the grid and paint nothing.
     painting = np.zeros(len(gdf), dtype=bool)
     if recipe.layer_field is None:
         values, _, painting = polygon_cell_values(
@@ -901,8 +902,9 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
             beaten = (
                 "holds no cell's centre"
                 if recipe.rule == "centroid"
-                else "loses every cell it touches -- to another polygon, or to the "
-                "part no polygon covers there, which its value does not outcover"
+                else "loses every cell it touches -- its value outcovered by another "
+                "value, or not outcovering the default there (the part no polygon "
+                "covers, with any polygon carrying the default's value)"
             )
             listing = ", ".join(labels[position] for position in silent[:10])
             if silent.size > 10:

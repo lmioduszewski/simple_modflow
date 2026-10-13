@@ -1005,3 +1005,219 @@ def test_a_split_multiplier_map_paints_and_warns_like_its_dissolved_self(meshes,
                 for one in pieces)
     ]
     assert straddled
+
+
+# ------------------------------------------------- the majority vote is by VALUE (553)
+
+
+def test_a_unit_split_into_features_outvotes_a_larger_single_feature():
+    """Two touching features of one unit, 30% + 30%, beat another unit's 40% (ledger 553).
+
+    The pieces of every feature carrying one value are UNITED before the values compete,
+    so a unit covers a cell exactly as its dissolved self does -- with or without
+    ``default=``. A vote by feature gave cell 0 to the 40% unit (its one piece is the
+    largest) in all three spellings. Cell 1 leaves 20% bare beside 25% + 25% against
+    30%: the split unit still wins, and its 50% outcovers the bare part.
+    """
+
+    cells = _square_cells(2)
+    split = (box(0, 0, 3, 10), box(3, 0, 6, 10), box(10, 0, 12.5, 10), box(12.5, 0, 15, 10))
+    other = (box(6, 0, 10, 10), box(15, 0, 18, 10))
+    zones = _zones(*split, *other, values=[2.0] * 4 + [3.0] * 2)
+    dissolved = _zones(
+        box(0, 0, 6, 10), box(10, 0, 15, 10), *other, values=[2.0, 2.0, 3.0, 3.0]
+    )
+    values = zones["k"].to_numpy()
+    for default in (None, 1.0):
+        painted, reached, painting = polygon_cell_values(
+            cells, zones, values, rule="majority", default=default, painters=True
+        )
+        whole, _ = polygon_cell_values(
+            cells, dissolved, dissolved["k"].to_numpy(), rule="majority", default=default
+        )
+        assert painted.tolist() == whole.tolist() == [2.0, 2.0], default
+        assert reached.all()
+        assert painting.tolist() == [True] * 4 + [False] * 2, default
+
+
+def test_a_tie_between_values_goes_to_the_lowest_row_among_their_features():
+    """A split unit tying another unit: the value holding the lowest ROW in the cell wins.
+
+    25% + 25% of one unit against 50% of another, in both row orders. One feature per
+    value makes this the old tie to the lower row.
+    """
+
+    cells = _square_cells(1)
+    halves = (box(0, 0, 2.5, 10), box(2.5, 0, 5, 10))
+    whole = box(5, 0, 10, 10)
+    first = polygon_cell_values(cells, _zones(whole, *halves, values=[3.0, 2.0, 2.0]),
+                                [3.0, 2.0, 2.0], rule="majority")[0]
+    last = polygon_cell_values(cells, _zones(*halves, whole, values=[2.0, 2.0, 3.0]),
+                               [2.0, 2.0, 3.0], rule="majority")[0]
+    assert first.tolist() == [3.0] and last.tolist() == [2.0]
+
+
+def test_a_polygon_carrying_the_default_value_votes_with_the_bare_part():
+    """A polygon whose value EQUALS ``default`` adds to the default's vote (ledger 553).
+
+    35% at the default's own value, 40% of another unit, 25% bare: the default holds
+    60% and keeps the cell. Counted apart -- the polygon as one more feature, the bare
+    part as another -- the 40% unit took it while covering less than half. Without
+    ``default=`` that unit still takes it (40% against 35%). The default-valued polygon
+    is part of the winning vote, so it reads as reaching the cell and painting.
+    """
+
+    cells = _square_cells(1)
+    zones = _zones(box(0, 0, 3.5, 10), box(3.5, 0, 7.5, 10), values=[1.0, 2.0])
+    painted, reached, painting = polygon_cell_values(
+        cells, zones, [1.0, 2.0], rule="majority", default=1.0, painters=True
+    )
+    assert painted.tolist() == [1.0]
+    assert reached.all() and painting.tolist() == [True, False]
+    bare, _ = polygon_cell_values(cells, zones, [1.0, 2.0], rule="majority")
+    assert bare.tolist() == [2.0]
+
+
+def test_a_split_unit_paints_like_its_dissolved_self_through_the_recipe(meshes, tmp_path):
+    """Through ``mf.Polygons``: the column form AND the ``value=`` form, on a real mesh.
+
+    Column form: unit B covers the west 40% of a cell and unit A the rest, drawn as two
+    touching features covering 30% + 30% of it. The array equals the dissolved map's,
+    with and without ``default=``, and that cell holds A. ``value=`` form: the same two
+    A features alone, as a multiplier given ``default=1.0``, take that cell -- their
+    60% outcovers its 40% bare part -- and equal their dissolved self. The cuts are
+    SOLVED on one ragged Voronoi cell by bisection, and asserted, or this certifies
+    nothing.
+    """
+
+    import warnings
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    target_index = 14
+    target = cells.geometry.iloc[target_index]
+
+    def solve(share, low, high, shape):
+        for _ in range(60):
+            mid = 0.5 * (low + high)
+            covered = target.intersection(shape(mid)).area
+            low, high = (mid, high) if covered < share * target.area else (low, mid)
+        return 0.5 * (low + high)
+
+    west = solve(0.4, target.bounds[0], target.bounds[2], lambda x: box(xmin, ymin, x, ymax))
+    middle = solve(
+        0.3, target.bounds[1], target.bounds[3], lambda y: box(west, ymin, xmax, y)
+    )
+    unit_b = box(xmin, ymin, west, ymax)
+    unit_a = (box(west, ymin, xmax, middle), box(west, middle, xmax, ymax))
+    shares = [target.intersection(one).area / target.area for one in (unit_b, *unit_a)]
+    assert shares == pytest.approx([0.4, 0.3, 0.3], abs=1e-6), shares
+
+    def array(geometries, name, ks=None, **recipe):
+        columns = {"name": [f"f{i}" for i in range(len(geometries))]}
+        if ks is not None:
+            columns["k"] = ks
+        frame = gpd.GeoDataFrame(columns, geometry=list(geometries), crs=small.crs)
+        path = tmp_path / f"{name}.gpkg"
+        frame.to_file(path, layer="units", driver="GPKG")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", message=".*set no cell.*")
+            return array_from_polygons(
+                Polygons(path=path, layer="units", **recipe), small, nlay=1, parameter="k"
+            )
+
+    for default in (None, 1.0):
+        split = array([unit_b, *unit_a], f"split{default}", [3.0, 2.0, 2.0],
+                      column="k", default=default)
+        whole = array([unit_b, unit_a[0].union(unit_a[1])], f"whole{default}", [3.0, 2.0],
+                      column="k", default=default)
+        assert np.array_equal(split, whole), default
+        assert split[0, target_index] == 2.0, default
+
+    multiplier = array(list(unit_a), "mult", value=0.1, default=1.0)
+    dissolved = array([unit_a[0].union(unit_a[1])], "mult_whole", value=0.1, default=1.0)
+    assert np.array_equal(multiplier, dissolved)
+    assert multiplier[0, target_index] == 0.1
+
+
+def _vote_by_feature(cells, zones, values, default):
+    """The vote before ledger 553, written out: the largest single FEATURE's piece wins.
+
+    Ties to the lower row; with ``default=`` that piece must outcover the bare part by
+    more than ``_UNCOVERED_TIE`` of the cell (ledger 551). The same overlay as the
+    library, so the areas -- and a map of one feature per unit -- compare bit for bit.
+    """
+
+    from myflopy.modflow.mf6.grid.geometry import _UNCOVERED_TIE, _uncovered_area
+
+    frame = cells[["geometry"]].copy()
+    frame["_cell"] = np.arange(len(frame))
+    zone_frame = gpd.GeoDataFrame(
+        {"_zone": np.arange(len(zones))}, geometry=list(zones.geometry), crs=cells.crs
+    )
+    pieces = gpd.overlay(frame, zone_frame, how="intersection", keep_geom_type=True)
+    cell = pieces["_cell"].to_numpy()
+    zone = pieces["_zone"].to_numpy()
+    area = pieces.geometry.area.to_numpy()
+    painted = np.full(len(frame), np.nan if default is None else default)
+    order = np.lexsort((zone, -area, cell))
+    winners = order[np.r_[True, cell[order][1:] != cell[order][:-1]]]
+    if default is not None:
+        cell_area = frame.geometry.area.to_numpy()
+        bare = _uncovered_area(pieces, cell, area, cell_area)
+        margin = area[winners] - bare[cell[winners]]
+        winners = winners[margin > _UNCOVERED_TIE * cell_area[cell[winners]]]
+    painted[cell[winners]] = values[zone[winners]]
+    return painted
+
+
+def test_a_map_whose_units_are_each_one_feature_paints_what_the_vote_by_feature_painted(meshes):
+    """Ledger 299's 19 contact positions, two and three units, tiling and partly bare.
+
+    One feature per value makes a value's cover its one piece's area, so the vote by
+    value (ledger 553) must reproduce the vote by feature BIT FOR BIT -- with no default
+    and with one none of the units carries. Only a polygon whose value EQUALS the
+    default moves (it joins the default's vote), which is asserted elsewhere.
+    """
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    strip = box(xmin, ymin, xmax, ymin + 0.63 * (ymax - ymin))
+    for split in np.linspace(0.05, 0.95, 19):
+        for spans in (
+            ((0.0, split, 1.0), (split, 1.0, 100.0)),
+            ((0.0, split / 2, 3.0), (split / 2, split, 1.0), (split, 1.0, 100.0)),
+        ):
+            values = np.array([k for *_, k in spans])
+            tiles = [box(xmin + (xmax - xmin) * a, ymin, xmin + (xmax - xmin) * b, ymax)
+                     for a, b, _ in spans]
+            for geometries in (tiles, [one.intersection(strip) for one in tiles]):
+                zones = _zones(*geometries, values=values)
+                for default in (None, -5.0):
+                    painted, _ = polygon_cell_values(
+                        cells, zones, values, rule="majority", default=default
+                    )
+                    expected = _vote_by_feature(cells, zones, values, default)
+                    assert np.array_equal(painted, expected, equal_nan=True), (split, default)
+
+
+def test_the_multiplier_pit_takes_the_cells_more_than_half_inside_on_three_meshes():
+    """``docs/reproducers/polygon_multiplier_reach.py``'s counts: 6 / 15 / 64 cells.
+
+    The 40% x 50% pit as ``value=0.1, default=1.0`` under ``majority``, on 6x6, 10x10
+    and 20x20 meshes -- one feature, so the vote by value leaves it where ledger 551
+    put it.
+    """
+
+    for n, expected in ((6, 6), (10, 15), (20, 64)):
+        grid = _grid(n)
+        xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+        pit = box(xmin, ymin, xmin + 0.4 * (xmax - xmin), ymin + 0.5 * (ymax - ymin))
+        painted, _ = polygon_cell_values(
+            grid.gdf_vorPolys, [pit], [0.1], rule="majority", default=1.0
+        )
+        share = np.array([cell.intersection(pit).area / cell.area
+                          for cell in grid.gdf_vorPolys.geometry])
+        assert int((painted == 0.1).sum()) == int((share > 0.5).sum()) == expected, n

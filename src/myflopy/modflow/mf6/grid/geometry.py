@@ -1057,8 +1057,8 @@ def centroid_zones(polys, zones) -> np.ndarray:
     return rows
 
 
-#: How close, as a fraction of the cell's area, the uncovered part of a cell and a
-#: polygon must be to count as a TIE under ``polygon_cell_values(default=)`` -- and
+#: How close, as a fraction of the cell's area, the default's vote and a value's
+#: cover must be to count as a TIE under ``polygon_cell_values(default=)`` -- and
 #: below which an uncovered remainder is rounding, not ground. Overlay areas carry
 #: ~1e-13 relative error, so an exact half or a cell tiled to its edge must not be
 #: decided by the last bit (ledger 551).
@@ -1079,29 +1079,39 @@ def polygon_cell_values(
     caller that inherits a rule instead of naming one is choosing by accident
     (ledger 299).
 
-    ``majority`` gives a cell whichever polygon covers most of it. It is the default
-    for :class:`~myflopy.sources.Polygons` because it invents nothing: an area-weighted
-    ``mean`` across a contact writes a value no mapped unit has. ``mean`` is that
-    area-weighted mean, right for a continuous field. ``centroid`` defers to
-    :func:`centroid_zones` -- the same rule, not a second implementation of it.
+    ``majority`` gives a cell the VALUE whose polygons cover most of it (ledger 553):
+    the pieces of every feature carrying one value are UNITED per cell before the
+    values compete, so the answer never depends on how a unit was digitized -- two
+    touching features of one unit covering 30% + 30% of a cell beat another unit's
+    40%, as the dissolved unit does. Ties between values go to the value of the
+    LOWEST row among the tied values' features in that cell, matching
+    :func:`centroid_zones`, so two units sharing an edge resolve the same way under
+    every rule; values are compared exactly, as single features always were. A map
+    whose units are each ONE feature therefore paints exactly what a vote by feature
+    painted. It is the default for :class:`~myflopy.sources.Polygons` because it
+    invents nothing: an area-weighted ``mean`` across a contact writes a value no
+    mapped unit has. ``mean`` is that area-weighted mean, right for a continuous
+    field. ``centroid`` defers to :func:`centroid_zones` -- the same rule, not a second
+    implementation of it.
 
     **``default`` makes the UNCOVERED part of a cell a competitor** (ledger
-    551, the user's call). Under ``majority`` the part of a cell no polygon
-    covers votes for ``default``: the polygon winning among the polygons (largest piece,
-    ties to the lower row, exactly as without ``default``) takes the cell only when the
-    polygons carrying ITS VALUE together cover MORE of the cell than that remainder --
-    so a single-valued map (``value=``, a multiplier) takes exactly the cells it covers
-    more than half of however it was split into features (ledger 552). A
-    tie with the remainder -- equal to within ``_UNCOVERED_TIE`` of the cell's area --
-    leaves the default, because a value at exactly half holds no majority. Under ``mean`` the remainder is averaged in at ``default``, by area. Without
-    ``default`` the remainder is not a competitor (a partly covered cell takes the
-    polygon(s) covering it) and a cell no polygon reaches is ``NaN``: what an unreached
-    cell MEANS is then the caller's, and filling it here would hide it. ``centroid``
-    is unchanged by it -- a centre is inside a polygon or it is not -- except that the
-    cells holding no centre read ``default``. The remainder is measured against the
-    UNION of a cell's pieces, so overlapping polygons are not counted twice, and a
-    remainder below ``_UNCOVERED_TIE`` of the cell is rounding and counts as none, so a
-    map that tiles the grid paints exactly what it painted without ``default``.
+    551, the user's call). Under ``majority`` the default is one more value, its vote
+    the part of the cell no polygon covers PLUS the cover of any polygon whose value
+    EQUALS ``default`` (ledger 553): a value takes the cell only when its cover
+    exceeds that vote -- so a single-valued map (``value=``, a multiplier) takes
+    exactly the cells it covers more than half of, however it was split into features
+    (ledger 552). A tie with the default's vote -- equal to within ``_UNCOVERED_TIE``
+    of the cell's area -- leaves the default, because a value at exactly half holds no
+    majority. Under ``mean`` the remainder is averaged in at ``default``, by area.
+    Without ``default`` the remainder is not a competitor (a partly covered cell takes
+    the value covering most of it) and a cell no polygon reaches is ``NaN``: what an
+    unreached cell MEANS is then the caller's, and filling it here would hide it.
+    ``centroid`` is unchanged by it -- a centre is inside a polygon or it is not --
+    except that the cells holding no centre read ``default``. The remainder is
+    measured against the UNION of a cell's pieces, so overlapping polygons are not
+    counted twice, and a remainder below ``_UNCOVERED_TIE`` of the cell is rounding and
+    counts as none, so a map that tiles the grid -- none of whose values equals
+    ``default`` -- paints exactly what it painted without ``default``.
 
     **The overlay, not** :func:`cell_shares`. That function normalizes by the whole
     FEATURE (share of the polygon falling in each cell, which is what ``mf.Spread``
@@ -1111,19 +1121,18 @@ def polygon_cell_values(
     cell. ``gpd.overlay`` conserves to 5.6e-16 where ``cell_shares`` loses pieces at
     scale (ledger 298).
 
-    Ties between polygons go to the LOWEST row of ``zones``, matching
-    :func:`centroid_zones`, so two polygons sharing an edge resolve the same way under
-    every rule.
-
     ``cell_polys`` is the grid's cell frame (``vor.gdf_vorPolys``); the answer is
     positional over its rows. ``zones`` is a GeoDataFrame, GeoSeries or sequence of
     geometries in the grid's CRS, and ``values`` the number each carries, positionally.
     ``default`` is a float or ``None``. ``reached`` is ``True`` where a polygon decides
-    (``majority``/``centroid``) or contributes to (``mean``) the cell's value, so a cell
-    the remainder wins reads ``False`` beside its ``default``. ``painters=True`` adds a
-    third result: a boolean per ROW of ``zones``, ``True`` for a polygon that decides
-    or contributes to at least one cell -- a polygon on the grid that paints nothing is
-    one every cell it touches outvoted.
+    (``majority``/``centroid``) or contributes to (``mean``) the cell's value -- under
+    ``majority``, where a polygon carrying the winning value covers part of the cell,
+    one whose value equals ``default`` included -- so a cell the bare part alone wins
+    reads ``False`` beside its ``default``. ``painters=True`` adds a third result: a
+    boolean per ROW of ``zones``, ``True`` for a polygon that decides or contributes to
+    at least one cell (under ``majority``: carries the value that wins a cell it
+    covers part of) -- a polygon on the grid that paints nothing is one every cell it
+    touches outvoted.
     """
 
     import geopandas as gpd
@@ -1194,64 +1203,82 @@ def polygon_cell_values(
         painting[np.unique(zone_index[area > 0])] = True
         return answer()
 
-    # Majority: per cell, the largest intersection, ties to the lowest zone row.
-    #
-    # No aggregation step, deliberately. `gpd.overlay` returns ONE row per (cell, zone)
-    # and keeps a multi-part intersection WHOLE -- measured: a two-lobe unit covering
-    # 60% of a cell comes back as a single MultiPolygon of area 60, not two pieces of
-    # 30. So the rows ARE the per-unit totals, and a groupby-sum over them could not
-    # change an outcome; a mutation swapping it for `max` passed every test. Ledger
-    # 298's rule -- unfalsifiable code is the same defect as a certifying assertion.
-    # What holds the behaviour is
-    # `test_a_multi_part_polygon_is_judged_by_its_TOTAL_area_in_a_cell`, which fails
-    # loudly if that ever stops being true.
-    order = np.lexsort((zone_index, -area, cell_index))
-    ordered = cell_index[order]
-    leading = np.empty(len(order), dtype=bool)
-    leading[0] = True
-    leading[1:] = ordered[1:] != ordered[:-1]
-    winners = order[leading]
-    if default is None:
-        painted[cell_index[winners]] = numbers[zone_index[winners]]
-        reached[cell_index[winners]] = True
-        painting[np.unique(zone_index[winners])] = True
-        return answer()
+    # Majority, by VALUE (ledger 553): per cell, the UNION of the pieces carrying each
+    # value is that value's cover, so a unit split into touching features covers a cell
+    # exactly as its dissolved self does. A (cell, value) group holding ONE piece -- every
+    # group of a map whose units are each one feature -- keeps that piece's own area, bit
+    # for bit, so such a map paints what the vote by feature painted. `gpd.overlay`
+    # already returns ONE row per (cell, zone), keeping a multi-part intersection WHOLE
+    # (a two-lobe unit covering 60% of a cell is one MultiPolygon of 60, not two pieces
+    # of 30; `test_a_multi_part_polygon_is_judged_by_its_TOTAL_area_in_a_cell`), so the
+    # union is what joins different FEATURES of one value, and
+    # `test_a_unit_split_into_features_outvotes_a_larger_single_feature` holds it.
+    distinct, value_of_zone = np.unique(numbers, return_inverse=True)
+    group = cell_index * distinct.size + value_of_zone.reshape(-1)[zone_index]
+    keys, member = np.unique(group, return_inverse=True)
+    member = member.reshape(-1)
+    cover = _union_area(pieces, member, area, keys.size)
+    group_cell = keys // distinct.size
+    group_value = distinct[keys % distinct.size]
+    # A tie between values goes to the value of the LOWEST row among its features in
+    # the cell -- one feature per value makes that the old tie to the lower row.
+    first_row = np.full(keys.size, len(geometries), dtype=np.int64)
+    np.minimum.at(first_row, member, zone_index)
 
-    # The remainder is one more competitor and wins a tie: the winning VALUE must cover
-    # MORE of the cell than the part nothing covers (ledger 551). Measured
-    # by value, over every polygon carrying it, not by the one winning feature: a pit
-    # digitized as two touching features covering 30% + 30% of a cell covers 60% of it,
-    # as the dissolved pit does, and must take the cell the same way (ledger
-    # 552). Which feature wins among the polygons is unchanged.
-    won = cell_index[winners]
-    winning_value = np.full(len(cells), np.nan, dtype=float)
-    winning_value[won] = numbers[zone_index[winners]]
-    carries = numbers[zone_index] == winning_value[cell_index]
-    value_cover = _union_area(pieces, cell_index, area, len(cells), keep=carries)
-    margin = value_cover[won] - uncovered[won]
-    taken = margin > _UNCOVERED_TIE * cell_area[won]
-    winners = winners[taken]
-    painted[cell_index[winners]] = numbers[zone_index[winners]]
-    reached[cell_index[winners]] = True
-    painting[np.unique(zone_index[carries & reached[cell_index]])] = True
+    if default is None:
+        competing = np.ones(keys.size, dtype=bool)
+    else:
+        # The default is one more value: its vote is the part of the cell nothing covers
+        # plus the cover of every polygon carrying the default's own value (ledger 553),
+        # and it wins a tie (ledger 551).
+        competing = group_value != fill
+        default_vote = uncovered.copy()
+        default_vote[group_cell[~competing]] += cover[~competing]
+
+    candidates = np.flatnonzero(competing)
+    winners = np.empty(0, dtype=np.int64)
+    if candidates.size:
+        order = candidates[
+            np.lexsort((first_row[candidates], -cover[candidates], group_cell[candidates]))
+        ]
+        ordered = group_cell[order]
+        leading = np.empty(order.size, dtype=bool)
+        leading[0] = True
+        leading[1:] = ordered[1:] != ordered[:-1]
+        winners = order[leading]
+    if default is not None and winners.size:
+        won = group_cell[winners]
+        margin = cover[winners] - default_vote[won]
+        winners = winners[margin > _UNCOVERED_TIE * cell_area[won]]
+
+    decided = np.zeros(keys.size, dtype=bool)
+    decided[winners] = True
+    painted[group_cell[winners]] = group_value[winners]
+    if default is not None:
+        # A cell no other value took holds the default; where polygons carrying the
+        # default's value cover part of it, they are part of the vote that won.
+        taken = np.zeros(len(cells), dtype=bool)
+        taken[group_cell[winners]] = True
+        decided |= ~competing & ~taken[group_cell]
+    reached[group_cell[decided]] = True
+    painting[np.unique(zone_index[decided[member]])] = True
     return answer()
 
 
-def _union_area(pieces, cell_index, area, ncell, *, keep=None) -> np.ndarray:
-    """Per cell, the area its pieces cover -- their UNION, so an overlap counts once.
+def _union_area(pieces, owner, area, nowner) -> np.ndarray:
+    """Per owner, the area its pieces cover -- their UNION, so an overlap counts once.
 
-    ``keep`` (a boolean per piece) restricts it to some of the pieces; a cell holding
-    one kept piece (most of them) skips the union.
+    ``owner`` numbers each piece's owner, ``0..nowner-1``: its cell, or (under the
+    majority vote) its (cell, value) group. An owner holding ONE piece -- most of them
+    -- skips the union and keeps that piece's own area exactly.
     """
 
-    keep = np.ones(len(cell_index), dtype=bool) if keep is None else np.asarray(keep)
-    owners_all = cell_index[keep]
-    covered = np.bincount(owners_all, weights=area[keep], minlength=ncell)
-    counts = np.bincount(owners_all, minlength=ncell)
-    several = keep & (counts[cell_index] > 1)
+    covered = np.bincount(owner, weights=area, minlength=nowner)
+    counts = np.bincount(owner, minlength=nowner)
+    several = counts[owner] > 1
     if several.any():
         shapes = pieces.geometry.to_numpy()[several]
-        owners = cell_index[several]
+        owners = owner[several]
         order = np.argsort(owners, kind="stable")
         owners, shapes = owners[order], shapes[order]
         cuts = np.flatnonzero(np.diff(owners)) + 1

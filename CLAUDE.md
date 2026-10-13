@@ -1624,7 +1624,12 @@ the map holds 2, and its area-integral ran 0.0%-60.5% from majority's across 19 
 positions -- the arithmetic-vs-harmonic problem in miniature, which is why the default is
 the rule that invents nothing. `majority` and `centroid` differ on **at most ONE cell of
 64** over that sweep, so a single fixture distinguishes nothing and the test sweeps all
-19. An earlier "8 of 64 (12.5%)" figure was centroid vs the area-weighted MEAN, not vs
+19. **`majority` votes by VALUE, not by feature** (ledger 553): the features carrying one
+value are UNITED per cell before the values compete, so a unit drawn as two touching
+features (30% + 30%) beats another unit's 40% with or without `default=`, as its
+dissolved self does; a tie between values goes to the value of the lowest row among
+their features in the cell. A map whose units are each ONE feature paints bit for bit
+what the vote by feature painted (the sweep, asserted against that vote written out). An earlier "8 of 64 (12.5%)" figure was centroid vs the area-weighted MEAN, not vs
 majority -- that mis-mapping reached two docstrings before being caught. **It is NOT in
 ledger 169, and this file claimed it was**: entry 169 contains no such number and the
 only occurrence in the tree was that claim. Ledger 299's own sweep is the citable
@@ -1682,15 +1687,17 @@ a raster on NO cell raises even with `default=`. An `ndarray` factor is refused 
 what makes a package unsaveable; `with_grid(remap=True)` is that route). **`mf.Raster`
 (a `Surface`) stays refused in an array slot** -- it is an elevation with length units.
 **`default=` COMPETES for the part of each cell no polygon covers** (ledger
-551, the user's call): under `majority` the winning polygon takes a cell
-only when the polygons carrying ITS VALUE cover more of it than that remainder -- by
-value, so a pit split into touching features takes what the dissolved pit takes (ledger
-552) -- and a tie, to 1e-9 of the cell, leaves the default,
+551, the user's call): under `majority` the default is one more VALUE, its vote that
+remainder PLUS any polygon carrying the default's own value (ledger 553), and a value
+takes a cell only when its cover (united over its features, so a pit split into
+touching features takes what the dissolved pit takes, ledger 552) exceeds that vote --
+a tie, to 1e-9 of the cell, leaves the default,
 so `Polygons(value=0.1, default=1.0)` multiplies the cells it covers MORE than half of --
 6 on a 6x6 mesh where it touches 11, which the old rule all multiplied; under `mean` the
 remainder is averaged in at the default. Without `default=` nothing changes. A map that
-TILES the grid paints bit for bit what it painted before (the 19-contact sweep, asserted:
-a remainder under 1e-9 of the cell is rounding and counts as none); the remainder is
+TILES the grid, none of its values equal to the default, paints bit for bit what it
+painted before (the 19-contact sweep, asserted: a remainder under 1e-9 of the cell is
+rounding and counts as none); the remainder is
 measured against the UNION of a cell's pieces, so overlapping polygons are not counted
 twice. The recipe did not change, so a stored package's DIGEST did not move while its
 resolved array did -- `runs.drift()` cannot see it; a frozen run keeps its old arrays.

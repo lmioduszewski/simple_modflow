@@ -1515,7 +1515,9 @@ like `mf.RasterValues` (§7), inside a per-layer list, in a `*` product, and in
 flags, and every polygon rule returns a float — there is no cell type 0.4.
 
 **Name the rule if the default is not what you mean.** `rule="majority"` (default)
-gives a cell the value of whichever polygon covers most of it and so invents nothing;
+gives a cell the value whose polygons cover most of it -- by VALUE, so a unit drawn as
+several touching features counts as its dissolved self (ledger 553) -- and so invents
+nothing;
 `rule="mean"` is the area-weighted mean, right for a continuous field and wrong for a
 geology map — measured on a 64-cell grid with one contact it wrote 12 distinct
 conductivities where the map holds 2. `rule="centroid"` matches `ZoneSpec.from_polygons`.
@@ -1523,10 +1525,11 @@ conductivities where the map holds 2. `rule="centroid"` matches `ZoneSpec.from_p
 **A cell no polygon reaches is REFUSED unless you pass `default=`.** An unfilled cell
 is a NaN, and MF6 answers a NaN budget while reporting normal termination. With
 `default=` the part of every cell no polygon covers also COMPETES as the default
-(ledger 551): under `majority` the winning polygon takes a cell only when
-the polygons carrying its value cover more of it than that uncovered part does (a tie
-leaves the default; ledger 552), under `mean` the
-uncovered part is averaged in at the default. A map that tiles the grid is unaffected.
+(ledger 551): under `majority` a value takes a cell only when its polygons cover more
+of it than that uncovered part plus any polygon carrying the default's own value (a tie
+leaves the default; ledgers 552, 553), under `mean` the
+uncovered part is averaged in at the default. A map that tiles the grid is unaffected
+unless one of its values equals the default.
 
 For a BOUNDARY condition — a conductance, a stage, an invert — this is the wrong tool:
 `mf.drn.gpkg(...)` and its six siblings already read a polygon's attribute columns and

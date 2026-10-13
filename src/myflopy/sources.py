@@ -936,7 +936,12 @@ class Polygons(DataSourceSpec):
         How a cell overlapping several polygons picks its value. Another word raises
         ``ValueError`` here, at the declaration.
 
-        ``majority`` gives the cell the value of whichever polygon covers most of it.
+        ``majority`` gives the cell the VALUE whose polygons cover most of it -- the
+        features carrying one value are united first, so a unit drawn as several
+        touching features (30% + 30% of a cell) beats another unit's single 40%, as
+        its dissolved self does, and a tie between values goes to the value of the
+        earliest feature among them in that cell (ledger 553). A map whose units are
+        each one feature is judged exactly as by feature.
         It is the default because it INVENTS NOTHING: on a geology map an
         area-weighted mean across a contact writes a conductivity that no mapped unit
         has, which is the arithmetic-versus-harmonic problem in miniature.
@@ -963,18 +968,18 @@ class Polygons(DataSourceSpec):
 
         Given, it fills every cell no polygon reaches AND the uncovered part of each
         cell competes as the default (ledger 551, the user's call):
-        under ``majority`` the polygon winning among the polygons (largest share,
-        a tie to the earlier feature, as without ``default``) takes a cell only when
-        the polygons carrying ITS value together cover MORE of the cell than the part
-        no polygon covers, so a single-valued map -- a multiplier -- takes exactly the
-        cells it covers more than half of, however its features split it (ledger
-        552); a tie with the uncovered part (to 1e-9 of the cell's
+        under ``majority`` the default is one more value, whose vote is the part of
+        the cell no polygon covers PLUS the cover of any polygon whose value EQUALS
+        ``default`` (ledger 553); the value covering most of the cell takes it only
+        when it covers MORE than that vote, so a single-valued map -- a multiplier --
+        takes exactly the cells it covers more than half of, however its features
+        split it (ledger 552); a tie with the default's vote (to 1e-9 of the cell's
         area) leaves the default. Under
         ``mean`` the uncovered part is averaged in AT the default, by area.
         ``centroid`` is unchanged: a cell whose centre is in no polygon reads the
-        default. A map that tiles the grid paints exactly what it painted without
-        ``default``, and a feature that reaches the grid but so takes no cell is
-        WARNED by name at build.
+        default. A map that tiles the grid, none of whose values equals ``default``,
+        paints exactly what it painted without ``default``, and a feature that
+        reaches the grid but so takes no cell is WARNED by name at build.
     layer_field : str, optional
         Column naming the MODEL layer a feature paints, ``layer_base``-based. ``None``
         (the default) makes the map areal, broadcast to EVERY layer -- which is what a
@@ -1040,9 +1045,9 @@ class Polygons(DataSourceSpec):
             raise ValueError(
                 f"Polygons(rule={self.rule!r}) is not a rule. Use one of "
                 + ", ".join(repr(name) for name in POLYGON_RULES)
-                + ". 'majority' gives a cell the value of whichever polygon covers most "
-                "of it, 'mean' the area-weighted mean of them, 'centroid' the one "
-                "holding the cell's centre."
+                + ". 'majority' gives a cell the value whose polygons cover most of it, "
+                "'mean' the area-weighted mean of them, 'centroid' the one holding the "
+                "cell's centre."
             )
         if self.column is not None and self.value is not None:
             raise ValueError(
