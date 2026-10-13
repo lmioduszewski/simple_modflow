@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 588 entries (593 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 589 entries (594 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 589 | The recalibration rehearsal is the PEST preparation's acceptance test: a Ten Trails-shaped truth, declared... | 2026-10-12 |
 | 588 | A parallel run's master and workers are copies of the template as the BUILD left it | 2026-10-12 |
 | 587 | No `NaN` layer elevation reaches a DISV at a cell with `idomain != 0` | 2026-10-12 |
 | 586 | A run lock proven stale is removed when a launch meets it, and said once | 2026-10-12 |
@@ -21909,3 +21910,61 @@ same day, which is the useful part of the result.
       which includes it; a rebuild makes the template afresh, without what was put in
       it by hand. A template built before this records no list and is copied
       as before, less the PESTPP-IES outputs and resume archives.
+
+589. **The recalibration rehearsal is the PEST preparation's acceptance test: a Ten Trails-shaped truth, declared through the package-first API, calibrated back by `canonical_08_recalibration_rehearsal.ipynb` (2026-10-12).**
+      `myflopy.modflow.mf6.canonical_rehearsal` (not exported, like
+      `canonical_calibration`) builds the canonical valley's 21x21 grid with its own
+      five-layer stack, NEWTON, an array RCH on `mf.AverageYear`, RIV `riv` + `crisp`, DRN,
+      GHB, CHD, layered STO and two `mf.Basin` lakes cut by `stack.excavate` under one
+      IMPLICIT LAK; a start and a truth as library variants of one project. It pins its own
+      grid and ignores `SIMPLE_MODFLOW_CANONICAL_PROFILE`, and touches neither
+      `CanonicalModelConfig` nor the 15-package contract. **Chosen:**
+      - The truth is DECLARED through the package helpers (`mf.RasterValues(...) *
+        mf.Polygons(zone, value=, default=1.0)` on layer 2, a second `by_month` table,
+        forked packages), never through PEST's multiplier files, so a misrouted parameter
+        cannot cancel; and it lies INSIDE the declared parameter space, so the template at
+        the truth's multipliers must reproduce the noise-free data. Two consequences built
+        in: each K zone is the UNION of its cells, so `mf.Polygons`' majority rule and
+        `ZoneSpec.from_polygons`' centroid rule take the same cells; and the truth's STEADY
+        recharge keeps the start's annual mean (`by_month(steady=)`), because a
+        `periods=` group never reaches the steady period (ledger 549, Q3).
+        `truth_parameter_values` reads which parameter is which from the build's own
+        `parameters` record (zone, period label, package, lake), never from file names.
+      - The truth round trip agrees to 2e-10 ft and 4e-8 of a flow (`run_template`, a
+        module helper over the write-back's own template filler -- a public
+        `PestProject.evaluate` is not added); the write-back rebuild to 8e-7 ft and
+        2.7e-7 of a flow (FloPy's 9-digit list values and solver closure). The tolerance is
+        `1e-3 + 1e-6 |value|`. Four library mutants -- `package="crisp"` routed to `riv`,
+        the wet and dry month groups swapped, the average-year targets binned onto the
+        second-last cycle, the two lakes' bed leakances swapped -- each fail
+        `test_truth_round_trip_reproduces_the_data` (ratios 2 to 4e5).
+      - `cycles=3` by default, not 2: the steady period is not the periodic state, and the
+        truth's first two cycles differ by up to 0.59 ft (a lake's stage; 0.54 ft a head)
+        while its second and third differ by 0.006 ft -- `year.equilibrium(tolerance=0.05)`
+        fails at 2 and passes at 3. MF6 took 1.23 s for 37 periods against 1.06 s for 25.
+      - The synthetic readings carry ONE noise draw per (well, calendar month), shared by
+        every year's readings of that month, so the binned target is truth + that draw
+        exactly; an odd count of readings offset symmetrically about it.
+      - A flux target (crisp's baseflow, MF6 sign) is in the declaration because heads alone
+        cannot separate K from recharge (the design pass measured recharge at 0.534 for a
+        truth of 1.0 without one). The per-cell K field is not a criterion (Q9).
+      **Measured** (`docs/reproducers/rehearsal_recovery_budget.py`, which executes the
+      notebook; seeds 1-3, 6 workers, load average 11-21): the exact gates and phi pass at
+      every size -- phi ratio 0.014-0.020 at 16x2, 0.007-0.010 at 32x3 and 48x3 (Q9:
+      <= 0.2) -- and crisp's conductance closes 101-124% of its log gap (Q9: >= 50%). **NOT
+      met, the user's decision:** every scalar truth inside its posterior 5-95% band --
+      outside: 4-5 of 6 at 16x2 (1.4-1.6 min), 1-3 at 32x3 (3.3-4.6 min), 3 at 48x3
+      (4.6-6.7 min); the misses are not band edges but an over-confident posterior
+      (32x3, seed 2: north bed leakance [1.58, 2.71] for a truth of 0.5, crisp
+      [3.63, 3.86] for 3.0, z -7.7 and -9.4); and the forecast's truth inside the
+      posterior range -- 2 of 3 seeds at 16x2, 1 of 3 at 32x3, 3 of 3 at 48x3. **The
+      over-confidence is the differences**: observing the levels AND `differences()` at
+      the source weight (Q5) counts each head's noise twice, and PESTPP-IES draws the
+      two sets' noise independently. The same 32x3 run without `differences()` puts 6,
+      5 and 5 of 6 truths inside (|z| <= 1.8 bar one rch_dry at 3.6, bands 3-10x wider)
+      -- while its forecast range missed the truth on all 3 seeds, 0.01-0.11 ft low.
+      Even an exact posterior would put all six inside their 90% bands only about half the
+      time (0.9^6). The notebook keeps the user's declaration and knobs (differences,
+      16x2); its report computes every criterion, `test_rehearsal_notebook_recovers_the_truth`
+      asserts the met ones, and `test_rehearsal_posterior_covers_the_truth` holds the other
+      two as a non-strict xfail until decided.

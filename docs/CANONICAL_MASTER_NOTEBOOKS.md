@@ -35,6 +35,24 @@ next topic.
    review layer — parameter-field maps, the uncertainty-reduction map, the
    prior-vs-posterior mosaic and the observation residual map -- then takes the
    calibrated base realization home (`ies.calibrated()`, ledger 560).
+9. `canonical_08_recalibration_rehearsal.ipynb`: the dress rehearsal of the Ten Trails
+   recalibration and the acceptance test of the PEST preparation (ledger
+   589). Not the four-layer canonical model: the canonical valley's 21x21
+   grid carrying a model of Ten Trails' SHAPE built by
+   `myflopy.modflow.mf6.canonical_rehearsal.build_rehearsal` -- five layers, NEWTON, an
+   array RCH on an `mf.AverageYear` cycle, two RIV packages (`riv`, `crisp`), layered
+   storage, two excavated `mf.Basin` lakes under one IMPLICIT LAK -- as a START and a
+   TRUTH in one `mf.Project`, the truth DECLARED through the package-first API. The
+   workflow, written once in the API to copy for Ten Trails: dated hydrographs binned in
+   average-year mode, the equilibrium check, zoned pilot-point K + month-group recharge
+   + Sy + crisp's conductance + per-lake bed leakance, heads + differences + lake stages
+   + crisp's baseflow + a one-sided bound, **the truth round trip before any IES**
+   (`run_template` at `truth_parameter_values` reproduces the noise-free data), PESTPP-IES,
+   recovery against the truth, and the write-back (`ies.calibrated().to_library()`)
+   rebuilt, run and checked against what IES ran. It ends in a `rehearsal_report`.
+   **It is EXECUTED**, unlike 04-06: `tests/test_recalibration_rehearsal.py` runs it
+   to its round trip and end to end and asserts the report (the knobs in its first
+   cell set the run time; `docs/reproducers/rehearsal_recovery_budget.py` sweeps them).
 
 ### Reference tours (not part of the numbered series)
 

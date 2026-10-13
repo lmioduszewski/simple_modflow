@@ -141,7 +141,9 @@ NOTEBOOKS = ROOT / "examples" / "mf6" / "notebooks"
 
 #: Notebook -> a check on its final namespace. Each is fast (3-15 s) and needs only
 #: ``mf6``; the canonical and PEST notebooks are left out for their run time (ledger
-#: 444), and the archive ones do not run by design.
+#: 444), and the archive ones do not run by design -- bar
+#: ``canonical_08_recalibration_rehearsal``, which ``tests/test_recalibration_rehearsal.py``
+#: executes through :func:`execute_notebook` (ledger 589).
 EXECUTED_NOTEBOOKS = {
     "layer_management_workflow": lambda ns: ns["demo"].cache_status() == {"bedrock": "missing"},
     "plotting_vocabulary_tour": lambda ns: ns["built"].nlay == 2,
@@ -182,15 +184,16 @@ def _run_cell(source: str, filename: str, namespace: dict) -> None:
         _render(eval(compile(ast.Expression(last.value), filename, "eval"), namespace))
 
 
-@pytest.mark.slow
-@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs mf6 on PATH")
-@pytest.mark.parametrize("name", sorted(EXECUTED_NOTEBOOKS))
-def test_the_notebook_runs_top_to_bottom(name, tmp_path, monkeypatch):
-    """Every code cell, in order, in one namespace, as a reader would run it.
+def execute_notebook(name, tmp_path, monkeypatch, *, until=None) -> dict:
+    """Run notebook ``name``'s code cells in order in one namespace, as a reader would.
 
     The working directory is a stand-in ``examples/mf6/notebooks`` under ``tmp_path``,
     so what a notebook writes beside itself (``../artifacts``, ``./artifacts``) lands
-    there; the real notebooks directory is on ``sys.path`` for its local modules.
+    there; the real notebooks directory is on ``sys.path`` for its local modules. Each
+    cell's last expression and every ``display`` argument is rendered (:func:`_render`).
+    ``until`` -- a substring -- stops after the first code cell whose source holds it
+    (``tests/test_recalibration_rehearsal.py`` runs the rehearsal up to its truth round
+    trip this way); ``None`` runs every cell. Returns the namespace.
     """
 
     cells = [
@@ -198,6 +201,10 @@ def test_the_notebook_runs_top_to_bottom(name, tmp_path, monkeypatch):
         for cell in json.loads((NOTEBOOKS / f"{name}.ipynb").read_text(encoding="utf-8"))["cells"]
         if cell["cell_type"] == "code"
     ]
+    if until is not None:
+        stop = next((i for i, source in enumerate(cells) if until in source), None)
+        assert stop is not None, f"{name} has no code cell holding {until!r}"
+        cells = cells[: stop + 1]
     here = tmp_path / "examples" / "mf6" / "notebooks"
     here.mkdir(parents=True)
     monkeypatch.chdir(here)
@@ -226,4 +233,14 @@ def test_the_notebook_runs_top_to_bottom(name, tmp_path, monkeypatch):
             ) from error
         finally:
             plt.close("all")
+    return namespace
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs mf6 on PATH")
+@pytest.mark.parametrize("name", sorted(EXECUTED_NOTEBOOKS))
+def test_the_notebook_runs_top_to_bottom(name, tmp_path, monkeypatch):
+    """Every code cell, in order, in one namespace, as a reader would run it."""
+
+    namespace = execute_notebook(name, tmp_path, monkeypatch)
     assert EXECUTED_NOTEBOOKS[name](namespace)

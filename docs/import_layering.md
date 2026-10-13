@@ -245,5 +245,6 @@ review the diff, commit the regenerated files together.
 
 ## Layer 13
 
+- `myflopy.modflow.mf6.canonical_rehearsal`
 - `myflopy.project`
 - `myflopy.project.model_diff`

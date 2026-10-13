@@ -334,6 +334,15 @@ library's other packages, so it is refused when any of them -- an inline package
 or IMS, a library key it keeps -- changed since the run (ledger 562);
 `simulation=False` registers the packages alone.
 
+**The whole recalibration, rehearsed.** `examples/mf6/notebooks/canonical_08_recalibration_rehearsal.ipynb`
+runs the Ten Trails workflow end to end on a small model of the same shape -- a start
+and a truth as library variants of one project (`packages` `<key>` and `<key>/truth`,
+`simulations.fork("start", "truth", swap=...)`), dated data binned onto an
+average-year cycle, PESTPP-IES, and the calibrated base realization taken back into the
+library and run (ledger 589). Copy its declaration cell for Ten Trails,
+and keep its two round trips: the template at hand-set values before any IES, and the
+rebuilt model against what IES ran.
+
 ## The run ledger
 
 `project.runs` is every run under the project — with a manifest, without one, or

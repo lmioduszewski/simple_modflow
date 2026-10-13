@@ -2160,6 +2160,16 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   model itself** (perturb its K/recharge as "truth", then calibrate back); 06 uses
   pilot-point K. The old standalone demo models (`gold_standard_demo`, `synthetic_demo`,
   `modern_pest_demo.build_calibration_demo`) were retired in favor of one model everywhere.
+- **The acceptance test is the recalibration REHEARSAL** (ledger 589):
+  `canonical_rehearsal.build_rehearsal` (a Ten Trails-shaped start and a truth DECLARED
+  through the package-first API, never through PEST) and
+  `canonical_08_recalibration_rehearsal.ipynb`, executed by
+  `tests/test_recalibration_rehearsal.py`. Its TRUTH ROUND TRIP --
+  `run_template(cal, truth_parameter_values(case, cal), ws)` against the noise-free data --
+  catches a parameter or observation routed to the wrong package, lake, month, layer or
+  row before any IES; extend the rehearsal when a parameter or observation family is
+  added. A flux target (crisp's baseflow) is mandatory: heads alone left recharge at
+  0.534 for a truth of 1.0.
 
 ### What's missing / next steps for PEST
 > Verify against the code before building — most of the old list is now done

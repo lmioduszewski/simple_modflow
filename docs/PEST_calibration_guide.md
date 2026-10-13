@@ -1321,3 +1321,14 @@ keys = ies.calibrated().to_library(project)
 Every plot above takes `backend="matplotlib"` if you prefer static
 matplotlib/seaborn output over interactive Plotly — except
 `plot_field_mosaic`, which composes Plotly subplots and refuses.
+
+**Rehearsed end to end** (ledger 589):
+`examples/mf6/notebooks/canonical_08_recalibration_rehearsal.ipynb` runs this workflow
+on a small model of Ten Trails' shape whose truth is known -- dated hydrographs binned
+in average-year mode, zoned pilot-point K, month-group recharge, Sy, one RIV package's
+conductance (`package="crisp"`), per-lake bed leakance, heads with their differences,
+lake stages, a baseflow target and a bound. Before any IES it runs the template once at
+the truth's multipliers (`canonical_rehearsal.run_template`) and requires the noise-free
+data back: a parameter or observation routed to the wrong package, lake, month, layer or
+row shows there as a residual of feet, where the truth's agrees to 1e-8. On a real model
+the same call at a hand-set parameter set is the cheapest check of a new template.
