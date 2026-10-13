@@ -965,8 +965,9 @@ uses, then copies the template into them, so myflopy checks them first:
   runs in, naming the host, the process and when it started, and removes it when the run
   returns; a lock naming a process still running, or written on another host, or a PEST++
   process working in the folder (read from `/proc` on Linux), means a run is going. A
-  lock whose process is gone -- the kernel was killed -- is STALE: it is said so with a
-  `UserWarning` and ignored. `build()` refuses a template a serial run is going in.
+  lock whose process is gone on this host -- the kernel was killed -- is STALE: the
+  launch removes it and says so once with a `UserWarning`. `build()` refuses a template
+  a serial run is going in.
 
 When the run finishes cleanly its worker directories are deleted -- each is a full copy
 of the template, disposable, and a resume makes them again; `keep_workers=True` keeps

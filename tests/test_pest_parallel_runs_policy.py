@@ -307,6 +307,35 @@ def test_a_stale_lock_is_said_so_and_ignored(cal, _no_results_reader):
     assert not (master / RUN_LOCK).exists()
 
 
+@needs_true
+def test_a_stale_template_lock_is_removed_and_said_once(cal, _no_results_reader):
+    """A killed serial run leaves its lock in the TEMPLATE, which no parallel launch
+    rewrites: it was warned about on every later launch. Proven stale (its pid gone on
+    this host), it is removed by the first, and the second says nothing (ledger
+    586)."""
+
+    _lock_of_a_finished_process(cal.template_workspace)
+    with pytest.warns(UserWarning, match=r"template .*STALE.*Removed it"):
+        cal.run_ies(workers=2, exe="true")
+    assert not (cal.template_workspace / RUN_LOCK).exists()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cal.run_ies(workers=2, exe="true", overwrite=True)
+
+
+def test_a_lock_from_another_host_is_never_removed(cal):
+    """Only a lock PROVEN stale goes: one written elsewhere cannot be checked, counts as
+    live, and stays for the user to delete."""
+
+    write_run_lock(cal.template_workspace, method="run_ies", calibration="cal")
+    lock = json.loads((cal.template_workspace / RUN_LOCK).read_text(encoding="utf-8"))
+    lock["host"] = "another-host"
+    (cal.template_workspace / RUN_LOCK).write_text(json.dumps(lock), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="may still be going"):
+        cal.run_ies(workers=2, exe="true")
+    assert (cal.template_workspace / RUN_LOCK).exists()
+
+
 @pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
 def test_a_lock_whose_pid_now_names_another_process_is_stale(tmp_path):
     """A pid is reused: the lock records when its process started, and a running process

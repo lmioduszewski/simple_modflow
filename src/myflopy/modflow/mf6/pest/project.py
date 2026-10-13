@@ -3052,7 +3052,7 @@ class PestProject:
         a process still running, a lock written on another host, or one where a PEST++
         process is working (read from ``/proc`` on Linux), is refused
         (``RuntimeError``) whatever ``overwrite`` says. A lock whose process is gone
-        is STALE: it is said so (``UserWarning``) and ignored.
+        on this host is STALE: it is removed and said once (``UserWarning``).
 
         Parameters
         ----------
@@ -3823,13 +3823,14 @@ class PestProject:
     def _refuse_a_live_run(
         self, directory: Path, what: str, *, method: str, instead: str, stacklevel: int
     ) -> None:
-        """Refuse when a run is going in ``directory``; warn when its lock is stale.
+        """Refuse when a run is going in ``directory``; remove a stale lock, saying so.
 
         ``what`` names the directory's role in the message. A run is going when the
         :data:`~myflopy.modflow.mf6.pest.run_state.RUN_LOCK` names a process still
         running, a lock cannot be checked (another host), or a PEST++ process works
-        there (ledger 532). Refused whatever ``overwrite=`` says.
-        ``stacklevel`` puts the stale-lock warning at the user's call.
+        there (ledger 532). Refused whatever ``overwrite=`` says. A STALE lock -- its
+        process gone on this host, no PEST++ process there -- is deleted and said once
+        (ledger 586). ``stacklevel`` puts that warning at the user's call.
 
         Raises
         ------
@@ -3847,9 +3848,14 @@ class PestProject:
                 + f"\nIf that run is over, delete {activity.directory / RUN_LOCK}."
             )
         if activity.state == "stale":
+            # Proven stale -- its process is gone, on THIS host, and no PEST++ process
+            # works there -- so it is removed, and said ONCE: left in place, a lock a
+            # killed serial run wrote into the template was warned about on every later
+            # launch (ledger 586).
+            (activity.directory / RUN_LOCK).unlink(missing_ok=True)
             message = (
                 f"{method}(): the {what} {activity.directory}: {activity.describe()} "
-                "Treating it as free."
+                "Removed it, and treating the directory as free."
             )
             logger.warning(message)
             warnings.warn(message, UserWarning, stacklevel=stacklevel)

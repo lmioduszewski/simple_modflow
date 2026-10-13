@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 585 entries (590 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 586 entries (591 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 586 | A run lock proven stale is removed when a launch meets it, and said once | 2026-10-12 |
 | 585 | A `mf.Polygons` feature that reaches the grid but sets no cell is warned by name under every rule, with or... | 2026-10-12 |
 | 584 | A map's hover footer dates its period from the TDIS clock when `model.per_dates` is unset, by the period's... | 2026-10-12 |
 | 583 | Each forward-run function is copied into `forward_run.py` once | 2026-10-12 |
@@ -20780,7 +20781,8 @@ same day, which is the useful part of the result.
       in the template (serial) or master and worker root (parallel), removed in a
       `finally`; a live pid, another host, or a `pestpp*` process whose cwd is inside the
       folder (`/proc`, Linux) blocks, whatever `overwrite` says; a dead pid is STALE --
-      warned (`UserWarning` and logger) and ignored. The scan is what catches a kernel
+      warned (`UserWarning` and logger) and ~~ignored~~ (**CHANGED by ledger
+      586**: removed, so it is said once). The scan is what catches a kernel
       SIGKILLed while PESTPP-IES kept going; it keys on the command name so a shell left
       in the folder does not block. **Judgment call: a lock written on another host, or on
       Windows (where `os.kill(pid, 0)` TERMINATES the process), cannot be checked and
@@ -21831,3 +21833,12 @@ same day, which is the useful part of the result.
       another value; with `default=` also by the default's vote). The test is the
       painting set `polygon_cell_values(painters=True)` already returns, so nothing
       painted moves. A map whose units each win some cell is as quiet as before.
+
+586. **A run lock proven stale is removed when a launch meets it, and said once (2026-10-12).**
+      Ledger 532 warned about a STALE lock and left it, so a lock a killed serial run
+      wrote into the TEMPLATE -- which no parallel launch rewrites -- was warned about on
+      every later launch. **Chosen:** a lock is deleted only when PROVEN stale: written on
+      THIS host, its pid gone (or reused by a later process, by `/proc` start ticks), and
+      no `pestpp*` process working in the folder -- `run_state.run_activity`'s `"stale"`.
+      A lock from another host, or on Windows, still counts as live and is never
+      touched; the refusal still names the file to delete by hand.
