@@ -198,6 +198,19 @@ class RivFlowTargets(_CellZoneFlowTargets):
         budget route reads must have been declared with ``save_flows=True``, or
         reading raises naming it (ledger 536).
         :meth:`attach_flopy_obs` attaches to the named package.
+    inequality : str or None, optional
+        Whether every value of the set is a one-sided BOUND (ledger
+        564), on the number AS WRITTEN -- MF6's sign, water the
+        aquifer gives the river negative (ledger 350). ``"at_most"``: the
+        simulated exchange must not exceed the value; ``"at_least"``: must not
+        fall below it. So "the reach gains at least 2 of baseflow" is ``-2.0``
+        with ``inequality="at_most"`` (simulated at most -2), and "it loses at
+        most 3" is ``3.0`` with ``"at_most"``. Default ``None``: an ordinary
+        target; anything else raises ``ValueError``. In a PEST build each measured
+        observation is in PESTPP-IES's ``l_``/``g_`` group before the zone's own
+        (``l_riv_flow``), which scores 0 wherever the bound holds;
+        :meth:`compare` scores it so too. ``cal.forecast(...)`` refuses a bound
+        set.
 
     Examples
     --------

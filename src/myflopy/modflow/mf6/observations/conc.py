@@ -93,6 +93,14 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
     screen_bottom_column : str or None, optional
         The screen-bottom twin of ``screen_top_column``, refused alike. Default
         ``"screen_bottom"``.
+    inequality : str or None, optional
+        ``"at_most"`` (the simulated concentration must not exceed each value -- a
+        sample below detection: the detection limit) or ``"at_least"`` (must not
+        fall below it) makes every value of the set a one-sided BOUND, read as
+        :class:`~myflopy.modflow.mf6.observations.heads.HeadTargets`'
+        ``inequality`` says (ledger 564): PESTPP-IES's ``l_``/``g_``
+        group in a PEST build, PEST++'s residual in :meth:`compare`. Default
+        ``None``: ordinary targets; anything else raises ``ValueError``.
 
     Examples
     --------

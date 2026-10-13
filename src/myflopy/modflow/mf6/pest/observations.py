@@ -25,7 +25,9 @@ rules about that table (ledger 340):
   unmeasured, or a period nobody forecast -- is ``<prefix>_unmeasured``, and a
   forecast is ``<prefix>``, so neither ever joins a user's group. pyEMU gave each
   simulated column a group of its own, so every well was a group of one and
-  PEST++'s phi-by-group could not see the user's grouping.
+  PEST++'s phi-by-group could not see the user's grouping. A BOUND set's measured
+  observation carries PESTPP-IES's ``l_``/``g_`` before that group (ledger
+  564).
 
 Head and concentration tables are written, base run and every forward run alike,
 by ONE writer (``forward_run._write_head_target_csv`` / ``_write_conc_target_csv``),
@@ -93,7 +95,23 @@ _INSTRUCTION_NAME = re.compile(r"!([^!]+)!")
 #: ``l_``/``less`` "simulated at most", ``g_``/``greater`` "at least" -- matched on
 #: the bare start (``lessard`` and ``greaterville`` too): a measured group read so
 #: scores 0 wherever the inequality holds (measured, PEST++ 5.2.16, ledger 358).
+#: A USER's label or prefix starting so is refused; the build alone writes such a
+#: group, for a set given ``inequality=`` (:data:`INEQUALITY_TAGS`).
 _INEQUALITY_GROUP_STARTS = ("l_", "less", "g_", "greater")
+
+#: The tag a BOUND set's measured observations carry before the group they would
+#: otherwise be in (ledger 564): PESTPP-IES's own spelling of "at most"
+#: and "at least" -- the start ``pyemu.Pst.less_than_obs_constraints`` and
+#: ``greater_than_obs_constraints`` read too.
+INEQUALITY_TAGS = {"at_most": "l_", "at_least": "g_"}
+
+#: How a refusal of a user's ``l_``/``less``/``g_``/``greater`` label or prefix names
+#: the one spelling of a bound (ledger 564).
+_BOUND_SPELLING = (
+    "To make targets a one-sided BOUND, give their set inequality='at_most' or "
+    "'at_least' -- the build then writes PESTPP-IES's l_/g_ group itself "
+    "(ledger 564)."
+)
 
 #: The group of a set's rows no target measures -- unmeasured periods, blank
 #: targets, the periods a forecast set does not forecast: ``<prefix>`` + this.
@@ -451,12 +469,19 @@ def _prepared_item(
     simulated_path: Path,
     values_path: Path | None,
     value_label: str,
+    inequality: str | None = None,
 ) -> dict:
-    """The fields every prepared set carries into :func:`finalize_observations`."""
+    """The fields every prepared set carries into :func:`finalize_observations`.
+
+    ``inequality`` is the set's (ledger 564): ``None``, or
+    ``"at_most"``/``"at_least"``, which :func:`assign_observation_groups` writes as
+    PESTPP-IES's ``l_``/``g_`` before each measured observation's group.
+    """
 
     return {
         "prefix": prefix,
         "owner": owner,
+        "inequality": inequality,
         "target_frame": located,
         "valueless": bool(valueless),
         "instruction_file": f"{simulated_path.name}.ins",
@@ -473,13 +498,16 @@ def _prepared_item(
     }
 
 
-def _write_values_snapshot(located: pd.DataFrame, path: Path, *, value_label: str) -> Path:
+def _write_values_snapshot(
+    located: pd.DataFrame, path: Path, *, value_label: str, inequality: str | None = None
+) -> Path:
     """The ``<prefix>_target_values.csv`` review reads: each target's key, value and period.
 
     It names the simulated column each target reads (``column``: a well screened
     in two layers is two), and once the control file is built each target's
     observation (``obsnme``, ledger 340) and PEST observation group (``obgnme``,
-    ledger 358) -- what ``IesResults`` draws one time series per location from.
+    ledger 358) -- what ``IesResults`` draws one time series per location from --
+    and, for a BOUND set, its ``inequality`` (ledger 564).
     """
 
     snapshot = located.loc[:, ["time", "name", "value", "per"]].rename(
@@ -488,6 +516,8 @@ def _write_values_snapshot(located: pd.DataFrame, path: Path, *, value_label: st
     for column in ("obsnme", "column", "obgnme"):
         if column in located.columns:
             snapshot[column] = located[column].to_numpy()
+    if inequality is not None:
+        snapshot["inequality"] = inequality
     return _write_frame(snapshot, path)
 
 
@@ -524,10 +554,13 @@ def _prepare_named_series_observations(
         frame, simulated_wide, owner=owner, prefix=prefix, table=simulated_path.name,
         perlen=period_lengths(project.model),
     )
+    inequality = getattr(targets, "inequality", None)
     values_path = None
     if not located.empty:
         values_path = project.template_workspace / f"{prefix}_target_values.csv"
-        _write_values_snapshot(located, values_path, value_label=value_column)
+        _write_values_snapshot(
+            located, values_path, value_label=value_column, inequality=inequality
+        )
 
     use_cols = list(simulated_wide.columns[1:])
     metadata = {
@@ -537,6 +570,8 @@ def _prepare_named_series_observations(
         "value_column": value_column,
         "n_locations": int(len(use_cols)),
         "n_rows": int(len(located)),
+        # A bound set's direction (ledger 564); None otherwise.
+        "inequality": inequality,
         **dating,
     }
     if values_path is not None:
@@ -565,6 +600,7 @@ def _prepare_named_series_observations(
         simulated_path=simulated_path,
         values_path=values_path,
         value_label=value_column,
+        inequality=inequality,
     ) | {
         "named_series_forward_run_config": {
             "kind": metadata_kind,
@@ -887,8 +923,9 @@ def _prepare_point_observations(
         frame, simulated, owner=owner, prefix=spec.prefix, table=simulated_path.name,
         perlen=period_lengths(project.model),
     )
+    inequality = getattr(spec.targets, "inequality", None)
     values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
-    _write_values_snapshot(located, values_path, value_label=value_label)
+    _write_values_snapshot(located, values_path, value_label=value_label, inequality=inequality)
 
     item = _prepared_item(
         prefix=spec.prefix,
@@ -899,6 +936,7 @@ def _prepare_point_observations(
         simulated_path=simulated_path,
         values_path=values_path,
         value_label=value_label,
+        inequality=inequality,
     )
     item["metadata"] = {
         "kind": kind,
@@ -916,6 +954,8 @@ def _prepare_point_observations(
         "n_locations": int(mapping["name"].nunique()),
         "n_rows": int(len(located)),
         "screened": screened,
+        # A bound set's direction (ledger 564); None otherwise.
+        "inequality": inequality,
         **dating,
     }
     item["mapping_csv"] = mapping_path.name
@@ -1233,7 +1273,7 @@ def _set_groups(prepared: list[dict], others: set[str]) -> dict[str, str]:
                 f"group whose name starts with {', '.join(map(repr, _INEQUALITY_GROUP_STARTS))} "
                 f"as an INEQUALITY, so {own!r} would score 0 wherever the model is on the "
                 "allowed side of a target, not when it meets it. Pass a prefix that does "
-                "not start so."
+                f"not start so. {_BOUND_SPELLING}"
             )
         item["prefix_group"] = own
         item["unmeasured_group"] = own + UNMEASURED_GROUP_SUFFIX
@@ -1254,12 +1294,28 @@ def _set_groups(prepared: list[dict], others: set[str]) -> dict[str, str]:
     return owned
 
 
+def _tagged(item: dict, group: str) -> str:
+    """A measured observation's group, with PESTPP-IES's ``l_``/``g_`` before it for a bound set.
+
+    The ONE place a bound set's group is written (ledger 564):
+    ``group`` is what the observation's group would be in an ordinary set -- its
+    label made a PEST name, else the set's prefix -- so ledger 358's refusals of a
+    user's label still read the label itself.
+    """
+
+    tag = INEQUALITY_TAGS.get(item.get("inequality"))
+    return group if tag is None else tag + group
+
+
 def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str]) -> None:
     """Each measured target's group, in ``target_frame["obgnme"]``; refuse a label that cannot be one."""
 
     labels: dict[str, dict[str, list[str]]] = {}
     not_text: list[str] = []
     stringified: list[str] = []
+    # Each group the build writes for a BOUND set, and the set it was written for
+    # (ledger 564).
+    generated: dict[str, str] = {}
     for item in prepared:
         frame = item["target_frame"]
         prefix = str(item["prefix"])
@@ -1280,7 +1336,7 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
                 groups.append(None)
                 continue
             if text is None:
-                groups.append(item["prefix_group"])
+                groups.append(_tagged(item, item["prefix_group"]))
                 continue
             if text.lower() in _STRINGIFIED_MISSING:
                 stringified.append(f"{_shown(name)} in set {prefix!r}: {text!r}")
@@ -1290,8 +1346,12 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
             labels.setdefault(group, {}).setdefault(text, []).append(
                 f"{_shown(name)} in set {prefix!r}"
             )
-            groups.append(group)
+            groups.append(_tagged(item, group))
         frame["obgnme"] = groups
+        tag = INEQUALITY_TAGS.get(item.get("inequality"))
+        if tag is not None:
+            for group in {group for group in groups if group and group.startswith(tag)}:
+                generated.setdefault(group, prefix)
 
     # A text column that keeps a blank BLANK: `astype(str)` writes it 'nan'.
     as_text = (
@@ -1334,7 +1394,7 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
             f"reads a group whose name starts with "
             f"{', '.join(map(repr, _INEQUALITY_GROUP_STARTS))} as an INEQUALITY: its "
             "targets would score 0 wherever the model is on the allowed side of them, "
-            "not when it meets them (ledger 358). Name the groups otherwise."
+            f"not when it meets them (ledger 358). Name the groups otherwise. {_BOUND_SPELLING}"
         )
     taken = [
         f"{', '.join(map(repr, labels[group]))} becomes {group!r}, which is "
@@ -1349,6 +1409,15 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
             + ". A set's targets with no label are grouped under its prefix and its "
             "unmeasured rows under '<prefix>_unmeasured' (ledger 358); name the group "
             "otherwise, or leave those targets unlabeled."
+        )
+    clashing = sorted(group for group in generated if group in others)
+    if clashing:
+        raise ValueError(
+            "The inequality group(s) "
+            + ", ".join(f"{group!r} (set {generated[group]!r})" for group in clashing)
+            + " the build writes for a bound set take a name the control file already "
+            "holds. Register the bound set under another prefix, or give its targets "
+            "another group label (ledger 564)."
         )
     merged = [
         f"{' and '.join(repr(text) for text in texts)} both become {group!r} "
@@ -1378,6 +1447,11 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
       read.
     * Every other row of a set -- a period no target measures, a blank target, a
       period a forecast set does not forecast -- is in ``<prefix>_unmeasured``.
+    * A measured observation of a BOUND set (``inequality=``, ledger
+      564) carries PESTPP-IES's tag before the group the rules above
+      give it: ``l_`` for ``"at_most"``, ``g_`` for ``"at_least"`` (``l_hds``,
+      ``g_north_wells``), so PESTPP-IES scores it 0 wherever the bound holds. Its
+      unmeasured rows are in ``<prefix>_unmeasured`` as any set's are.
 
     So a user's group holds exactly the observations measured under its label:
     zero-weight rows and forecasts never join one. pyEMU named each simulated
@@ -1404,11 +1478,13 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
         ``<NA>`` in any case -- what ``astype(str)`` writes for a missing label
         (ledger 359); holds no letter or digit;
         becomes a group PESTPP-IES reads as an inequality (``l_``, ``less``,
-        ``g_``, ``greater``); becomes a group the build gives a set's unlabeled
+        ``g_``, ``greater`` -- the refusal names ``inequality=``, the one spelling
+        of a bound); becomes a group the build gives a set's unlabeled
         targets or unmeasured rows, or the control file already holds; or when
         two different labels become one group name -- naming them. Also when a
         set's prefix holds no letter or digit, starts as an inequality, or
-        becomes a group another set's does.
+        becomes a group another set's does; and when a group the build writes for
+        a bound set is one the control file already holds.
     """
 
     in_sets = {name for item in prepared for name in item["observation_names"]}
@@ -1552,5 +1628,6 @@ def finalize_observations(project, prepared: list[dict]):
     for item in prepared:
         if item.get("values_path") is not None:
             _write_values_snapshot(
-                item["target_frame"], item["values_path"], value_label=item["value_label"]
+                item["target_frame"], item["values_path"], value_label=item["value_label"],
+                inequality=item.get("inequality"),
             )

@@ -339,6 +339,87 @@ def _panel_axis(panel: dict) -> np.ndarray:
     return panel["dates"] if panel.get("dates") is not None else panel["times"]
 
 
+def _constraint_sides(pst) -> pd.Series:
+    """Each observation's side as PESTPP-IES scores it: ``"at_most"``, ``"at_least"`` or ``None``.
+
+    The ONE tag rule the review reads (ledger 564), and pyEMU's own
+    (``pyemu.pst.pst_handler.get_constraint_tags``, which
+    ``Pst.less_than_obs_constraints``/``greater_than_obs_constraints`` read): a
+    NONZERO-weight observation whose group starts ``l_``, ``less`` (or ``>@``) is
+    simulated at most its value; ``g_``, ``greater`` (or ``<@``) at least it.
+
+    Parameters
+    ----------
+    pst : pyemu.Pst
+        The run's control file -- anything carrying its ``observation_data``
+        (``obgnme``, ``weight``).
+
+    Returns
+    -------
+    pandas.Series
+        Indexed by observation name, every observation of the control file.
+    """
+
+    from pyemu.pst.pst_handler import get_constraint_tags
+
+    obs = pst.observation_data
+    group = obs["obgnme"].astype(str).str.lower()
+    weighted = pd.to_numeric(obs["weight"], errors="coerce").fillna(0.0) != 0.0
+    at_most = (group.str.startswith(get_constraint_tags("lt")) & weighted).to_numpy()
+    at_least = (group.str.startswith(get_constraint_tags("gt")) & weighted).to_numpy()
+    return pd.Series(
+        np.where(at_most, "at_most", np.where(at_least, "at_least", None)),
+        index=obs.index,
+        dtype=object,
+    )
+
+
+def _pest_residuals(pst, simulated: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Simulated minus measured as PEST++ scores it, and raw (ledger 564).
+
+    The ONE place the review scores a residual: a bound observation
+    (:func:`_constraint_sides`) contributes 0 where it holds -- ``"at_most"``:
+    simulated <= measured; ``"at_least"``: simulated >= measured -- and its whole
+    residual where it is violated; any other is simulated minus measured. Without it
+    a satisfied bound read as a misfit: ``phi_contributions`` gave an ``l_`` group
+    satisfied by every realization 3,229,693 where PESTPP-IES's own file says 0.
+
+    Parameters
+    ----------
+    pst : pyemu.Pst
+        The run's control file (``obsval``, ``obgnme``, ``weight``).
+    simulated : pandas.Series
+        Simulated values indexed by observation name (one realization).
+
+    Returns
+    -------
+    tuple of pandas.Series
+        ``(residual, raw)``, both indexed as ``simulated``: PEST++'s residual and
+        simulated minus measured.
+    """
+
+    measured = pst.observation_data["obsval"].astype(float).reindex(simulated.index)
+    raw = simulated.astype(float) - measured
+    sides = _constraint_sides(pst).reindex(simulated.index)
+    residual = raw.copy()
+    at_most = (sides == "at_most").to_numpy()
+    at_least = (sides == "at_least").to_numpy()
+    residual[at_most] = raw[at_most].clip(lower=0.0)
+    residual[at_least] = raw[at_least].clip(upper=0.0)
+    return residual, raw
+
+
+#: How each kind of measured observation is drawn on a review panel (ledger
+#: 564): ``(legend name, plotly symbol, matplotlib marker)``. An
+#: ordinary measurement is a circle; a bound points the way the simulated value may
+#: go -- down for "at most", up for "at least".
+_MEASURED_MARKERS = {
+    None: ("measured", "circle", "o"),
+    "at_most": ("bound: at most", "triangle-down", "v"),
+    "at_least": ("bound: at least", "triangle-up", "^"),
+}
+
+
 def _axis_title(panels: list[dict]) -> str:
     """``"date (period end)"`` when every panel is drawn on dates, else ``"stress period"``."""
 
@@ -1001,12 +1082,15 @@ class IesResults:
         list of dict
             ``title``, ``names`` (time-ordered), ``times`` (periods), ``dates``
             (each observation's period END date, or ``None`` when its set
-            recorded no calendar -- ledger 544) and ``measured`` (a
-            boolean array over ``names``) per location.
+            recorded no calendar -- ledger 544), ``measured`` (a
+            boolean array over ``names``) and ``sides`` (each name's bound,
+            ``"at_most"``/``"at_least"``, or ``None``; ledger 564)
+            per location.
         """
 
         obs = self._observation_metadata()
         measured = self._is_measured(obs)
+        sides = _constraint_sides(self.pst)
         base = obs.index.to_series().str.extract(self._COLUMN_BASE_RE)["base"]
         base = base.fillna(obs["obgnme"].astype(str))
         group = obs["obgnme"].astype(str).str.lower()
@@ -1038,6 +1122,9 @@ class IesResults:
                 # the panel is drawn on.
                 "dates": dates.to_numpy() if dates.notna().all() else None,
                 "measured": measured.loc[frame.index].to_numpy(dtype=bool),
+                # Each observation's side, a bound's or None (ledger
+                # 564): how its marker is drawn.
+                "sides": sides.loc[frame.index].to_numpy(dtype=object),
             })
             if len(panels) >= int(max_locations):
                 break
@@ -1050,9 +1137,13 @@ class IesResults:
         One panel per target LOCATION -- a well, a reach, a lake, a DRN zone --
         that has a measured observation: grey lines are the prior ensemble and
         blue lines the posterior through every period the run saved, and red
-        markers the measured values. A good fit means the blue lines bracket the
-        red markers. Each panel is titled with its observation set's prefix, the
-        target and, in brackets, its observation group.
+        markers the measured values -- a circle for a measurement, and for a
+        BOUND (ledger 564; a group PESTPP-IES reads as an
+        inequality) a triangle pointing the way the simulated value may go: down
+        for "at most", up for "at least". A good fit means the blue lines bracket
+        the circles and stay on the allowed side of the triangles. Each panel is
+        titled with its observation set's prefix, the target and, in brackets, its
+        observation group.
 
         **The x axis is each period's END DATE** when the build recorded the
         model's calendar for the set (``period_end_dates``, every build on a model
@@ -1119,7 +1210,11 @@ class IesResults:
                     ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 for real in posterior.index:
                     ax.plot(times, posterior.loc[real, names].to_numpy(dtype=float), color=_MPL_POST, lw=0.8, alpha=0.5)
-                ax.plot(times[hit], obsval.loc[names].to_numpy(dtype=float)[hit], "^", color=_MPL_MEAS, ms=7)
+                values = obsval.loc[names].to_numpy(dtype=float)
+                for side, (label, _symbol, marker) in _MEASURED_MARKERS.items():
+                    drawn = hit & np.array([value == side for value in panel["sides"]], dtype=bool)
+                    if drawn.any():
+                        ax.plot(times[drawn], values[drawn], marker, ls="none", color=_MPL_MEAS, ms=7, label=label)
                 ax.set_title(panel["title"], loc="left", fontsize=9)
                 ax.set_ylabel("value")
             axes[-1, 0].set_xlabel(_axis_title(panels))
@@ -1128,6 +1223,7 @@ class IesResults:
             return fig
 
         fig = viz.subplots(rows=len(panels), cols=1, subplot_titles=titles, shared_xaxes=False)
+        shown: set[str] = set()
         for row, panel in enumerate(panels, start=1):
             names, times, hit = panel["names"], _panel_axis(panel), panel["measured"]
             first = True
@@ -1142,9 +1238,15 @@ class IesResults:
                                 line=dict(color=_POST_COLOR, width=1), row=row, col=1,
                                 name="posterior", legendgroup="posterior", showlegend=first and row == 1, hoverinfo="skip")
                 first = False
-            fig.add_scatter(x=times[hit], y=obsval.loc[names].to_numpy(dtype=float)[hit], mode="markers",
-                            marker=dict(color=_MEAS_COLOR, size=8, symbol="triangle-up"), row=row, col=1,
-                            name="measured", legendgroup="measured", showlegend=row == 1)
+            values = obsval.loc[names].to_numpy(dtype=float)
+            for side, (label, symbol, _marker) in _MEASURED_MARKERS.items():
+                drawn = hit & np.array([value == side for value in panel["sides"]], dtype=bool)
+                if not drawn.any():
+                    continue
+                fig.add_scatter(x=times[drawn], y=values[drawn], mode="markers",
+                                marker=dict(color=_MEAS_COLOR, size=8, symbol=symbol), row=row, col=1,
+                                name=label, legendgroup=label, showlegend=label not in shown)
+                shown.add(label)
         fig.update_layout(title="Simulated ensemble vs measured observations",
                           dragmode="pan", height=260 * len(panels))
         fig.update_xaxes(title_text=_axis_title(panels), row=len(panels), col=1)
@@ -1670,9 +1772,17 @@ class IesResults:
     def phi_contributions(self, *, realization: str = "base") -> pd.Series:
         """Return the phi (misfit) contributed by each observation group.
 
-        Computed for one realization (default the ``base`` / minimum-error-
-        variance one) as the sum of squared weighted residuals within each
-        nonzero-weight observation group.
+        For one POSTERIOR realization (default the ``base`` / minimum-error-variance
+        one), each nonzero-weight observation group's phi as PESTPP-IES itself
+        scored it: read from the run's ``<case>.phi.group.csv`` at the posterior
+        iteration (ledger 564; PESTPP-IES writes it to about six
+        significant figures), so a BOUND group (``l_``/``g_``) counts only where
+        it is violated. A run whose file is absent, holds no row for the
+        realization, or lacks a weighted group of the control file (edited since
+        the run) is scored here instead: the sum of squared weighted residuals per
+        group, a bound's residual 0 where it holds -- PEST++'s rule, through the
+        review's one helper. Both were two-sided before: an ``l_`` group satisfied
+        by every realization read 3,229,693 where PESTPP-IES's file says 0.
 
         Parameters
         ----------
@@ -1687,19 +1797,62 @@ class IesResults:
         Returns
         -------
         pandas.Series
-            Indexed by observation group (``obgnme``), sorted from largest
-            contribution down.
+            Indexed by observation group (``obgnme``) -- every group holding a
+            nonzero-weight observation -- sorted from largest contribution down.
         """
 
         obs = self.pst.observation_data
         obs = obs.loc[obs["weight"].astype(float) > 0]
         simulated = self._posterior_row(realization)
+        groups = list(dict.fromkeys(obs["obgnme"].astype(str)))
+        written = self._phi_by_group(realization, groups)
+        if written is not None:
+            return written.sort_values(ascending=False)
         names = [name for name in obs.index if name in simulated.index]
         obs = obs.loc[names]
-        residual = obs["weight"].astype(float) * (simulated[names].astype(float) - obs["obsval"].astype(float))
+        scored, _raw = _pest_residuals(self.pst, simulated[names])
+        residual = obs["weight"].astype(float) * scored
         contribution = pd.Series((residual.to_numpy() ** 2), index=names)
         by_group = contribution.groupby(obs["obgnme"].to_numpy()).sum()
         return by_group.sort_values(ascending=False)
+
+    def _phi_by_group(self, realization, groups: list[str]) -> pd.Series | None:
+        """``groups``' phi for ``realization`` at the posterior iteration, from PESTPP-IES's own file.
+
+        ``<case>.phi.group.csv`` holds one row per (iteration, realization) and one
+        column per observation group, PEST++'s scoring (a bound one-sided). ``None``
+        -- score it here instead -- when the file is absent or unreadable, has no
+        row for the realization at the posterior iteration, or lacks one of
+        ``groups`` (a control file edited since the run).
+        """
+
+        path = self.workspace / f"{self.case}.phi.group.csv"
+        if not path.exists():
+            return None
+        try:
+            table = pd.read_csv(path)
+        except (OSError, ValueError) as error:
+            # A file PESTPP-IES is still writing (pandas' EmptyDataError and
+            # ParserError are ValueErrors): no record, so the review scores phi.
+            logger.debug("phi-by-group file %s unreadable, scoring phi instead: %s", path, error)
+            return None
+        columns = {str(column).strip().lower(): column for column in table.columns}
+        if "iteration" not in columns or "par_realization" not in columns:
+            return None
+        if any(group.lower() not in columns for group in groups):
+            return None
+        rows = table.loc[
+            (pd.to_numeric(table[columns["iteration"]], errors="coerce") == self.posterior_iteration)
+            & (table[columns["par_realization"]].astype(str).str.strip() == str(realization))
+        ]
+        if rows.empty:
+            return None
+        row = rows.iloc[-1]
+        values = pd.to_numeric(
+            pd.Series([row[columns[group.lower()]] for group in groups], index=groups),
+            errors="coerce",
+        )
+        return None if values.isna().any() else values.astype(float)
 
     def plot_phi_contributions(self, *, realization: str = "base", kind: str = "bar",
                                max_groups: int = 20, backend: str = "plotly"):
@@ -1789,7 +1942,11 @@ class IesResults:
         "in conflict" when the measured value falls outside that range -- meaning
         no plausible parameter set reproduces it, so history matching cannot
         either (the problem is in the model, bounds, or weights, not the
-        parameters).
+        parameters). A BOUND (a group PESTPP-IES reads as an inequality, ledger
+        564) is one-sided: an "at most" bound is in conflict only
+        when the whole band lies ABOVE it, an "at least" bound only when it lies
+        below -- a prior entirely on the allowed side satisfies it, where the
+        two-sided test called every such bound a conflict.
 
         Parameters
         ----------
@@ -1808,8 +1965,8 @@ class IesResults:
         -------
         pandas.DataFrame
             Indexed by observation name with columns ``obgnme``, ``time``,
-            ``measured``, ``prior_lo``, ``prior_hi``, ``prior_mean`` and
-            ``in_conflict``.
+            ``measured``, ``bound`` (``"at_most"``, ``"at_least"`` or ``None``),
+            ``prior_lo``, ``prior_hi``, ``prior_mean`` and ``in_conflict``.
         """
 
         if not 0.0 <= float(coverage) <= 1.0:
@@ -1828,15 +1985,23 @@ class IesResults:
         hi = sims.quantile(1.0 - alpha)
         measured = obs["obsval"].astype(float)
         meta = self._observation_metadata().loc[names]
+        sides = _constraint_sides(self.pst).reindex(names)
+        # A bound is out of reach only when the band is wholly on its wrong side
+        # (ledger 564).
+        in_conflict = np.where(
+            sides == "at_most", lo > measured,
+            np.where(sides == "at_least", hi < measured, (measured < lo) | (measured > hi)),
+        )
         return pd.DataFrame(
             {
                 "obgnme": obs["obgnme"].to_numpy(),
                 "time": meta["_time"].to_numpy(),
                 "measured": measured.to_numpy(),
+                "bound": sides.to_numpy(dtype=object),
                 "prior_lo": lo.to_numpy(),
                 "prior_hi": hi.to_numpy(),
                 "prior_mean": sims.mean().to_numpy(),
-                "in_conflict": ((measured < lo) | (measured > hi)).to_numpy(),
+                "in_conflict": np.asarray(in_conflict, dtype=bool),
             },
             index=names,
         )
@@ -1849,7 +2014,9 @@ class IesResults:
         -------
         The prior Monte Carlo check, done *before* history matching: each grey
         line is one prior realization's simulated equivalent through time; red
-        markers are the measured observations. It answers "does the prior even
+        markers are the measured observations -- circles, and for a BOUND (ledger
+        564) a triangle pointing the way the simulated value may go,
+        down for "at most" and up for "at least". It answers "does the prior even
         contain the data?" -- the cheap go/no-go gate before calibrating.
 
         What to look for
@@ -1915,20 +2082,24 @@ class IesResults:
             names, hit = panel["names"], panel["measured"]
             measured = obsval.loc[names].to_numpy(dtype=float)[hit]
             times = _panel_axis(panel)[hit]
+            sides = np.asarray(panel["sides"], dtype=object)[hit]
             if conflict is not None:
                 kept = [name for name, flag in zip(names, hit, strict=True) if flag]
                 flags = conflict["in_conflict"].reindex(kept).fillna(False).to_numpy(dtype=bool)
             else:
                 flags = np.zeros(len(times), dtype=bool)
-            return names, _panel_axis(panel), times, measured, flags
+            return names, _panel_axis(panel), times, measured, flags, sides
 
         if _normalize_backend(backend) == "matplotlib":
             fig, axes = viz.mpl_axes(len(panels), 1, figsize=(8, 2.6 * len(panels)), squeeze=False)
             for ax, panel in zip(axes[:, 0], panels, strict=False):
-                names, line_times, times, measured, flags = _panel_data(panel)
+                names, line_times, times, measured, flags, sides = _panel_data(panel)
                 for real in prior.index:
                     ax.plot(line_times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
-                ax.plot(times[~flags], measured[~flags], "^", color=_MPL_MEAS, ms=7, label="measured")
+                for side, (label, _symbol, marker) in _MEASURED_MARKERS.items():
+                    drawn = ~flags & np.array([value == side for value in sides], dtype=bool)
+                    if drawn.any():
+                        ax.plot(times[drawn], measured[drawn], marker, ls="none", color=_MPL_MEAS, ms=7, label=label)
                 if flags.any():
                     ax.plot(times[flags], measured[flags], "X", color=_MPL_CONFLICT, ms=10, label="prior-data conflict")
                 ax.set_title(panel["title"], loc="left", fontsize=9)
@@ -1940,17 +2111,24 @@ class IesResults:
 
         fig = viz.subplots(rows=len(panels), cols=1, subplot_titles=[panel["title"] for panel in panels],
                            shared_xaxes=False)
+        shown: set[str] = set()
         for row, panel in enumerate(panels, start=1):
-            names, line_times, times, measured, flags = _panel_data(panel)
+            names, line_times, times, measured, flags, sides = _panel_data(panel)
             first = True
             for real in prior.index:
                 fig.add_scatter(x=line_times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
                                 line=dict(color=_PRIOR_COLOR, width=1), row=row, col=1,
                                 name="prior", legendgroup="prior", showlegend=first and row == 1, hoverinfo="skip")
                 first = False
-            fig.add_scatter(x=times[~flags], y=measured[~flags], mode="markers",
-                            marker=dict(color=_MEAS_COLOR, size=8, symbol="triangle-up"),
-                            row=row, col=1, name="measured", legendgroup="measured", showlegend=row == 1)
+            for side, (label, symbol, _marker) in _MEASURED_MARKERS.items():
+                drawn = ~flags & np.array([value == side for value in sides], dtype=bool)
+                if not drawn.any():
+                    continue
+                fig.add_scatter(x=times[drawn], y=measured[drawn], mode="markers",
+                                marker=dict(color=_MEAS_COLOR, size=8, symbol=symbol),
+                                row=row, col=1, name=label, legendgroup=label,
+                                showlegend=label not in shown)
+                shown.add(label)
             if flags.any():
                 fig.add_scatter(x=times[flags], y=measured[flags], mode="markers",
                                 marker=dict(color=_CONFLICT_COLOR, size=11, symbol="x"),
@@ -2825,6 +3003,9 @@ class IesResults:
         too, which is what keeps ``cal.forecast(...)`` sets — registered as
         ordinary observation sets — off a misfit figure.
 
+        A BOUND observation (a group PESTPP-IES reads as an inequality, ledger
+        564) counts as PEST++ scores it: 0 where it holds.
+
         Parameters
         ----------
         realization : str, default 'base'
@@ -2846,8 +3027,10 @@ class IesResults:
         -------
         pandas.DataFrame
             One row per (``prefix``, ``location``) with ``kind``,
-            ``value_kind``, ``measured``, ``simulated``, ``residual``,
-            ``weight``, ``n``, and whichever location the run recorded:
+            ``value_kind``, ``measured``, ``simulated``, ``residual`` (the mean of
+            PEST++'s residuals, a bound's 0 where it holds), ``raw_residual``
+            (mean simulated minus mean measured), ``weight``, ``n``, and
+            whichever location the run recorded:
             ``cell``/``x``/``y`` for point targets (heads, concentration),
             ``cells`` (the zone's cell list) for DRN and RIV zones -- one row per
             zone, its cells the columns any of its rows covers. Empty when the run
@@ -2858,8 +3041,8 @@ class IesResults:
         if locations.empty:
             return pd.DataFrame(
                 columns=["prefix", "location", "kind", "value_kind", "measured",
-                         "simulated", "residual", "weight", "n", "cell", "x",
-                         "y", "cells"]
+                         "simulated", "residual", "raw_residual", "weight", "n", "cell",
+                         "x", "y", "cells"]
             )
         locations = self._select_prefixes(locations, prefix)
 
@@ -2881,14 +3064,17 @@ class IesResults:
         # deliberately silenced targets. A misfit map must not draw either as if
         # the model had been fitted to it.
         obs = obs.loc[self._is_measured(obs)]
+        # PEST++'s residual, a bound 0 where it holds (ledger 564).
+        obs["residual"] = _pest_residuals(self.pst, obs["simulated"])[0].to_numpy()
 
         summary = obs.groupby(["prefix", "location"], as_index=False).agg(
             measured=("obsval", "mean"),
             simulated=("simulated", "mean"),
             weight=("weight", "mean"),
             n=("obsval", "size"),
+            residual=("residual", "mean"),
         )
-        summary["residual"] = summary["simulated"] - summary["measured"]
+        summary["raw_residual"] = summary["simulated"] - summary["measured"]
         merged = summary.merge(locations, on=["prefix", "location"], how="inner")
         return merged.sort_values(["prefix", "location"]).reset_index(drop=True)
 

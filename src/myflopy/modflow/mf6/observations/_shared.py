@@ -231,6 +231,82 @@ def _refuse_flows_leaving_the_frame(
     )
 
 
+#: The two ways a target SET may be a one-sided bound (ledger 564): each
+#: of its values is a limit the simulated value must be ``"at_most"`` -- PESTPP-IES's
+#: ``l_`` group, scoring 0 wherever simulated <= target -- or ``"at_least"``
+#: (``g_``, 0 wherever simulated >= target). ``None`` is an ordinary target.
+INEQUALITIES = ("at_most", "at_least")
+
+
+def _check_inequality(value, *, owner: str) -> str | None:
+    """A target set's ``inequality=``, checked: ``None``, ``"at_most"`` or ``"at_least"``.
+
+    The ONE validation every target family runs at construction (ledger
+    564). Matched exactly: a near miss is refused naming the
+    spellings rather than read as one of them.
+
+    Parameters
+    ----------
+    value : object
+        What the caller passed as ``inequality=``.
+    owner : str
+        The target class, named in the refusal.
+
+    Returns
+    -------
+    str or None
+        ``value`` unchanged.
+
+    Raises
+    ------
+    ValueError
+        When ``value`` is anything but ``None`` or one of :data:`INEQUALITIES`.
+    """
+
+    if value is None or (isinstance(value, str) and value in INEQUALITIES):
+        return value
+    raise ValueError(
+        f"{owner}: inequality={value!r} is not a bound. Pass 'at_most' (each value is a "
+        "limit the simulated value must not exceed -- a dry well's screen bottom), "
+        "'at_least' (one it must not fall below -- a flowing well's land surface), or "
+        "None (default) for an ordinary target (ledger 564)."
+    )
+
+
+def _score_bounds(frame: pd.DataFrame, inequality: str | None) -> pd.DataFrame:
+    """A ``compare()`` frame's residuals scored as PEST++ scores a bound (ledger 564).
+
+    An ordinary set is returned unchanged. For a bound set, ``raw_residual`` keeps
+    simulated minus target, and ``residual`` -- with ``abs_residual`` -- becomes
+    PEST++'s: 0 where the bound holds (``"at_most"``: simulated <= target;
+    ``"at_least"``: simulated >= target), the raw residual where it is violated. So
+    ``stats()`` and PESTPP-IES's phi agree about the same set. A blank stays blank.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        A ``compare()`` frame holding ``residual`` (simulated minus target).
+    inequality : str or None
+        The set's ``inequality``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``frame``, its ``residual``/``abs_residual`` scored and ``raw_residual``
+        inserted after ``residual`` when the set is a bound.
+    """
+
+    if inequality is None or "residual" not in frame.columns:
+        return frame
+    scored = frame.copy()
+    raw = pd.to_numeric(scored["residual"], errors="coerce").astype(float)
+    kept = raw.clip(lower=0.0) if inequality == "at_most" else raw.clip(upper=0.0)
+    scored["residual"] = kept
+    scored.insert(list(scored.columns).index("residual") + 1, "raw_residual", raw)
+    scored["abs_residual"] = kept.abs()
+    return scored
+
+
 def _observation_label(value: str) -> str:
     """Return a compact, MF6-friendly observation label fragment."""
 

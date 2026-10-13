@@ -11,6 +11,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.observations._shared import (
+    _check_inequality,
     _compare_without_values,
     _copy_frame,
     _declared_route,
@@ -29,6 +30,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_reserved_target_names,
     _refuse_shared_labels,
     _resolve_feature_ids,
+    _score_bounds,
     _stage_at_period_end,
     _wide_by_period,
 )
@@ -256,6 +258,17 @@ class LakeStageTargets:
         ``ValueError`` naming them; so does a ``package`` the model does not
         have, and a named package that declares none of the targets (the stage
         file cannot be chosen by package).
+    inequality : str or None, optional
+        Whether every value of the set is a one-sided BOUND (ledger
+        564): ``"at_most"`` -- the simulated stage must not exceed
+        it (the spill elevation of a lake seen never to overflow) -- or
+        ``"at_least"`` -- must not fall below it (a lake seen never to dry: its
+        bottom). Default ``None``: an ordinary target; anything else raises
+        ``ValueError``. In a PEST build each measured observation is in
+        PESTPP-IES's ``l_``/``g_`` group (``l_lak_stage``), which scores 0 wherever
+        the bound holds; :meth:`compare` scores it so too (``residual`` 0 there,
+        ``raw_residual`` simulated minus target). ``cal.forecast(...)`` refuses a
+        bound set.
 
     Examples
     --------
@@ -274,6 +287,7 @@ class LakeStageTargets:
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+    inequality: str | None = None
 
     #: What an INACTIVE lake -- the one lake with no stage for calibration -- is
     #: WRITTEN as in the CSV PEST reads (ledger 329), by both writers -- the base
@@ -294,6 +308,7 @@ class LakeStageTargets:
     def __post_init__(self):
         """Normalize the ``name -> lake`` locations and observed values into internal tables."""
 
+        _check_inequality(self.inequality, owner=type(self).__name__)
         normalized: dict[str, int] = {}
         source = self.locations if self.locations is not None else {}
         if isinstance(source, pd.Series):
@@ -340,6 +355,7 @@ class LakeStageTargets:
         times=None,
         time_column: str = "time",
         value_column: str = "stage",
+        inequality: str | None = None,
     ):
         """Create one named lake-stage target from a Series/list-like input.
 
@@ -364,6 +380,10 @@ class LakeStageTargets:
         value_column : str, optional
             Name of the stage column in the table built from a ``Series``,
             stored on the result. Default ``"stage"``.
+        inequality : str or None, optional
+            ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
+            (the constructor's ``inequality``, ledger 564). Default
+            ``None``: an ordinary target.
 
         Returns
         -------
@@ -381,11 +401,13 @@ class LakeStageTargets:
                     value_column: series.to_list(),
                 }
             )
-            return cls(locations={lake: lake_id}, values=frame, time_column=time_column, value_column=value_column)
+            return cls(locations={lake: lake_id}, values=frame, time_column=time_column,
+                       value_column=value_column, inequality=inequality)
         if times is None:
             times = list(range(len(values)))
         frame = pd.DataFrame({time_column: list(times), lake: list(values)})
-        return cls(locations={lake: lake_id}, values=frame, time_column=time_column, value_column=value_column)
+        return cls(locations={lake: lake_id}, values=frame, time_column=time_column,
+                   value_column=value_column, inequality=inequality)
 
     @classmethod
     def from_records(
@@ -394,6 +416,7 @@ class LakeStageTargets:
         *,
         time_column: str = "time",
         value_column: str = "stage",
+        inequality: str | None = None,
     ):
         """Create lake-stage targets from long-format records.
 
@@ -409,6 +432,10 @@ class LakeStageTargets:
             Column holding each record's time label. Default ``"time"``.
         value_column : str, optional
             Column holding each record's observed stage. Default ``"stage"``.
+        inequality : str or None, optional
+            ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
+            (the constructor's ``inequality``, ledger 564). Default
+            ``None``: ordinary targets.
 
         Returns
         -------
@@ -429,7 +456,8 @@ class LakeStageTargets:
             .to_dict()
         )
         values_frame = frame.loc[:, [time_column, "name", value_column]].copy()
-        return cls(locations=locations, values=values_frame, time_column=time_column, value_column=value_column)
+        return cls(locations=locations, values=values_frame, time_column=time_column,
+                   value_column=value_column, inequality=inequality)
 
     @classmethod
     def from_hydrographs(
@@ -446,6 +474,7 @@ class LakeStageTargets:
         max_offset=None,
         between=None,
         min_years: int | None = None,
+        inequality: str | None = None,
     ):
         """Lake-stage targets from DATED readings, binned onto ``model``'s stress periods.
 
@@ -509,6 +538,10 @@ class LakeStageTargets:
         min_years : int or None, default None
             Average year only: a month read in fewer calendar years has no
             target; ``None`` means 1. In history mode it raises.
+        inequality : str or None, default None
+            ``"at_most"`` or ``"at_least"`` makes every binned value a one-sided
+            bound (the constructor's ``inequality``, ledger 564).
+            ``None``: ordinary targets.
 
         Returns
         -------
@@ -557,6 +590,7 @@ class LakeStageTargets:
             time_column="time",
             value_column=value_column,
             package=package,
+            inequality=inequality,
         )
         targets._binned = binning
         return targets
@@ -858,7 +892,9 @@ class LakeStageTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``lake``, ``time``, ``per``, ``stage_target``,
             ``sim_stage``, ``residual`` (simulated minus target) and
-            ``abs_residual``. With no values ``stage_target`` and the residuals are
+            ``abs_residual`` -- for a BOUND set (``inequality``) PEST++'s
+            residual, 0 where the bound holds, with ``raw_residual`` (simulated
+            minus target) after it (ledger 564). With no values ``stage_target`` and the residuals are
             ``NaN``, and ``time`` is the period, equal to ``per``, on both
             routes: the table had no ``per`` -- it was renamed ``time`` -- so
             :meth:`residuals` raised ``KeyError`` (found in ledger 342).
@@ -920,7 +956,9 @@ class LakeStageTargets:
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_stage"] - compare["stage_target"]
         compare["abs_residual"] = compare["residual"].abs()
-        return _copy_frame(compare)
+        # A bound scores 0 where it holds, as PEST++ scores it (ledger
+        # 564).
+        return _copy_frame(_score_bounds(compare, self.inequality))
 
     def residuals(self, model) -> pd.DataFrame:
         """Return a compact residual table for lake-stage targets.
@@ -936,7 +974,8 @@ class LakeStageTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
             it raised ``KeyError`` naming ``per`` on both routes until ledger
@@ -944,7 +983,8 @@ class LakeStageTargets:
         """
 
         frame = self.compare(model)
-        return frame.loc[:, ["name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
+        columns = ["name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]
+        return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
         """Return aggregate residual statistics for the lake-stage target set.
@@ -1219,7 +1259,8 @@ class BoundLakeStageTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
         """
 
         return self.targets.residuals(self.model if model is None else model)

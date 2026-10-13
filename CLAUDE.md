@@ -2047,6 +2047,13 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   (`North`/`north`), and a label OR PREFIX starting `l_`/`less`/`g_`/`greater`, which
   PESTPP-IES reads as an INEQUALITY on the bare start (`lessard`, `greaterville`;
   measured: phi 0 where the same data scored 424.864; PESTPP-GLM at NOPTMAX=0 does not).
+  That refusal is of a USER's label: **a bound is `inequality="at_most"|"at_least"` on
+  the target SET** (ledger 564, every family): the build alone writes
+  `l_`/`g_` before each measured observation's ordinary group, the user-label refusal
+  above stays and names it, a flow bound is in MF6's sign (`-2.0` + `"at_most"` = at
+  least 2 leaving), `compare()` gives PEST++'s residual plus `raw_residual`, and the IES
+  review scores one-sided through ONE helper on pyEMU's tag rule (`phi_contributions`
+  reads PESTPP-IES's `phi.group.csv`).
   No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
   version-2 file. Lake/SFR targets have no label column -- split them by prefix. **No
   default prefix is inside another's groups** (a phi-factor tag matches anywhere in a

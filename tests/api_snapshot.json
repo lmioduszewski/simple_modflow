@@ -644,7 +644,8 @@
       "value_column:POSITIONAL_OR_KEYWORD='conc'",
       "times:POSITIONAL_OR_KEYWORD=None",
       "screen_top_column:POSITIONAL_OR_KEYWORD='screen_top'",
-      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'"
+      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "ConcTargets.simulated_conc": [
       "model:POSITIONAL_OR_KEYWORD=<required>"
@@ -781,7 +782,8 @@
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='flow'",
       "times:POSITIONAL_OR_KEYWORD=None",
-      "package:POSITIONAL_OR_KEYWORD=None"
+      "package:POSITIONAL_OR_KEYWORD=None",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "DrnFlowTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -1361,7 +1363,8 @@
       "value_column:POSITIONAL_OR_KEYWORD='head'",
       "times:POSITIONAL_OR_KEYWORD=None",
       "screen_top_column:POSITIONAL_OR_KEYWORD='screen_top'",
-      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'"
+      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "HeadTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -1389,7 +1392,8 @@
       "time_column:KEYWORD_ONLY='time'",
       "value_column:KEYWORD_ONLY='head'",
       "screen_tops:KEYWORD_ONLY=None",
-      "screen_bottoms:KEYWORD_ONLY=None"
+      "screen_bottoms:KEYWORD_ONLY=None",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "HeadTargets.from_hydrographs": [
       "locations:POSITIONAL_OR_KEYWORD=<required>",
@@ -1407,12 +1411,14 @@
       "between:KEYWORD_ONLY=None",
       "min_years:KEYWORD_ONLY=None",
       "screen_top_column:KEYWORD_ONLY='screen_top'",
-      "screen_bottom_column:KEYWORD_ONLY='screen_bottom'"
+      "screen_bottom_column:KEYWORD_ONLY='screen_bottom'",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "HeadTargets.from_records": [
       "records:POSITIONAL_OR_KEYWORD=<required>",
       "time_column:KEYWORD_ONLY='time'",
-      "value_column:KEYWORD_ONLY='head'"
+      "value_column:KEYWORD_ONLY='head'",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "HeadTargets.get": [],
     "HeadTargets.match_to_model": [
@@ -1959,7 +1965,8 @@
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='stage'",
       "times:POSITIONAL_OR_KEYWORD=None",
-      "package:POSITIONAL_OR_KEYWORD=None"
+      "package:POSITIONAL_OR_KEYWORD=None",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "LakeStageTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -1987,12 +1994,14 @@
       "value_column:KEYWORD_ONLY='stage'",
       "max_offset:KEYWORD_ONLY=None",
       "between:KEYWORD_ONLY=None",
-      "min_years:KEYWORD_ONLY=None"
+      "min_years:KEYWORD_ONLY=None",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.from_records": [
       "records:POSITIONAL_OR_KEYWORD=<required>",
       "time_column:KEYWORD_ONLY='time'",
-      "value_column:KEYWORD_ONLY='stage'"
+      "value_column:KEYWORD_ONLY='stage'",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.from_series": [
       "lake:KEYWORD_ONLY=<required>",
@@ -2000,7 +2009,8 @@
       "values:KEYWORD_ONLY=<required>",
       "times:KEYWORD_ONLY=None",
       "time_column:KEYWORD_ONLY='time'",
-      "value_column:KEYWORD_ONLY='stage'"
+      "value_column:KEYWORD_ONLY='stage'",
+      "inequality:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.get": [],
     "LakeStageTargets.residuals": [
@@ -3525,7 +3535,8 @@
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='flow'",
       "times:POSITIONAL_OR_KEYWORD=None",
-      "package:POSITIONAL_OR_KEYWORD=None"
+      "package:POSITIONAL_OR_KEYWORD=None",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "RivFlowTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -3745,7 +3756,8 @@
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='flow'",
       "times:POSITIONAL_OR_KEYWORD=None",
-      "package:POSITIONAL_OR_KEYWORD=None"
+      "package:POSITIONAL_OR_KEYWORD=None",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "SfrFlowTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -3826,7 +3838,8 @@
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='stage'",
       "times:POSITIONAL_OR_KEYWORD=None",
-      "package:POSITIONAL_OR_KEYWORD=None"
+      "package:POSITIONAL_OR_KEYWORD=None",
+      "inequality:POSITIONAL_OR_KEYWORD=None"
     ],
     "SfrStageTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",

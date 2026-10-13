@@ -1072,6 +1072,24 @@ becomes the same name as a different label (`"North"`, `"north"`); a DRN or RIV 
 rows carry one label. pyEMU used to give every simulated column a group of its own, so a
 group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
 
+**A target set can be a one-sided BOUND: `inequality="at_most"` / `"at_least"`**
+(ledger 564) on `HeadTargets`, `ConcTargets`, `LakeStageTargets`,
+`SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, `RivFlowTargets` and every
+`from_*` constructor -- a dry well (at most its screen bottom), a flowing one (at least
+its land surface). The build puts each measured observation in PESTPP-IES's inequality
+group, `l_`/`g_` before the group it would otherwise be in (`l_hds`,
+`g_north_wells`), which scores 0 wherever the bound holds; that is the ONE spelling, so
+a user label or prefix starting `l_`/`less`/`g_`/`greater` stays refused and the refusal
+names `inequality=`. A flow bound is on the number as written, MF6's sign (ledger 350):
+"at least 2 of baseflow" is `-2.0` with `"at_most"`. `compare()` returns PEST++'s
+`residual` (0 where the bound holds) with `raw_residual` beside it; `cal.forecast()` and
+`HeadTargets.differences()` refuse a bound set. The IES review scores one-sided too:
+`phi_contributions()` reads PESTPP-IES's `<case>.phi.group.csv` (recomputing by PEST++'s
+rule for a run without it), `conflict()` flags a bound only when the whole prior band is
+on its wrong side (`bound` column), `obs_residuals()` adds `raw_residual`, and
+`plot_vs_obs()`/`plot_prior_vs_obs()` draw a measurement as a circle and a bound as a
+triangle (down: at most; up: at least).
+
 **Pilot points** (`cal.parameterize("k"|"k33"|"sto.ss"|"sto.sy"|"porosity"|"recharge", style="pilotpoints", ...)`, recharge on an array RCH):
 `pp_spacing=` lays a net in MODEL LENGTH UNITS (it replaced `pp_space`, median cell
 widths; ledger 527) or `pp_points=` gives the locations -- exactly one;

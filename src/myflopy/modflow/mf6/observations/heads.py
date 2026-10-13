@@ -25,6 +25,7 @@ from myflopy.modflow.mf6.hydraulics import model_flow_properties, saturated_thic
 from myflopy.modflow.mf6.observations._shared import (
     _FIELD_FILES,
     _build_values_from_cells,
+    _check_inequality,
     _coerce_label_list,
     _coerce_scalar_or_list,
     _copy_frame,
@@ -42,6 +43,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_keys_off_the_periods,
     _refuse_reserved_target_names,
     _report_missed_features,
+    _score_bounds,
     _simulated_field_by_period,
     _wide_by_period,
 )
@@ -299,6 +301,21 @@ class HeadTargets:
         Column of ``locations`` holding each well's SCREEN BOTTOM elevation, in
         the model's length units; the twin of ``screen_top_column``. Default
         ``"screen_bottom"``.
+    inequality : str or None, optional
+        Whether EVERY value of the set is a one-sided BOUND rather than a level
+        to match (ledger 564): ``"at_most"`` -- the simulated value
+        must not exceed the target (a well found DRY: its screen bottom; the
+        ground surface where no spring flows) -- or ``"at_least"`` -- it must not
+        fall below it (a FLOWING well: its land surface). Default ``None``: an
+        ordinary target. Anything else raises ``ValueError``. Put the bounds in a
+        set of their own beside the measured heads; a PEST build puts each
+        measured observation in PESTPP-IES's inequality group -- ``l_`` (at most)
+        or ``g_`` (at least) before the group it would otherwise be in
+        (``l_hds``, ``g_north_wells``) -- which scores 0 wherever the bound holds
+        and the full misfit where it does not. :meth:`compare` scores it the same
+        way: ``residual`` is 0 where the bound holds and ``raw_residual`` keeps
+        simulated minus target, so :meth:`stats` agrees with PEST++'s phi.
+        ``cal.forecast(...)`` and :meth:`differences` refuse a bound set.
 
     Notes
     -----
@@ -338,9 +355,12 @@ class HeadTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
     screen_top_column: str | None = "screen_top"
     screen_bottom_column: str | None = "screen_bottom"
+    inequality: str | None = None
 
     def __post_init__(self):
         """Load and normalize locations and target tables."""
+
+        _check_inequality(self.inequality, owner=type(self).__name__)
 
         self._locations = _load_locations(
             self.locations,
@@ -404,6 +424,7 @@ class HeadTargets:
         value_column: str = "head",
         screen_tops=None,
         screen_bottoms=None,
+        inequality: str | None = None,
     ):
         """Create head targets directly from explicit model cell ids.
 
@@ -479,6 +500,10 @@ class HeadTargets:
         screen_bottoms : float, sequence of float or None, optional
             Each target's screen-bottom elevation, the twin of ``screen_tops``.
             Default ``None``.
+        inequality : str or None, optional
+            ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
+            (the constructor's ``inequality``, ledger 564). Default
+            ``None``: ordinary targets.
 
         Returns
         -------
@@ -545,6 +570,7 @@ class HeadTargets:
             value_column=value_column,
             screen_top_column="screen_top",
             screen_bottom_column="screen_bottom",
+            inequality=inequality,
         )
 
     @classmethod
@@ -554,6 +580,7 @@ class HeadTargets:
         *,
         time_column: str = "time",
         value_column: str = "head",
+        inequality: str | None = None,
     ):
         """Create head targets from long-format record dictionaries/dataframes.
 
@@ -585,6 +612,10 @@ class HeadTargets:
         value_column : str, optional
             Column holding each record's target value. Default ``"head"``
             (also on ``ConcTargets``).
+        inequality : str or None, optional
+            ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
+            (the constructor's ``inequality``, ledger 564). Default
+            ``None``: ordinary targets.
 
         Returns
         -------
@@ -630,6 +661,7 @@ class HeadTargets:
             value_column=value_column,
             screen_top_column="screen_top",
             screen_bottom_column="screen_bottom",
+            inequality=inequality,
         )
 
     @classmethod
@@ -652,6 +684,7 @@ class HeadTargets:
         min_years: int | None = None,
         screen_top_column: str | None = "screen_top",
         screen_bottom_column: str | None = "screen_bottom",
+        inequality: str | None = None,
     ):
         """Targets from DATED readings, binned onto ``model``'s stress periods by one stated rule.
 
@@ -772,6 +805,11 @@ class HeadTargets:
         screen_bottom_column : str or None, default "screen_bottom"
             Column of ``locations`` holding each well's screen-bottom elevation (the
             constructor's).
+        inequality : str or None, default None
+            ``"at_most"`` or ``"at_least"`` makes every binned value a one-sided
+            bound (the constructor's ``inequality``, ledger 564) --
+            dated readings of a well found dry, say, binned as the readings are.
+            ``None``: ordinary targets.
 
         Returns
         -------
@@ -850,6 +888,7 @@ class HeadTargets:
             value_column=value_column,
             screen_top_column=screen_top_column,
             screen_bottom_column=screen_bottom_column,
+            inequality=inequality,
         )
         targets._binned = binning
         return targets
@@ -1550,7 +1589,11 @@ class HeadTargets:
         pandas.DataFrame
             One row per target row: the target's columns plus ``per``,
             ``cell``, ``sim_head``, ``residual`` (simulated minus target) and
-            ``abs_residual``. ``x``/``y`` are the matched cell's or point's, in
+            ``abs_residual``. For a BOUND set (``inequality``, ledger
+            564) ``residual`` is PEST++'s -- 0 where the bound
+            holds, simulated minus target where it is violated -- and
+            ``raw_residual``, after it, is simulated minus target throughout.
+            ``x``/``y`` are the matched cell's or point's, in
             the GRID's frame, for a target given as a point and one given as a
             cell alike (a point target returned ``x_x``/``y_x``, its own CRS,
             beside ``x_y``/``y_y``, and no ``x``).
@@ -1602,7 +1645,9 @@ class HeadTargets:
         )
         merged["residual"] = merged["sim_head"] - merged["head_target"]
         merged["abs_residual"] = merged["residual"].abs()
-        return _copy_frame(merged)
+        # A bound scores 0 where it holds, as PEST++ scores it (ledger
+        # 564); ``raw_residual`` keeps simulated minus target.
+        return _copy_frame(_score_bounds(merged, self.inequality))
 
     def residuals(self, model) -> pd.DataFrame:
         """Return a compact residual table.
@@ -1619,27 +1664,19 @@ class HeadTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
             ``per``, ``layer``, ``cell``, ``head_target``, ``sim_head``,
-            ``residual`` (simulated minus target), ``abs_residual`` and
-            ``weight``.
+            ``residual`` (simulated minus target; PEST++'s for a bound set, 0
+            where the bound holds), ``abs_residual`` and ``weight`` -- and, for a
+            bound set, ``raw_residual`` (ledger 564).
         """
 
         frame = self.compare(model)
-        return frame.loc[
-            :,
-            [
-                "name",
-                "group",
-                "time",
-                "per",
-                "layer",
-                "cell",
-                "head_target",
-                "sim_head",
-                "residual",
-                "abs_residual",
-                "weight",
-            ],
+        columns = [
+            "name", "group", "time", "per", "layer", "cell", "head_target", "sim_head",
+            "residual", "abs_residual", "weight",
         ]
+        if "raw_residual" in frame.columns:
+            columns.append("raw_residual")
+        return frame.loc[:, columns]
 
     def stats(self, model) -> pd.DataFrame:
         """Return aggregate residual statistics for the target set.
@@ -1654,8 +1691,10 @@ class HeadTargets:
         -------
         pandas.DataFrame
             One row: ``n`` (rows with a residual), ``mean_error``, ``mae`` and
-            ``rmse`` of simulated minus target, in the field's units. ``n`` is 0
-            and the rest ``NaN`` when no row has a residual.
+            ``rmse`` of simulated minus target, in the field's units -- of
+            PEST++'s residual for a bound set, 0 where the bound holds (ledger
+            564). ``n`` is 0 and the rest ``NaN`` when no row has a
+            residual.
         """
 
         frame = self.compare(model).dropna(subset=["residual"])

@@ -602,7 +602,8 @@ group as an INEQUALITY (`less...`: simulated at most the target; `greater...`: a
 least), matching on the bare start, so `"Greater Seattle"` or `"lessard"` would score 0
 wherever the model is on the allowed side of the target — measured,
 `docs/reproducers/pest_observation_groups.py`. (PESTPP-GLM at NOPTMAX=0 reads them as
-ordinary groups; PESTPP-IES does not.)
+ordinary groups; PESTPP-IES does not.) To make targets an inequality on purpose, give
+their SET `inequality=` (next section): the build writes those groups itself.
 
 **Using the groups with PEST++.** Phi by group is in `pestpp-glm`'s `.rec`
 ("Contribution to phi from observation group ...") and in `pestpp-ies`'s
@@ -632,6 +633,63 @@ which is inside an SFR set's `sfr_stage`: every tag matching the lake's group ma
 stream's too and PESTPP-IES stopped ("group 'SFR_STAGE' mapped to multiple tags",
 ledger 359). A template built before then keeps `stage` in its observation names and
 groups -- and, like every template built before ledger 340, must be rebuilt anyway.
+
+### Bounds: a target that is a one-sided limit (ledger 564)
+
+Some data say only which side of a number the model must be on: a well found **dry**
+(the head was at most its screen bottom), a **flowing** well (at least its land
+surface), a lake that never spilled, a spring that always ran. Give such data a target
+SET of their own with `inequality=` — on `HeadTargets`, `ConcTargets`,
+`LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` and
+`RivFlowTargets`, and on every `from_*` constructor:
+
+```python
+dry = mf.HeadTargets(locations=dry_wells, values=screen_bottoms, inequality="at_most")
+flowing = mf.HeadTargets(locations=artesian, values=land_surface, inequality="at_least")
+cal.observe(heads)                         # the measured levels, as always
+cal.observe(dry, prefix="dry")             # a bound: simulated at most each value
+cal.observe(flowing, prefix="flowing")     # a bound: simulated at least each value
+```
+
+`"at_most"` means the simulated value must not exceed the target, `"at_least"` that it
+must not fall below it; nothing else is accepted. The build puts each MEASURED
+observation of a bound set in PESTPP-IES's inequality group — `l_` (at most) or `g_`
+(at least) before the group it would otherwise be in: `l_dry`, `g_flowing`, or
+`l_north_wells` for a target labelled `"North Wells"` — and PESTPP-IES scores it **0
+wherever the bound holds and its full weighted misfit where it does not** (measured
+from its own `<case>.phi.group.csv`: `tests/test_pest_bound_targets.py`,
+`docs/reproducers/pest_inequality_targets.py`). Its unmeasured rows are in
+`<prefix>_unmeasured` as any set's are. This is the ONE spelling of a bound: a label or
+prefix of your own starting `l_`, `less`, `g_` or `greater` is still refused (ledger
+358), and the refusal names `inequality=`. `cal.forecast()` refuses a bound set (a
+bound on a zero-weight quantity constrains nothing), and so does
+`HeadTargets.differences()` (a bound has no mean).
+
+**A flow bound is on the number as written, in MF6's sign** (ledger 350): a reach's
+streamflow and a drain's discharge are negative, water leaving. "At least 2 cfs of
+baseflow" is `-2.0` (in model units) with `inequality="at_most"` — simulated at most
+-2, i.e. at least 2 leaving — and "seepage of at most 5" is `-5.0` with
+`"at_least"`. A positive value is still refused for SFR and DRN flows; a RIV exchange
+takes either sign, a losing reach's being positive.
+
+Off-PEST, `compare()` scores a bound as PEST++ does: `residual` is 0 where it holds and
+`raw_residual` beside it keeps simulated minus target, so `stats()` and PESTPP-IES's
+phi agree. The review does too (it scored every group two-sided before, so a bound
+held by every realization read as the dominant misfit and a 100% prior-data conflict):
+`phi_contributions()` reads PESTPP-IES's own `<case>.phi.group.csv` at the posterior
+iteration, falling back to PEST++'s rule for a run whose file is missing or whose
+control file was edited since; `conflict()` calls a bound in conflict only when the
+whole prior band lies on its wrong side (with a `bound` column); `obs_residuals()`
+scores it 0 where it holds (with `raw_residual`); and `plot_vs_obs()` /
+`plot_prior_vs_obs()` draw a measurement as a circle and a bound as a triangle
+pointing the way the simulated value may go — down for at most, up for at least.
+
+**Noise.** PESTPP-IES draws observation noise onto a bound like any observation when
+noise is on — measured on PEST++ 5.2.16: with a `standard_deviation` of 0.5 an at-most
+bound of 5 was drawn with mean 4.95 and spread 0.51 across 30 realizations; with no
+noise option it resets `ies_no_noise` and draws the bounds exactly
+(`docs/reproducers/pest_inequality_targets.py`). myflopy passes that through rather than
+suppressing it: a bound is as uncertain as the reading it came from.
 
 ### Noise and structural error
 
@@ -893,7 +951,9 @@ bounds, forecast and `plot_field` mean/change — not every figure on the class:
 reduction map, the mosaic, the residual map, `plot_prior_vs_obs` and `plot_conflict`
 are called directly.
 
-The scoring calls (`phi_contributions`, `obs_residuals`, `plot_obs_residuals`) read
+The scoring calls (`phi_contributions`, `obs_residuals`, `plot_obs_residuals`) score a
+bound as PEST++ does, 0 where it holds (`phi_contributions` reads PESTPP-IES's own
+`<case>.phi.group.csv`; ledger 564), and read
 ONE posterior realization, `realization="base"` by default, and a label the ensemble
 lacks RAISES naming some it has -- they scored the ensemble mean in silence until
 ledger 480. A run with no `base` realization (`ies_include_base` off) needs a

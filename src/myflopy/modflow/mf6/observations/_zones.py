@@ -30,6 +30,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 )
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
+    _check_inequality,
     _compare_without_values,
     _copy_frame,
     _declared_route,
@@ -52,6 +53,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_observation_kind,
     _refuse_reserved_target_names,
     _report_missed_features,
+    _score_bounds,
     _wide_by_period,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
@@ -878,11 +880,13 @@ class _CellZoneFlowTargets:
     value_column: str = "flow"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+    inequality: str | None = None
 
     def __post_init__(self):
         """Normalize the zone definitions and observed flows into internal tables."""
 
         owner = type(self).__name__
+        _check_inequality(self.inequality, owner=owner)
         self._locations = _normalize_zone_locations(
             self.locations,
             owner=owner,
@@ -1255,7 +1259,8 @@ class _CellZoneFlowTargets:
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
         compare["abs_residual"] = compare["residual"].abs()
-        return _copy_frame(compare)
+        # A bound scores 0 where it holds, on both routes (ledger 564).
+        return _copy_frame(_score_bounds(compare, self.inequality))
 
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-flow table: a ``time`` column and one column per zone.
@@ -1365,7 +1370,9 @@ class _CellZoneFlowTargets:
             it, its cells the sorted ``(layer, cell)`` pairs MF6 reads; ``weight``
             is a reading's own where the values table gave one, else the zone's
             (ledger 504). ``flow_target`` and ``sim_flow`` are both in MF6's sign
-            (ledger 350). With no values ``flow_target`` and the residuals are
+            (ledger 350). For a BOUND set (``inequality``) ``residual`` is
+            PEST++'s, 0 where the bound holds, and ``raw_residual`` after it is
+            simulated minus target (ledger 564). With no values ``flow_target`` and the residuals are
             ``NaN``, and ``time`` is the period, equal to ``per``.
 
         Raises
@@ -1401,7 +1408,8 @@ class _CellZoneFlowTargets:
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
         compare["abs_residual"] = compare["residual"].abs()
-        return _copy_frame(compare)
+        # A bound scores 0 where it holds, on both routes (ledger 564).
+        return _copy_frame(_score_bounds(compare, self.inequality))
 
     def residuals(self, model) -> pd.DataFrame:
         """Return a compact residual table (target/sim/residual, with group/weight) for the zones.
@@ -1418,7 +1426,8 @@ class _CellZoneFlowTargets:
             :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
             ``per``, ``flow_target``, ``sim_flow``, ``residual``,
             ``abs_residual``, ``weight`` and ``cells`` (each zone's
-            ``(layer, cell)`` pairs; absent only when :meth:`compare` has none).
+            ``(layer, cell)`` pairs; absent only when :meth:`compare` has none),
+            and ``raw_residual`` for a bound set (ledger 564).
             A set given no ``values`` -- a capture template -- gets one row per
             simulated row, its targets and residuals ``NaN`` (ledger 342).
         """
@@ -1427,6 +1436,8 @@ class _CellZoneFlowTargets:
         columns = ["name", "group", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual", "weight"]
         if "cells" in frame.columns:
             columns.append("cells")
+        if "raw_residual" in frame.columns:
+            columns.append("raw_residual")
         return frame.loc[:, columns]
 
     def stats(self, model) -> pd.DataFrame:

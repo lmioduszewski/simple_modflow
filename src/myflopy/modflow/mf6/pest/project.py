@@ -1326,6 +1326,14 @@ class PestProject:
         :meth:`build` raise, naming it. pyEMU used to give each simulated column
         a group of its own, so a group was one well.
 
+        **A set given ``inequality=`` is a one-sided BOUND** (ledger
+        564): its measured observations are in PESTPP-IES's
+        inequality group -- ``l_`` (``"at_most"``) or ``g_`` (``"at_least"``)
+        before the group they would otherwise be in -- which scores 0 wherever the
+        bound holds and the full weighted misfit where it does not. That is the
+        ONE spelling of an inequality: a label or prefix starting ``l_``/``less``/
+        ``g_``/``greater`` stays refused.
+
         Parameters
         ----------
         targets : target set or observation spec
@@ -1400,7 +1408,10 @@ class PestProject:
             describing *where* and *when* the prediction is taken. Any values
             supplied are placeholders (e.g. an expected value), written as the
             observation's value; a blank keeps the base run's. The weight is
-            forced to zero regardless. Anything else raises ``TypeError``.
+            forced to zero regardless. Anything else raises ``TypeError``, and a
+            BOUND set -- one given ``inequality=`` -- raises ``ValueError``: a
+            bound on a zero-weight quantity constrains nothing (ledger
+            564).
         prefix : str or None, optional
             Observation-name prefix. ``None`` (default, and an empty string
             too) gives ``"fore1"``, ``"fore2"``, ... in call order, so forecast
@@ -1419,6 +1430,15 @@ class PestProject:
 
         default = prefix or f"fore{len(self._forecast_specs) + 1}"
         spec = self._coerce_observation_spec(targets, prefix=default)
+        inequality = getattr(spec.targets, "inequality", None)
+        if inequality is not None:
+            raise ValueError(
+                f"forecast(): these {type(spec.targets).__name__} are a BOUND "
+                f"(inequality={inequality!r}), and a forecast is a zero-weight quantity "
+                "to predict -- a bound on it constrains nothing. Forecast the same "
+                "locations from a set without inequality=, or observe() the bound to "
+                "history-match it (ledger 564)."
+            )
         self._forecast_specs.append(spec)
         return spec
 

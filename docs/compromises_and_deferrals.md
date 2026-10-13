@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 563 entries (568 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 564 entries (569 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 564 | A target set can be a one-sided BOUND -- `inequality="at_most"\|"at_least"` -- that the build writes as PEST... | 2026-10-12 |
 | 563 | A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left | 2026-10-12 |
 | 562 | A write-back compares text without regard to case, and refuses to fork a simulation the run did not run | 2026-10-12 |
 | 561 | An edit's override REPLACES a recipe that fills the same option | 2026-10-12 |
@@ -17077,9 +17078,11 @@ same day, which is the useful part of the result.
       PESTPP-GLM at NOPTMAX=0 reads them all as ordinary. Such a label is REFUSED, and so is a
       set PREFIX starting so, because a prefix is a group name now: before, every group began
       `oname:`, so `observe(prefix="less_x")` was harmless and would have turned into an
-      inequality in silence. **Not built:** deliberate inequality observations -- a target is
+      inequality in silence. ~~**Not built:** deliberate inequality observations -- a target is
       an equality everywhere else (`compare()`); `cal.pst.observation_data.obgnme` can be
-      edited after `build()` by someone who wants one.
+      edited after `build()` by someone who wants one.~~ **Built in ledger
+      564:** `inequality="at_most"|"at_least"` on a target SET; the build
+      writes the `l_`/`g_` group and the refusal here, of a USER's label or prefix, names it.
       **Refused, naming the labels:** two DIFFERENT labels becoming one name (`"North"` and
       `"north"` -- the spec's rule; surrounding whitespace is not part of a label, judgment
       call); a label with no letter or digit; a label taking a name the build gives a set
@@ -21470,3 +21473,37 @@ same day, which is the useful part of the result.
       `to_library` reproduces the base realization's `.rei` to 1e-6 ft, a well screened
       across both layers included -- its T-weighted writer runs after the model command,
       so the replay never reaches it.
+
+564. **A target set can be a one-sided BOUND -- `inequality="at_most"|"at_least"` -- that the build writes as PESTPP-IES's `l_`/`g_` group, `compare()` scores as PEST++ does, and the IES review scores one-sided, `phi_contributions` reading PESTPP-IES's own `phi.group.csv` (2026-10-12).**
+      Item 12 + ies-6 of the PEST preparation. **Per SET, not per row** (settled): the
+      user's values are a wide CSV with no room for a flag; a second set costs one call.
+      On all seven families and every `from_*` constructor, checked ONCE
+      (`_shared._check_inequality`, exact spelling -- `"AT_MOST"` is refused, not read).
+      **The group** (judgment call): `l_`/`g_` + the group the observation would have in
+      an ordinary set (label, else prefix), so ledger 358's refusals of a USER's label or
+      prefix run on the label itself and stay; their message names `inequality=`.
+      Unmeasured rows stay in `<prefix>_unmeasured`. A generated group equal to one the
+      control file already holds is refused. **Signs** (ledger 350): a bound is on the
+      number as written -- "at least 2 of baseflow" is `-2.0` with `"at_most"`; the SFR/DRN
+      positive-value refusal is unchanged. **`compare()`** (the user's settled fork):
+      `residual`/`abs_residual` are PEST++'s, 0 where the bound holds, so `stats()` agrees
+      with phi; `raw_residual` keeps simulated minus target -- added only on a bound set,
+      so an ordinary set's frame is unchanged. **Refused:** `cal.forecast()` of a bound set
+      (a bound on a zero-weight quantity constrains nothing) and `differences()` of one
+      (a bound has no mean). **The review** (ies-6): ONE helper, `ies._pest_residuals`, on
+      pyEMU's own tag rule (`Pst.less_than_obs_constraints`/`greater_than_obs_constraints`,
+      via `_constraint_sides`); `phi_contributions` reads `<case>.phi.group.csv` at the
+      posterior iteration -- PEST++'s own scoring, to ~6 significant figures -- and
+      recomputes through the helper only for a run without the file or whose control file
+      holds a weighted group the file lacks; `conflict()` flags a bound only when the
+      whole band is on its wrong side (new `bound` column); `obs_residuals()` averages
+      PEST++'s residuals (new `raw_residual`). Measured
+      (`docs/reproducers/pest_inequality_targets.py`): a bound every realization holds
+      scored 0 in PESTPP-IES and 2,423,185 in the two-sided review, and 3 of 3 of its
+      observations read as prior-data conflict. **Markers** (behaviour change): an ordinary
+      measurement is now a CIRCLE on `plot_vs_obs`/`plot_prior_vs_obs` (it was a triangle),
+      so a bound's triangle -- down at most, up at least -- can be told from it.
+      **Passed through, not suppressed:** PESTPP-IES 5.2.16 draws observation noise onto a
+      bound when noise is on (std 0.5: an at-most 5 drawn at mean 4.945, sd 0.513; with no
+      noise option it resets `ies_no_noise` and draws it exactly) -- a bound is as
+      uncertain as the reading it came from.

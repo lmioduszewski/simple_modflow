@@ -12,6 +12,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
+    _check_inequality,
     _clean_observation_output_values,
     _compare_without_values,
     _copy_frame,
@@ -32,6 +33,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_reserved_target_names,
     _refuse_shared_labels,
     _resolve_feature_ids,
+    _score_bounds,
     _stage_at_period_end,
     _wide_by_period,
 )
@@ -236,6 +238,15 @@ class SfrStageTargets:
         ``ValueError`` naming them; so does a ``package`` the model does not
         have, and a named package that declares none of the targets (the stage
         file cannot be chosen by package).
+    inequality : str or None, optional
+        Whether every value of the set is a one-sided BOUND (ledger
+        564): ``"at_most"`` -- the simulated stage must not exceed
+        it -- or ``"at_least"`` -- must not fall below it. Default ``None``: an
+        ordinary target; anything else raises ``ValueError``. In a PEST build each
+        measured observation is in PESTPP-IES's ``l_``/``g_`` group
+        (``l_sfr_stage``), which scores 0 wherever the bound holds; :meth:`compare`
+        scores it so too (``residual`` 0 there, ``raw_residual`` simulated minus
+        target). ``cal.forecast(...)`` refuses a bound set.
 
     Examples
     --------
@@ -254,6 +265,7 @@ class SfrStageTargets:
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+    inequality: str | None = None
 
     #: What the family reads, for resolving and checking its reaches (ledger 503).
     _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_STAGE
@@ -261,6 +273,7 @@ class SfrStageTargets:
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
 
+        _check_inequality(self.inequality, owner=type(self).__name__)
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,
@@ -484,7 +497,9 @@ class SfrStageTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``reach``, ``time``, ``per``, ``stage_target``,
             ``sim_stage``, ``residual`` (simulated minus target) and
-            ``abs_residual``. With no values ``stage_target`` and the residuals are
+            ``abs_residual``. For a BOUND set (``inequality``) ``residual`` is PEST++'s, 0 where the
+            bound holds, and ``raw_residual`` after it is simulated minus target
+            (ledger 564). With no values ``stage_target`` and the residuals are
             ``NaN``, and ``time`` is the period, equal to ``per``, on both
             routes: the table had no ``per`` -- it was renamed ``time`` -- so
             :meth:`residuals` raised ``KeyError`` (found in ledger 342).
@@ -539,7 +554,8 @@ class SfrStageTargets:
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_stage"] - compare["stage_target"]
         compare["abs_residual"] = compare["residual"].abs()
-        return _copy_frame(compare)
+        # A bound scores 0 where it holds (ledger 564).
+        return _copy_frame(_score_bounds(compare, self.inequality))
 
     def residuals(self, model) -> pd.DataFrame:
         """Return a compact residual table (target/sim/residual) for SFR-stage targets.
@@ -555,7 +571,8 @@ class SfrStageTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
             it raised ``KeyError`` naming ``per`` on both routes until ledger
@@ -563,7 +580,8 @@ class SfrStageTargets:
         """
 
         frame = self.compare(model)
-        return frame.loc[:, ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
+        columns = ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]
+        return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
         """Return aggregate residual statistics for the SFR-stage target set.
@@ -819,6 +837,19 @@ class SfrFlowTargets:
         ``ValueError`` naming them; so does a ``package`` the model does not
         have, and a named package that declares none of the targets (the budget
         file cannot be chosen by package).
+    inequality : str or None, optional
+        Whether every value of the set is a one-sided BOUND (ledger
+        564), on the number AS WRITTEN -- MF6's sign, a reach's
+        streamflow zero or negative (ledger 350). ``"at_most"``: the simulated
+        flow must not exceed the value; ``"at_least"``: must not fall below it.
+        So "at least 2 cfs leaves the reach" is ``-2.0`` (in the model's units)
+        with ``inequality="at_most"`` -- simulated at most -2, i.e. at least 2
+        leaving -- and "at most 5 leaves" is ``-5.0`` with ``"at_least"``.
+        Default ``None``: an ordinary target; anything else raises ``ValueError``.
+        A value above zero is refused either way. In a PEST build each measured
+        observation is in PESTPP-IES's ``l_``/``g_`` group (``l_sfr_flow``), which
+        scores 0 wherever the bound holds; :meth:`compare` scores it so too.
+        ``cal.forecast(...)`` refuses a bound set.
 
     Examples
     --------
@@ -836,6 +867,7 @@ class SfrFlowTargets:
     value_column: str = "flow"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+    inequality: str | None = None
 
     #: What the family reads, for resolving and checking its reaches (ledger 503).
     _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_FLOW
@@ -843,6 +875,7 @@ class SfrFlowTargets:
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
 
+        _check_inequality(self.inequality, owner=type(self).__name__)
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,
@@ -1186,7 +1219,9 @@ class SfrFlowTargets:
             ``abs_residual``. ``flow_target`` and ``sim_flow`` are both in MF6's
             sign -- zero or negative, water leaving the reach (ledger 350) -- so a
             residual above zero means the model sends LESS water downstream than
-            was gauged. With no values ``flow_target`` and the residuals are
+            was gauged. For a BOUND set (``inequality``) ``residual`` is PEST++'s, 0 where the
+            bound holds, and ``raw_residual`` after it is simulated minus target
+            (ledger 564). With no values ``flow_target`` and the residuals are
             ``NaN``, and ``time`` is the period, equal to ``per``, on both
             routes: the table had no ``per`` -- it was renamed ``time`` -- so
             :meth:`residuals` raised ``KeyError`` (found in ledger 342).
@@ -1241,7 +1276,8 @@ class SfrFlowTargets:
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
         compare["abs_residual"] = compare["residual"].abs()
-        return _copy_frame(compare)
+        # A bound scores 0 where it holds (ledger 564).
+        return _copy_frame(_score_bounds(compare, self.inequality))
 
     def residuals(self, model) -> pd.DataFrame:
         """Return a compact residual table (target/sim/residual) for SFR-flow targets.
@@ -1257,7 +1293,8 @@ class SfrFlowTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
             it raised ``KeyError`` naming ``per`` on both routes until ledger
@@ -1265,7 +1302,8 @@ class SfrFlowTargets:
         """
 
         frame = self.compare(model)
-        return frame.loc[:, ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]]
+        columns = ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]
+        return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
         """Return aggregate residual statistics for the SFR-flow target set.
@@ -1501,7 +1539,8 @@ class BoundSfrStageTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
         """
 
         return self.targets.residuals(self.model if model is None else model)
@@ -1716,7 +1755,8 @@ class BoundSfrFlowTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
-            ``abs_residual``.
+            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            564).
         """
 
         return self.targets.residuals(self.model if model is None else model)
