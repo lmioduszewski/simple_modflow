@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 566 entries (571 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 567 entries (572 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
-| 566 | A reading of weight 0 is not a measurement of a DIFFERENCE: it is in no label's mean and no `"previous"` pair | 2026-10-12 |
+| 567 | `model.targets.heads.differences()` is its set's `differences()`, and a target set's `kind=`/`inequality=`... | 2026-10-12 |
+| 566 | A reading of weight 0 is part of NO difference: left out of `kind="mean"`'s mean, and differenced ACROSS by... | 2026-10-12 |
 | 565 | Difference observations hand PEST each hydrograph's shape:... | 2026-10-12 |
 | 564 | A target set can be a one-sided BOUND -- `inequality="at_most"\|"at_least"` -- that the build writes as PEST... | 2026-10-12 |
 | 563 | A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left | 2026-10-12 |
@@ -21534,8 +21535,12 @@ same day, which is the useful part of the result.
       into it kept the deferred-import count at 6. **Deferred:** lake-stage differences
       (same class pattern); differences of a bound set are refused, not defined.
 
-566. **A reading of weight 0 is not a measurement of a DIFFERENCE: it is in no label's mean and no `"previous"` pair (2026-10-12).**
-      Review of ledger 565 (judgment call). The mean of `kind="mean"` was
+566. **A reading of weight 0 is part of NO difference: left out of `kind="mean"`'s mean, and differenced ACROSS by `kind="previous"` (2026-10-12).**
+      Review of ledger 565. **Settled at landing**: the review's judgment is the rule.
+      Under `"mean"` the reading is in no label's mean and its own row has no
+      difference; under `"previous"` it is in no pair, so the step is taken from the
+      counted reading before it to the counted one after (10, 50 at weight 0, 11 is ONE
+      step of +1, at the two counted readings' weight). The mean of `kind="mean"` was
       over every reading HOLDING a value, so an outlier its user silenced with weight 0
       still moved its label's mean, and with it the target of every WEIGHTED reading:
       readings 10 and 12 beside a weight-0 50 were handed PEST as -14 and -12, where
@@ -21549,3 +21554,14 @@ same day, which is the useful part of the result.
       the same periods. **Chosen over** keeping it in the mean at weight 0: weight 0 is
       how PEST says "do not fit this", and a difference that reads it is fitting it
       through every other reading of the well.
+
+567. **`model.targets.heads.differences()` is its set's `differences()`, and a target set's `kind=`/`inequality=` are stored as a plain `str` (2026-10-12).**
+      Follow-ups of the review of ledgers 564-566. **The passthrough returns the SET's
+      difference set, unbound** (judgment call): `BoundHeadTargets.differences` delegates
+      with the same signature, and a bound `ConcTargets` gives a `ConcDifferences`. **Not
+      built:** a model-bound difference set whose `compare()` defaults to the registry's
+      model -- `compare(model)` takes the run, as the unbound set's does. **Converted, not
+      refused:** a numpy string passes both checks (`np.str_` IS a `str`, ledger 265), so
+      `_check_inequality` -- the one check, whose result all seven families now STORE --
+      and `HeadDifferences` keep `str(value)`; refusing it would refuse a value read
+      straight out of a numpy or pandas column.

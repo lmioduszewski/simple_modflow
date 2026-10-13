@@ -174,6 +174,46 @@ def test_to_wide_and_summary():
     assert summary["kind"] == "mean" and summary["n_locations"] == 2 and summary["n_rows"] == 5
 
 
+def test_the_model_bound_set_answers_differences_as_its_set_does():
+    """``model.targets.heads.differences()`` raised ``AttributeError``: the bound helper
+    had no passthrough (ledger 567). It returns the SET's difference set, a
+    ``ConcDifferences`` on a bound ``ConcTargets``, which ``cal.observe`` takes."""
+
+    from myflopy.modflow.mf6.observations.registry import TargetRegistry
+    from myflopy.modflow.mf6.pest.project import PestProject
+
+    values = {"time": [0, 1, 2], "W1": [10.0, 12.0, 14.0], "W2": [5.0, 6.0, 9.0]}
+    registry = TargetRegistry(object())
+    registry.heads = _targets(values)
+    bound = registry.heads.differences("previous", weight=3.0)
+    direct = _targets(values).differences("previous", weight=3.0)
+    assert type(bound) is mf.HeadDifferences
+    assert (bound.kind, bound.weight, bound.names) == ("previous", 3.0, ["W1", "W2"])
+    pd.testing.assert_frame_equal(bound.get(), direct.get())
+    spec = PestProject._coerce_observation_spec(None, registry.heads.differences(), prefix=None)
+    assert isinstance(spec, HeadDifferenceObservationSpec)
+    with pytest.raises(ValueError, match=r"kind='diff'"):
+        registry.heads.differences("diff")
+
+    registry["conc"] = mf.ConcTargets(locations={"a": 1}, values={"time": [0, 1], "a": [1.0, 3.0]})
+    conc = registry["conc"].differences()
+    assert type(conc) is mf.ConcDifferences
+    assert conc.get()["target_difference"].tolist() == [-1.0, 1.0]
+
+
+def test_a_numpy_string_kind_is_stored_as_a_plain_str():
+    """``np.str_`` IS a ``str`` and passed the kind check as it was, reaching the
+    build's ``difference_kind`` metadata as ``np.str_`` (ledger 567, the rule of ledger
+    265): asserted with ``type(x) is``."""
+
+    values = {"time": [0, 1], "W1": [10.0, 12.0], "W2": [5.0, 6.0]}
+    for kind in ("mean", "previous"):
+        diffs = _targets(values).differences(np.str_(kind))
+        assert type(diffs.kind) is str and diffs.kind == kind
+        direct = mf.HeadDifferences(_targets(values), np.str_(kind))
+        assert type(direct.kind) is str
+
+
 # -- PEST ---------------------------------------------------------------------------------
 
 

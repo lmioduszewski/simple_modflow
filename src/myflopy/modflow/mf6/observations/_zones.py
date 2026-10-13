@@ -886,7 +886,7 @@ class _CellZoneFlowTargets:
         """Normalize the zone definitions and observed flows into internal tables."""
 
         owner = type(self).__name__
-        _check_inequality(self.inequality, owner=owner)
+        self.inequality = _check_inequality(self.inequality, owner=owner)
         self._locations = _normalize_zone_locations(
             self.locations,
             owner=owner,

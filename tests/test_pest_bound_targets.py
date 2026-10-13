@@ -65,6 +65,27 @@ def test_an_inequality_that_is_not_one_of_the_two_is_refused_naming_them(family,
         cls(**base, inequality=value)
 
 
+@pytest.mark.parametrize("family", ["head", "conc", "lake", "sfr_stage", "sfr_flow", "drn", "riv"])
+def test_a_numpy_string_inequality_is_stored_as_a_plain_str(family):
+    """``np.str_`` IS a ``str``, so it passed the check and was stored as given (ledger
+    567, the numpy-at-the-boundary rule of ledger 265): asserted with ``type(x) is``."""
+
+    kwargs = {
+        "head": (mf.HeadTargets, {"locations": {"a": 1}, "values": {"time": [0], "a": [1.0]}}),
+        "conc": (mf.ConcTargets, {"locations": {"a": 1}, "values": {"time": [0], "a": [1.0]}}),
+        "lake": (mf.LakeStageTargets, {"locations": {"a": 0}}),
+        "sfr_stage": (mf.SfrStageTargets, {"locations": {"a": 0}}),
+        "sfr_flow": (mf.SfrFlowTargets, {"locations": {"a": 0}}),
+        "drn": (mf.DrnFlowTargets, {"locations": pd.DataFrame({"name": ["z"], "cells": [[1]]})}),
+        "riv": (mf.RivFlowTargets, {"locations": pd.DataFrame({"name": ["z"], "cells": [[1]]})}),
+    }
+    cls, base = kwargs[family]
+    for spelling in ("at_most", "at_least"):
+        stored = cls(**base, inequality=np.str_(spelling)).inequality
+        assert type(stored) is str and stored == spelling
+    assert cls(**base).inequality is None
+
+
 def test_every_constructor_forwards_inequality():
     cells = mf.HeadTargets.from_cells(cells=[1], values=[[1.0]], inequality="at_least")
     records = mf.HeadTargets.from_records(

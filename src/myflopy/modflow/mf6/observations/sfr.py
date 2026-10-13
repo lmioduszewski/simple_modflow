@@ -273,7 +273,7 @@ class SfrStageTargets:
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
 
-        _check_inequality(self.inequality, owner=type(self).__name__)
+        self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,
@@ -875,7 +875,7 @@ class SfrFlowTargets:
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
 
-        _check_inequality(self.inequality, owner=type(self).__name__)
+        self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,

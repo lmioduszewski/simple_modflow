@@ -242,8 +242,10 @@ def _check_inequality(value, *, owner: str) -> str | None:
     """A target set's ``inequality=``, checked: ``None``, ``"at_most"`` or ``"at_least"``.
 
     The ONE validation every target family runs at construction (ledger
-    564). Matched exactly: a near miss is refused naming the
-    spellings rather than read as one of them.
+    564), whose result the family STORES. Matched exactly: a near miss is refused
+    naming the spellings rather than read as one of them. A numpy string IS a
+    ``str`` and passes, so it is returned as a plain ``str`` -- stored as given it
+    reached the build's metadata as ``np.str_`` (ledger 265; ledger 567).
 
     Parameters
     ----------
@@ -255,7 +257,7 @@ def _check_inequality(value, *, owner: str) -> str | None:
     Returns
     -------
     str or None
-        ``value`` unchanged.
+        ``None``, or ``value`` as a plain ``str``.
 
     Raises
     ------
@@ -263,8 +265,10 @@ def _check_inequality(value, *, owner: str) -> str | None:
         When ``value`` is anything but ``None`` or one of :data:`INEQUALITIES`.
     """
 
-    if value is None or (isinstance(value, str) and value in INEQUALITIES):
-        return value
+    if value is None:
+        return None
+    if isinstance(value, str) and value in INEQUALITIES:
+        return str(value)
     raise ValueError(
         f"{owner}: inequality={value!r} is not a bound. Pass 'at_most' (each value is a "
         "limit the simulated value must not exceed -- a dry well's screen bottom), "

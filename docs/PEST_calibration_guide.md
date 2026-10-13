@@ -648,6 +648,9 @@ cal.observe(heads.differences())           # kind="mean": each reading minus its
 cal.observe(heads.differences("previous"), prefix="hstep")   # or period-to-period changes
 ```
 
+A set registered on the model answers the same: `model.targets.heads.differences()` is
+the registered set's `differences()` (ledger 567).
+
 - **`kind="mean"`** (default): each reading minus its label's MEAN over the periods it
   was measured in, the simulated side over the SAME periods. A constant added to every
   reading of a well leaves it unchanged -- measured, an offset model scores 0 on the
@@ -659,8 +662,8 @@ cal.observe(heads.differences("previous"), prefix="hstep")   # or period-to-peri
   errors, so its weight is `1 / sqrt(1/w1² + 1/w2²)` -- `w / sqrt(2)` for equal ones.
 - **`weight=`** replaces either rule with one number for every difference -- how much
   the shape should count against the level is yours to decide.
-- **A reading of weight 0 is not a measurement of a difference** (ledger
-  566): it is in no mean and no pair, and its row is unmeasured. Counted
+- **A reading of weight 0 is part of no difference** (ledger 566, settled): it is in
+  no mean and no pair, and its row is unmeasured. Counted
   in, a silenced outlier moved its well's MEAN and with it every weighted reading's
   target (an outlier of 50 among readings of 10 and 12 made theirs -14 and -12, not -1
   and +1); `"previous"` differences across it.

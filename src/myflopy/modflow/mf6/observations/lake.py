@@ -308,7 +308,7 @@ class LakeStageTargets:
     def __post_init__(self):
         """Normalize the ``name -> lake`` locations and observed values into internal tables."""
 
-        _check_inequality(self.inequality, owner=type(self).__name__)
+        self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
         normalized: dict[str, int] = {}
         source = self.locations if self.locations is not None else {}
         if isinstance(source, pd.Series):

@@ -126,6 +126,10 @@
     "BoundHeadTargets.compare": [
       "model:POSITIONAL_OR_KEYWORD=None"
     ],
+    "BoundHeadTargets.differences": [
+      "kind:POSITIONAL_OR_KEYWORD='mean'",
+      "weight:KEYWORD_ONLY=None"
+    ],
     "BoundHeadTargets.get": [],
     "BoundHeadTargets.match_to_model": [
       "model:POSITIONAL_OR_KEYWORD=None"

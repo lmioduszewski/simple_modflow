@@ -369,7 +369,7 @@ class HeadTargets:
     def __post_init__(self):
         """Load and normalize locations and target tables."""
 
-        _check_inequality(self.inequality, owner=type(self).__name__)
+        self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
 
         self._locations = _load_locations(
             self.locations,
@@ -1967,7 +1967,8 @@ class HeadDifferences:
         (``inequality``): ``ValueError``, a bound has no mean.
     kind : str, default "mean"
         ``"mean"`` or ``"previous"``, as :meth:`HeadTargets.differences` says;
-        anything else raises ``ValueError``.
+        anything else raises ``ValueError``. Stored as a plain ``str`` (a numpy
+        string is converted, ledger 567).
     weight : float or None, optional
         Every difference's PEST weight, replacing the default rule
         (:meth:`HeadTargets.differences`); finite and from 0. Default ``None``.
@@ -2013,7 +2014,9 @@ class HeadDifferences:
                 "measured set, and observe the bound as it is (ledger 564)."
             )
         self.source = source
-        self.kind = kind
+        # A plain str: a numpy string IS a str and passes the check above, then
+        # reaches the build's metadata as np.str_ (ledger 265; ledger 567).
+        self.kind = str(kind)
         self.weight = weight
         values = source._values
         caller = f"{type(source).__name__}.differences()"
@@ -2419,6 +2422,43 @@ class BoundHeadTargets:
         """
 
         return self.targets.stats(self.model if model is None else model)
+
+    def differences(self, kind: str = "mean", *, weight: float | None = None):
+        """The wrapped set's hydrograph SHAPES (delegates to :meth:`HeadTargets.differences`).
+
+        ``model.targets.heads.differences()`` is ``targets.differences()`` on the
+        registered set (ledger 565): the bound model takes no part, since a
+        difference set is bound to no run -- pass a run to its ``compare()``. It
+        raised ``AttributeError`` before (ledger 567). On a bound ``ConcTargets``
+        it returns a ``ConcDifferences``.
+
+        Parameters
+        ----------
+        kind : str, default "mean"
+            ``"mean"`` (each reading minus its label's mean over its measured
+            periods) or ``"previous"`` (each measured period minus the label's
+            previous measured one), as :meth:`HeadTargets.differences` reads it; a
+            reading of weight 0 is part of no difference (ledger 566). Anything else
+            raises ``ValueError``.
+        weight : float or None, optional
+            Every difference's PEST weight, replacing the default rule
+            (:meth:`HeadTargets.differences`); finite and from 0. Default ``None``.
+
+        Returns
+        -------
+        HeadDifferences
+            ``ConcDifferences`` on a bound ``ConcTargets``; a label measured in fewer
+            than 2 periods is left out with a ``UserWarning`` naming it.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`HeadTargets.differences` raises: another ``kind``, a bad
+            ``weight``, a BOUND set (``inequality``), or no label measured in 2
+            periods.
+        """
+
+        return self.targets.differences(kind, weight=weight)
 
     def to_flopy_obs(
         self,

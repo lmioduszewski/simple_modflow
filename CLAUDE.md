@@ -2059,7 +2059,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   measured period (`w/sqrt(2)`), built in myflopy's forward run from the ONE period-end
   reader (`target_values.target_differences` is the one rule), ONE group per set
   (`hdiff`/`cdiff`), undefined rows 0.0 at weight 0 -- never pyEMU's
-  `setup_temporal_diff_obs`, which differences by group.
+  `setup_temporal_diff_obs`, which differences by group. A reading of weight 0 is part
+  of NO difference: out of the mean, stepped across by `"previous"` (ledger 566).
   No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
   version-2 file. Lake/SFR targets have no label column -- split them by prefix. **No
   default prefix is inside another's groups** (a phi-factor tag matches anywhere in a
