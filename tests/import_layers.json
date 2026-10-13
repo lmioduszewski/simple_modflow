@@ -180,7 +180,7 @@
  "myflopy.project.group.surface_water": 8,
  "myflopy.project.group.temp": 8,
  "myflopy.project.group.uzf": 9,
- "myflopy.project.model_config": 0,
+ "myflopy.project.model_config": 1,
  "myflopy.project.model_diff": 13,
  "myflopy.project.model_group": 12,
  "myflopy.project.model_results_diff": 10,

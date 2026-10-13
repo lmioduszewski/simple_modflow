@@ -27,6 +27,7 @@ from flopy.mf6.mfbase import FlopyException, MFDataException
 from flopy.mf6.mfmodel import MFModel
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.period_end import period_records
 
 logger = get_logger(__name__)
 
@@ -85,29 +86,21 @@ def _options_rows(section: str, pkg, blocks) -> list[tuple]:
     return rows
 
 
-def _tdis_period_rows(tdis) -> list[tuple]:
-    """Expand TDIS perioddata into per-period perlen/nstp/tsmult rows."""
+def _tdis_period_rows(model) -> list[tuple]:
+    """Expand the TDIS period block into per-period perlen/nstp/tsmult rows.
 
-    try:
-        data = tdis.perioddata.get_data()
-    except (AttributeError, MFDataException):
-        # AttributeError: a duck-typed or partially built TDIS with no
-        # perioddata at all. MFDataException: flopy has the attribute but no
-        # stored data behind it.
+    Read through :func:`~myflopy.modflow.mf6.period_end.period_records`, the ONE
+    reader of a model's TDIS ``PERIODDATA`` (ledgers 529-531), so the config and
+    every period-end rule read the same lengths; a model with no TDIS, or a TDIS
+    with no period block, gives no rows.
+    """
+
+    records = period_records(model)
+    if records is None:
         logger.debug("no TDIS perioddata; the config carries no period rows")
         return []
-    if data is None:
-        return []
     rows: list[tuple] = []
-    names = getattr(getattr(data, "dtype", None), "names", None)
-    for index, record in enumerate(data):
-        if names:
-            values = {field: record[field] for field in names}
-            perlen = values.get("perlen")
-            nstp = values.get("nstp")
-            tsmult = values.get("tsmult")
-        else:  # positional fallback: (perlen, nstp, tsmult)
-            perlen, nstp, tsmult = record[0], record[1], record[2]
+    for index, (perlen, nstp, tsmult) in enumerate(records):
         rows.append(("tdis", f"period[{index}].perlen", _normalize(perlen)))
         rows.append(("tdis", f"period[{index}].nstp", _normalize(nstp)))
         rows.append(("tdis", f"period[{index}].tsmult", _normalize(tsmult)))
@@ -231,7 +224,7 @@ def _extract_settings(model) -> pd.DataFrame:
     if tdis is not None:
         read.append("tdis")
         rows += _options_rows("tdis", tdis, ["options", "dimensions"])
-        rows += _tdis_period_rows(tdis)
+        rows += _tdis_period_rows(model)
 
     ims = _ims_package(model)
     if ims is not None:

@@ -273,3 +273,41 @@ def test_config_self_reference_diff_errors():
         diff.config.settings(model_name="ref")
     with pytest.raises(KeyError):
         diff.config.settings(model_name="ghost")
+
+
+# --- the one TDIS reader (ledgers 529-531) -------------------------------------
+def test_the_config_reads_its_period_rows_through_the_one_tdis_reader():
+    """``model.config`` read TDIS ``PERIODDATA`` itself, a second reader beside
+    ``period_end.period_records``; it asks that one now, and gives the same rows."""
+
+    from myflopy.modflow.mf6.period_end import period_records
+
+    ws = tempfile.mkdtemp(dir=_WORKSPACE)
+    sim = flopy.mf6.MFSimulation(sim_name="t", sim_ws=ws)
+    flopy.mf6.ModflowTdis(sim, time_units="days", nper=2,
+                          perioddata=[(10.0, 1, 1.1), (100.0, 5, 1.4)])
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="t")
+    model = _FlopyModelLike(sim, gwf, None, "t")
+    config = ModelConfig.from_model(model)
+    rows = [
+        (config.tdis[f"period[{i}].perlen"], config.tdis[f"period[{i}].nstp"],
+         config.tdis[f"period[{i}].tsmult"])
+        for i in range(2)
+    ]
+    assert rows == period_records(model) == [(10.0, 1, 1.1), (100.0, 5, 1.4)]
+
+
+def test_no_module_but_period_end_reads_the_tdis_period_block():
+    """One reader of a model's TDIS ``PERIODDATA`` (ledgers 529-531): a second copy is
+    how a config and a period-end rule come to read two clocks."""
+
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src" / "myflopy"
+    readers = sorted(
+        str(path.relative_to(src))
+        for path in src.rglob("*.py")
+        if re.search(r"tdis\.perioddata\b", path.read_text(encoding="utf-8"))
+    )
+    assert readers == ["modflow/mf6/period_end.py"], readers
