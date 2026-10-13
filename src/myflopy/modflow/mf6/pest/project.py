@@ -12,9 +12,11 @@ import sys
 import time
 import warnings
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 
 import flopy
+import numpy as np
 from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy._logging import get_logger
@@ -548,6 +550,69 @@ def _working_directory(path: Path):
         yield
     finally:
         os.chdir(previous)
+
+
+def _checked_seed(seed) -> int | None:
+    """``seed`` as a plain ``int`` for numpy's legacy generator, or ``None``.
+
+    pyEMU draws every prior from numpy's GLOBAL generator (``np.random.randn``), whose
+    seed is a whole number from 0 to ``2**32 - 1``. A ``bool`` is refused (it is an
+    ``int`` to Python and a mistake here), a numpy integer becomes ``int`` (ledger
+    265).
+
+    Parameters
+    ----------
+    seed : int or None
+        The seed to check.
+
+    Returns
+    -------
+    int or None
+
+    Raises
+    ------
+    TypeError
+        When ``seed`` is neither ``None`` nor a whole number.
+    ValueError
+        When it is outside ``0 .. 2**32 - 1``.
+    """
+
+    if seed is None:
+        return None
+    if isinstance(seed, (bool, np.bool_)) or not isinstance(seed, (int, np.integer)):
+        raise TypeError(f"seed={seed!r}: give a whole number from 0 to 2**32 - 1, or None.")
+    seed = int(seed)
+    if not 0 <= seed < 2**32:
+        raise ValueError(f"seed={seed}: numpy's generator takes 0 to 2**32 - 1.")
+    return seed
+
+
+@contextlib.contextmanager
+def _seeded_numpy(seed: int | None):
+    """Run a pyEMU draw from ``seed``, then hand numpy's global generator back as it was.
+
+    ``None`` takes a seed FROM that generator (one draw), so ``np.random.seed(n)``
+    before the call still reproduces it; either way the seed used is yielded, to be
+    recorded (ledger 573).
+    """
+
+    if seed is None:
+        seed = int(np.random.randint(0, 2**31 - 1))
+    state = np.random.get_state()
+    np.random.seed(seed)
+    try:
+        yield seed
+    finally:
+        np.random.set_state(state)
+
+
+def _bounds_draw(pf, num_reals: int, use_specsim: bool):
+    """``PstFrom.draw`` as :meth:`PestProject.draw_prior` makes it, from numpy's generator as it stands."""
+
+    return pf.draw(
+        num_reals=num_reals, use_specsim=bool(use_specsim),
+        sigma_range=PRIOR_SIGMA_RANGE, scale_offset=True,
+    )
 
 
 def _import_pyemu():
@@ -2158,11 +2223,25 @@ class PestProject:
             "capture": bool(spec.capture),
         }
 
-    def _write_project_metadata(self, *, filename: str | Path | None = None):
+    def _recorded_executions(self) -> list[dict]:
+        """The ``executions`` the template's metadata records now, or ``[]``."""
+
+        try:
+            metadata = json.loads(
+                (self.template_workspace / METADATA_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        recorded = metadata.get("executions") if isinstance(metadata, dict) else None
+        return list(recorded) if isinstance(recorded, list) else []
+
+    def _write_project_metadata(self, *, filename: str | Path | None = None,
+                                executions: list[dict] | None = None):
         """Persist reopen-friendly run metadata inside the generated workspace.
 
         ``parameters`` holds one record per :meth:`parameterize` call
-        (:meth:`_parameter_record`).
+        (:meth:`_parameter_record`); ``executions`` one per launch
+        (:meth:`_record_execution`), carried over from the template a rebuild
+        replaces.
         """
 
         observation_sets = [
@@ -2183,6 +2262,7 @@ class PestProject:
             "observation_sets": observation_sets,
             "parameters": parameters,
             "capture_fields": list(self._capture_field_specs.values()),
+            "executions": list(executions or []),
         }
         metadata_path = self.template_workspace / METADATA_FILENAME
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -2222,7 +2302,7 @@ class PestProject:
         self.pst.write(target)
         return target
 
-    def draw_prior(self, num_reals: int = 1000, use_specsim: bool = False):
+    def draw_prior(self, num_reals: int = 1000, use_specsim: bool = False, seed: int | None = None):
         """Draw a prior parameter ensemble using the underlying ``PstFrom``.
 
         Calls ``cal.pf.draw(num_reals=..., use_specsim=...)``, which draws every
@@ -2250,6 +2330,14 @@ class PestProject:
             grid does not have (ledger 384). The default was ``True`` until
             then, and every ``draw_prior()`` on a DISV model raised
             ``AttributeError`` from inside pyEMU.
+        seed : int or None, optional
+            Seed of the draw, a whole number from 0 to ``2**32 - 1``: the same seed
+            on the same build draws the same ensemble. pyEMU draws from numpy's
+            GLOBAL generator; the draw is made from this seed and the generator is
+            then handed back as it was. Default ``None``: a seed is taken from that
+            generator (one draw), so ``np.random.seed(n)`` before the call still
+            reproduces it (ledger 573). A ``bool`` or a
+            non-whole number raises ``TypeError``, one out of range ``ValueError``.
 
         Returns
         -------
@@ -2261,17 +2349,19 @@ class PestProject:
         ------
         ValueError
             When :meth:`build` has not run yet; or when ``use_specsim`` is
-            ``True`` and the spatial reference is not a regular structured grid.
+            ``True`` and the spatial reference is not a regular structured grid;
+            or when ``seed`` is out of range.
+        TypeError
+            When ``seed`` is not a whole number.
         """
 
+        seed = _checked_seed(seed)
         if self.pf is None:
             raise ValueError("Call build() before draw_prior().")
         if use_specsim:
             self._refuse_specsim_off_a_regular_grid()
-        return self.pf.draw(
-            num_reals=num_reals, use_specsim=bool(use_specsim),
-            sigma_range=PRIOR_SIGMA_RANGE, scale_offset=True,
-        )
+        with _seeded_numpy(seed):
+            return _bounds_draw(self.pf, num_reals, use_specsim)
 
     def _refuse_specsim_off_a_regular_grid(self) -> None:
         """Refuse spectral simulation unless ``PstFrom``'s spatial reference is a regular structured grid.
@@ -2659,6 +2749,9 @@ class PestProject:
         self._refuse_shared_prefixes()
         self._refuse_files_outside_the_run()
         self._release_pyemu_log()
+        # The launches recorded in the template being replaced: a master stays this
+        # calibration's after a rebuild, found where it is (ledger 574).
+        earlier_executions = self._recorded_executions()
         self._clear_stale_template()
         staging = self._staging_workspace()
         try:
@@ -2686,7 +2779,7 @@ class PestProject:
             self.pf.mod_sys_cmds.append(self._resolve_exe())
             self._drop_unused_multiplier_apply()
             self._attach_native_observation_postprocessors()
-            self._write_project_metadata(filename=target_name)
+            self._write_project_metadata(filename=target_name, executions=earlier_executions)
             with self._quiet_pyemu_context():
                 self.pst = self.pf.build_pst(filename=target_name)
             if self._pilot_point_sets:
@@ -2864,6 +2957,7 @@ class PestProject:
         keep_workers: bool = False,
         exe: str = "pestpp-ies",
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
+        seed: int | None = None,
         **pestpp_options,
     ):
         """Run iterative ensemble smoother history matching with PESTPP-IES.
@@ -2880,12 +2974,20 @@ class PestProject:
         kernel, a reboot) continues from its last completed iteration with
         :meth:`resume_ies`.
 
-        ``noise``, ``bad_phi_sigma`` and ``**pestpp_options`` are written onto
-        ``cal.pst.pestpp_options`` and STAY there: ``noise=False``, a
-        ``bad_phi_sigma`` or an extra option from an earlier
-        :meth:`run_ies`/:meth:`prior` call is still set on the next one, whose
-        defaults do not clear it. ``overdue_giveup_fac`` is set (or removed) by
-        every call.
+        ``bad_phi_sigma`` and ``**pestpp_options`` are written onto
+        ``cal.pst.pestpp_options`` and STAY there: a ``bad_phi_sigma`` or an extra
+        option from an earlier :meth:`run_ies`/:meth:`prior` call is still set on
+        the next one, whose defaults do not clear it. ``noise`` and
+        ``overdue_giveup_fac`` are set (or removed) by every call (ledger
+        572: an earlier ``noise=False`` stayed in force under the
+        next call's ``noise=True``).
+
+        Every launch is recorded in the template's ``myflopy_pest_metadata.json``
+        under ``executions`` -- the method, the directory the results are in (a
+        parallel run's master, wherever ``master_dir=`` put it), the worker count,
+        the time, and the seed and file of a correlated prior it drew -- which is how
+        ``model.pest_runs`` finds a master outside the default place (ledger
+        574).
 
         The directory a run writes into holds that run's outputs only (ledger
         507). A serial run first deletes from the template every output
@@ -2926,8 +3028,11 @@ class PestProject:
             earlier run's outputs from the template first (above).
         noise : bool, optional
             Whether to carry measurement noise into the posterior (recommended,
-            the default ``True``, which sets nothing). ``False`` sets
-            ``ies_no_noise``.
+            the default ``True``, which REMOVES ``ies_no_noise`` from
+            ``cal.pst.pestpp_options`` -- an earlier ``noise=False`` included). ``False``
+            sets ``ies_no_noise``. Passing ``ies_no_noise`` in ``**pestpp_options``
+            instead raises ``ValueError`` naming ``noise=`` (ledger
+            572).
         bad_phi_sigma : float or None, optional
             Adaptive rejection threshold (``ies_bad_phi_sigma``);
             values of 1.5 (aggressive) to 2.5 (tolerant) help highly nonlinear
@@ -2983,6 +3088,18 @@ class PestProject:
             tolerates slower runs; ``None`` removes the option, giving PESTPP-IES's
             own ``2.0``. Set on ``cal.pst.pestpp_options`` by every call. A serial
             run kills nothing.
+        seed : int or None, optional
+            Seed of the correlated prior this call draws into ``ies_par_en`` (below),
+            a whole number from 0 to ``2**32 - 1``, as :meth:`draw_prior` takes it:
+            one seed draws the bounds draw and every pilot-point set's, so the same
+            seed on the same build draws the same prior. Default ``None``: a seed is
+            taken from numpy's global generator. The seed used is recorded with the
+            launch (``executions`` above; ledger 573). Given when
+            this call draws nothing -- no ``grid``/array ``pilotpoints`` parameter
+            carries ``correlation=``, or ``ies_par_en`` is passed -- it raises
+            ``ValueError``: PESTPP-IES then draws the prior itself, from its own
+            ``ies_random_seed`` (a fixed default; pass ``ies_random_seed=`` to
+            change it). PESTPP-IES's noise draw always uses ``ies_random_seed``.
         **pestpp_options
             Any additional ``pst.pestpp_options`` to set (e.g.
             ``ies_localizer="loc.mat"``), passed straight through and applied
@@ -2996,7 +3113,8 @@ class PestProject:
             -- the simulated values of an ``ies_par_en``'s realizations, which
             PESTPP-IES then does not rerun -- must come with the ``ies_par_en``
             that made them: set without one while a prior would be drawn, it is
-            refused (``ValueError``).
+            refused (``ValueError``). ``ies_no_noise`` is refused (``ValueError``),
+            naming ``noise=``.
 
         Returns
         -------
@@ -3010,9 +3128,13 @@ class PestProject:
             When :meth:`build` has not run, or ``cal.pst`` has been put in
             ``regularization`` mode, which PESTPP-IES cannot parse; when
             ``ies_restart_obs_en`` is set while a correlated prior would be drawn
-            into ``ies_par_en`` (ledger 509); or, for a parallel run, when the
+            into ``ies_par_en`` (ledger 509); when ``seed`` is given and nothing is
+            drawn, or is out of range; when ``ies_no_noise`` is passed in
+            ``**pestpp_options``; or, for a parallel run, when the
             master or its worker directory is, contains or sits inside the run
             directory or the template (ledger 361).
+        TypeError
+            When ``seed`` is not a whole number.
         RuntimeError
             Before anything is written, when a run may still be going in the
             template, or (parallel) in the master or its worker directory: its
@@ -3043,6 +3165,7 @@ class PestProject:
             overdue_giveup_fac=overdue_giveup_fac,
             overwrite=overwrite,
             keep_workers=keep_workers,
+            seed=seed,
             pestpp_options=pestpp_options,
         )
         return self._review(results_dir)
@@ -3058,6 +3181,7 @@ class PestProject:
         keep_workers: bool = False,
         exe: str = "pestpp-ies",
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
+        seed: int | None = None,
         **pestpp_options,
     ):
         """Run the prior parameter ensemble once (prior Monte Carlo).
@@ -3092,8 +3216,10 @@ class PestProject:
             template workspace; ``>1`` starts that many workers and collects the
             results in ``master_dir``.
         noise : bool, optional
-            Generate the measurement-noise ensemble too (default ``True``,
-            which sets nothing). ``False`` sets ``ies_no_noise``.
+            Generate the measurement-noise ensemble too (default ``True``, which
+            removes ``ies_no_noise`` -- an earlier ``noise=False`` included). ``False``
+            sets ``ies_no_noise``. As :meth:`run_ies`'s ``noise`` (ledger
+            572).
         master_dir : str or pathlib.Path or None, optional
             Master directory for a parallel run. ``None`` (default) uses
             ``<name>_prior_master`` beside the template workspace, which is where
@@ -3120,12 +3246,17 @@ class PestProject:
             :data:`DEFAULT_OVERDUE_GIVEUP_FAC`, ``5.0``, and ``None`` removes the
             option (PESTPP-IES's own ``2.0``), exactly as in :meth:`run_ies`
             (ledger 510).
+        seed : int or None, optional
+            Seed of the correlated prior drawn into ``ies_par_en``, exactly as
+            :meth:`run_ies`'s ``seed``: recorded with the launch, ``None`` (default)
+            taking one from numpy's generator, refused (``ValueError``) when nothing
+            is drawn (ledger 573).
         **pestpp_options
             Additional ``pst.pestpp_options``, passed straight through and
             applied after ``noise``; ``ies_par_en`` and ``ies_restart_obs_en``
             behave as in :meth:`run_ies` (a passed ``ies_par_en`` is used as given,
             and a restart ensemble without one is refused while a correlated prior
-            would be drawn).
+            would be drawn). ``ies_no_noise`` is refused, naming ``noise=``.
 
         Returns
         -------
@@ -3138,9 +3269,12 @@ class PestProject:
         ValueError
             When :meth:`build` has not run, or ``cal.pst`` has been put in
             ``regularization`` mode; for a restart ensemble a drawn prior would
-            orphan, as in :meth:`run_ies` (ledger 509); or as
+            orphan, as in :meth:`run_ies` (ledger 509); for a ``seed`` or an
+            ``ies_no_noise`` :meth:`run_ies` refuses; or as
             :meth:`run_ies` raises it for a parallel run's master and worker
             directories (ledger 361).
+        TypeError
+            When ``seed`` is not a whole number.
         RuntimeError
             As :meth:`run_ies` raises it: a run may still be going in the template,
             the master or its worker directory (ledger 532), or a relative
@@ -3163,6 +3297,7 @@ class PestProject:
             overdue_giveup_fac=overdue_giveup_fac,
             overwrite=overwrite,
             keep_workers=keep_workers,
+            seed=seed,
             pestpp_options=pestpp_options,
         )
         return self._review(results_dir)
@@ -3394,6 +3529,8 @@ class PestProject:
             case, directory, last, total - last,
         )
         exe_name, exe_dir = self._resolve_pestpp(exe)
+        self._record_execution(method="resume_ies", directory=directory,
+                               workers=int(workers) if parallel else None)
         try:
             with self._quiet_pyemu_context():
                 run_pst.write(str(directory / f"{case}.pst"), version=2)
@@ -3499,7 +3636,7 @@ class PestProject:
             "`correlation=` to a grid or pilot-point parameter."
         )
 
-    def _inject_geostatistical_prior(self, reals: int) -> None:
+    def _inject_geostatistical_prior(self, reals: int, seed: int | None = None) -> int | None:
         """Draw a geostatistically-correlated prior parameter ensemble.
 
         Grid / pilot-point parameters carry a variogram (``correlation=``). A
@@ -3522,6 +3659,11 @@ class PestProject:
         pilot points beside any other parameter (with no correlated ``grid`` one)
         handed PESTPP-IES an ensemble of the pilot points alone, which it refused:
         either way ``run_ies()``/``prior()`` died before a model ran.
+
+        The whole draw -- the bounds draw and every pilot-point set's -- is made from
+        ONE seed (:func:`_seeded_numpy`; ``seed`` or, when ``None``, one taken from
+        numpy's generator), returned to be recorded; ``None`` when nothing is drawn
+        (ledger 573).
         """
 
         # Grid parameters live in pyEMU's PstFrom, so `pf.draw` correlates them.
@@ -3530,35 +3672,37 @@ class PestProject:
         # `_draw_pilot_point_prior`).
         correlated = self._correlated_prior_specs()
         if self.pf is None or not correlated:
-            return
+            return None
 
-        with self._quiet_pyemu_context():
-            ensemble = self.draw_prior(int(reals), use_specsim=False)
-        if ensemble is None:
-            return
-        ensemble = ensemble._df if hasattr(ensemble, "_df") else ensemble
-        for spec in correlated:
-            if spec.style != "pilotpoints":
-                continue
-            drawn = self._draw_pilot_point_prior(spec, int(reals))
-            if drawn is None:
-                continue
-            # Both draws number their realizations 0..n-1; anything else would pair
-            # one realization's pilot points with another's other parameters.
-            if not ensemble.index.equals(drawn.index):
-                raise RuntimeError(
-                    f"The prior draw's realizations {list(ensemble.index[:5])} and the "
-                    f"pilot-point draw's {list(drawn.index[:5])} of {spec.name!r} are not "
-                    "the same realizations; refusing to pair them."
-                )
-            ensemble = ensemble.drop(columns=ensemble.columns.intersection(drawn.columns))
-            ensemble = ensemble.join(drawn)
+        with _seeded_numpy(seed) as used:
+            with self._quiet_pyemu_context():
+                ensemble = _bounds_draw(self.pf, int(reals), use_specsim=False)
+            if ensemble is None:
+                return None
+            ensemble = ensemble._df if hasattr(ensemble, "_df") else ensemble
+            for spec in correlated:
+                if spec.style != "pilotpoints":
+                    continue
+                drawn = self._draw_pilot_point_prior(spec, int(reals))
+                if drawn is None:
+                    continue
+                # Both draws number their realizations 0..n-1; anything else would pair
+                # one realization's pilot points with another's other parameters.
+                if not ensemble.index.equals(drawn.index):
+                    raise RuntimeError(
+                        f"The prior draw's realizations {list(ensemble.index[:5])} and the "
+                        f"pilot-point draw's {list(drawn.index[:5])} of {spec.name!r} are "
+                        "not the same realizations; refusing to pair them."
+                    )
+                ensemble = ensemble.drop(columns=ensemble.columns.intersection(drawn.columns))
+                ensemble = ensemble.join(drawn)
         if ensemble.empty:
-            return
+            return None
 
         ensemble_path = self.template_workspace / f"{self.name}.prior_par.csv"
         ensemble.to_csv(ensemble_path)
         self.pst.pestpp_options["ies_par_en"] = ensemble_path.name
+        return used
 
     def _draw_pilot_point_prior(self, spec, reals: int):
         """A geostatistically correlated prior for one pilot-point spec.
@@ -3857,6 +4001,7 @@ class PestProject:
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         overwrite: bool = False,
         keep_workers: bool = False,
+        seed: int | None = None,
         pestpp_options: dict | None = None,
     ) -> Path:
         """Configure options, write the pst, run PESTPP-IES, and return the results dir.
@@ -3873,6 +4018,25 @@ class PestProject:
             raise ValueError("Call build() before running PESTPP-IES.")
         method = "run_ies" if master_suffix == "ies_master" else "prior"
         parallel = bool(workers and int(workers) > 1)
+        seed = _checked_seed(seed)
+        caller_options = dict(pestpp_options or {})
+        if "ies_no_noise" in caller_options:
+            raise ValueError(
+                f"{method}() sets ies_no_noise itself, from noise=: pass noise=False to "
+                "leave measurement noise out, noise=True (the default) to keep it "
+                "(ledger 572)."
+            )
+        if seed is not None and ("ies_par_en" in caller_options
+                                 or not self._correlated_prior_specs()):
+            why = ("ies_par_en is passed, which is used as given (ledger 509)"
+                   if "ies_par_en" in caller_options else
+                   "no grid or array pilotpoints parameter carries correlation=")
+            raise ValueError(
+                f"{method}(seed={seed}) seeds the correlated prior myflopy draws, and this "
+                f"call draws none: {why}. PESTPP-IES draws the prior itself then, from its "
+                f"ies_random_seed -- pass ies_random_seed={seed} to set that -- or drop "
+                "seed= (ledger 573)."
+            )
         self._refuse_a_live_run(self.template_workspace, "template", method=method, instead="",
                                 stacklevel=4)
         if parallel:
@@ -3885,10 +4049,13 @@ class PestProject:
                 default=not master_dir,
                 overwrite=overwrite,
             )
-        caller_options = dict(pestpp_options or {})
         case = f"{self.name}.pst"
         self.pst.pestpp_options["ies_num_reals"] = int(reals)
-        if not noise:
+        # Set or removed by every call, as overdue_giveup_fac is: an earlier
+        # `noise=False` persisted under a later `noise=True` (ledger 572).
+        if noise:
+            self.pst.pestpp_options.pop("ies_no_noise", None)
+        else:
             self.pst.pestpp_options["ies_no_noise"] = True
         if bad_phi_sigma is not None:
             self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
@@ -3901,10 +4068,19 @@ class PestProject:
         self._refuse_regularization_mode()
         # A caller's own `ies_par_en` is used as given; the correlated prior is drawn
         # only when the call names none (ledger 509).
+        drawn_seed = None
         if "ies_par_en" not in caller_options:
             self._refuse_a_restart_from_other_parameters(method)
-            self._inject_geostatistical_prior(int(reals))
+            drawn_seed = self._inject_geostatistical_prior(int(reals), seed)
         self.pst.control_data.noptmax = int(noptmax)
+        # Before the master is copied from the template, so the master's copy holds it.
+        self._record_execution(
+            method=method,
+            directory=master if parallel else self.template_workspace,
+            workers=int(workers) if parallel else None,
+            seed=drawn_seed,
+            prior_ensemble=self.pst.pestpp_options.get("ies_par_en") if drawn_seed is not None else None,
+        )
 
         if not parallel:
             # The run writes into the template, where an earlier run of this case left
@@ -3936,6 +4112,40 @@ class PestProject:
 
         self._run_serial(pyemu, exe_name, exe_dir, case, method=method)
         return self.template_workspace
+
+    def _record_execution(self, *, method: str, directory: Path, workers: int | None,
+                          seed: int | None = None, prior_ensemble: str | None = None) -> None:
+        """Append this launch to the template metadata's ``executions`` (ledger 574).
+
+        Each record names the method, the directory its results go to -- resolved, and
+        relative to the template, so a calibration root moved whole still finds a
+        master inside it -- the workers, the time, and the seed and file of a correlated
+        prior it drew (ledger 573). Run discovery reads it
+        (:func:`~myflopy.modflow.mf6.pest.runs.recorded_executions`): a parallel run's
+        master was found only at its default place, ``<name>_ies_master`` beside the
+        template (ledger 508). A template whose metadata cannot be read (a build
+        before the metadata existed) records nothing.
+        """
+
+        path = self.template_workspace / METADATA_FILENAME
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            logger.debug("No execution recorded in %s (%s): run discovery finds the run "
+                         "only at its default place.", path, error)
+            return
+        resolved = Path(directory).resolve()
+        metadata.setdefault("executions", []).append({
+            "method": method,
+            "kind": "prior" if method == "prior" else "ies",
+            "directory": str(resolved),
+            "relative": os.path.relpath(resolved, self.template_workspace.resolve()),
+            "workers": workers,
+            "prior_seed": seed,
+            "prior_ensemble": prior_ensemble,
+            "launched": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+        path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     def _run_serial(self, pyemu, exe_name: str, exe_dir, case: str, *, method: str) -> None:
         """Run PESTPP-IES in the template, holding its run lock while it goes."""

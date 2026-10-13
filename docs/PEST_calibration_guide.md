@@ -897,13 +897,30 @@ arguments when you need them.
 
 **Reusing an ensemble** (ledger 509). An `ies_par_en=` you pass is used as
 given. When a `grid` or array `pilotpoints` parameter carries `correlation=`, a call
-that passes no `ies_par_en` draws a fresh correlated prior into it. Pass
+that passes no `ies_par_en` draws a fresh correlated prior into it -- from `seed=`
+when you give one (`cal.run_ies(seed=17)`, `cal.prior(seed=17)`, `cal.draw_prior(500,
+seed=17)`), else from a seed taken from numpy's global generator; either way the seed is
+recorded with the launch, so the same prior can be drawn again (ledger
+573). `seed=` on a call that draws nothing is refused: PESTPP-IES then
+draws the prior itself, from its `ies_random_seed=` option. Pass
 `ies_restart_obs_en=` (a prior Monte Carlo's simulated values, which PESTPP-IES then
 does not rerun) together with the `ies_par_en` that produced them, for example
 `cal.run_ies(ies_par_en=prior_dir / "cal.0.par.csv", ies_restart_obs_en=prior_dir / "cal.0.obs.csv")`.
 A restart ensemble set without one, while a prior would be drawn, is refused: it
 would pair every realization's observations with other parameters. The option
 persists on `cal.pst`, so `del cal.pst.pestpp_options["ies_restart_obs_en"]` drops it.
+
+**`noise=` is set by every call** (ledger 572). `noise=False` sets
+`ies_no_noise`, and `noise=True` -- the default -- removes it: an earlier `noise=False`
+no longer rides into the next run. Passing `ies_no_noise=` by hand is refused, naming
+`noise=`.
+
+**Every launch is recorded** (ledger 574). `run_ies`, `prior` and
+`resume_ies` append a record to the template's `myflopy_pest_metadata.json` under
+`executions` -- the method, the directory holding the results, the workers, the time,
+and the seed and file of the correlated prior drawn -- and `model.pest_runs` reads it,
+so a master passed as `master_dir=` anywhere is found and reviewed like the default one,
+a rebuild included.
 
 **One run's outputs per directory** (ledger 507). A serial run (`workers`
 unset) writes `<name>.*` into the template. Before it starts, it deletes the outputs an

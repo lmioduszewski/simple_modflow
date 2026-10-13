@@ -1205,7 +1205,10 @@ pyEMU's geostatistical draw, its variance set by the bounds as a `grid` paramete
 77% of a `(0.5, 2)` draw at a bound).
 `cal.draw_prior(n)` draws the same way (`use_specsim=False` by default; `True`, pyEMU's
 spectral simulation, only on a regular structured grid -- refused on DISV, ledger
-384). An `ies_par_en=` passed to the call is used as given and nothing is drawn, and
+384). `seed=` on `run_ies`/`prior`/`draw_prior` seeds that draw, and a launch records
+the seed it used (a `None` seed is taken from numpy's global generator); refused on a
+call that draws nothing (ledger 573). `noise=True` removes an earlier
+`noise=False`'s `ies_no_noise` (ledger 572). An `ies_par_en=` passed to the call is used as given and nothing is drawn, and
 an `ies_restart_obs_en` set without one while a prior would be drawn is refused
 (ledger 509). **Launch defaults for long runs** -- `overdue_giveup_fac=5.0`
 on `run_ies`/`prior` (PESTPP-IES's own 2.0 kills a parallel run at twice the average
@@ -1222,7 +1225,9 @@ them (ledger 532).
 `noun.verb` grammar, so its figures are `plot_*` and its tables are bare nouns.
 A handle's `executions` (ledger 508) maps `"ies"`/`"prior"` to the directory
 holding that run: the master named exactly `<name>_ies_master`/`<name>_prior_master`,
-or the template for a serial run, its kind read from the `<name>.pst` the launch
+a master passed as `master_dir=` anywhere -- every launch records its directory, seed and
+time in the template's metadata under `executions` (ledger 574) -- or the
+template for a serial run, its kind read from the `<name>.pst` the launch
 wrote. `review(kind)` refuses a kind the run lacks, naming those it holds; it used to
 fall back silently. It opens case `<name>`, which PESTPP-IES writes whatever file
 `cal.build(...)` was given, and an interrupted run's `worker_N` directories are not

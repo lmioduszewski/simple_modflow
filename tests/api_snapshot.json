@@ -3193,7 +3193,8 @@
     ],
     "PestProject.draw_prior": [
       "num_reals:POSITIONAL_OR_KEYWORD=1000",
-      "use_specsim:POSITIONAL_OR_KEYWORD=False"
+      "use_specsim:POSITIONAL_OR_KEYWORD=False",
+      "seed:POSITIONAL_OR_KEYWORD=None"
     ],
     "PestProject.forecast": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
@@ -3235,6 +3236,7 @@
       "keep_workers:KEYWORD_ONLY=False",
       "exe:KEYWORD_ONLY='pestpp-ies'",
       "overdue_giveup_fac:KEYWORD_ONLY=5.0",
+      "seed:KEYWORD_ONLY=None",
       "pestpp_options:VAR_KEYWORD=<required>"
     ],
     "PestProject.resume_ies": [
@@ -3257,6 +3259,7 @@
       "keep_workers:KEYWORD_ONLY=False",
       "exe:KEYWORD_ONLY='pestpp-ies'",
       "overdue_giveup_fac:KEYWORD_ONLY=5.0",
+      "seed:KEYWORD_ONLY=None",
       "pestpp_options:VAR_KEYWORD=<required>"
     ],
     "PestProject.settings": [],

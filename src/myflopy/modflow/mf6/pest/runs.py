@@ -224,9 +224,12 @@ class PestRunHandle:
         names this template, or what this template's own marker names after the
         root was moved, or it holds none; ledger 516); a SERIAL run's is
         the template, its kind read from the ``<name>.pst`` the launch wrote there
-        (``NOPTMAX -1`` is a prior), counted only once it holds a phi file. When both
-        hold a run of one kind, the one whose phi was written last. A master passed as
-        ``master_dir=`` elsewhere is not found. Default: empty (built, not run).
+        (``NOPTMAX -1`` is a prior), counted only once it holds a phi file. A master
+        passed as ``master_dir=`` anywhere else is found through the record its launch
+        wrote into the template's metadata (:func:`recorded_executions`; ledger
+        574 -- it was not found at all), held to the same test of
+        being this template's copy. When several hold a run of one kind, the one whose
+        phi was written last. Default: empty (built, not run).
         Before ledger 508 this was ``masters``: every sibling whose name
         started ``<name>_`` and contained ``master``, classified by a substring, and
         serial runs were never listed.
@@ -331,6 +334,53 @@ def _is_inside_another_template(meta_path: Path, root: Path) -> bool:
 _WORKER_DIRECTORY = re.compile(r"worker_\d+")
 
 
+def recorded_executions(template_dir) -> dict[Path, str]:
+    """The directories the template's launches recorded, each with its kind.
+
+    :meth:`PestProject.run_ies`, :meth:`~PestProject.prior` and
+    :meth:`~PestProject.resume_ies` append a record of each launch to the template's
+    :data:`METADATA_FILENAME` under ``executions`` (ledger 574),
+    naming the directory its results go to by its path relative to the template --
+    tried first, so a calibration root moved whole keeps a master inside it -- and by
+    its resolved path. The LAST record of a directory gives its kind.
+
+    Parameters
+    ----------
+    template_dir : str or pathlib.Path
+        The calibration's template directory.
+
+    Returns
+    -------
+    dict of pathlib.Path to str
+        Each recorded directory that exists, other than the template itself, mapped to
+        ``"ies"`` or ``"prior"``; empty when the metadata records none or cannot be
+        read.
+    """
+
+    template_dir = Path(template_dir)
+    try:
+        metadata = json.loads((template_dir / METADATA_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    records = metadata.get("executions") if isinstance(metadata, dict) else None
+    found: dict[Path, str] = {}
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict) or record.get("kind") not in EXECUTION_MASTERS:
+            continue
+        for candidate in (record.get("relative"), record.get("directory")):
+            if not candidate:
+                continue
+            directory = (template_dir / candidate) if not Path(candidate).is_absolute() \
+                else Path(candidate)
+            if directory.is_dir():
+                directory = directory.resolve()
+                if directory != template_dir.resolve():
+                    found.pop(directory, None)
+                    found[directory] = str(record["kind"])
+                break
+    return found
+
+
 def _executions(template_dir: Path, name: str) -> dict[str, Path]:
     """Each execution kind of the calibration ``name`` and the directory holding its results."""
 
@@ -338,12 +388,17 @@ def _executions(template_dir: Path, name: str) -> dict[str, Path]:
     serial = execution_kind(template_dir, name)
     if serial is not None:
         found.setdefault(serial, []).append(template_dir)
-    for kind, suffix in EXECUTION_MASTERS.items():
-        master = template_dir.parent / f"{name}_{suffix}"
+    candidates = [(kind, template_dir.parent / f"{name}_{suffix}")
+                  for kind, suffix in EXECUTION_MASTERS.items()]
+    # A master passed as `master_dir=` anywhere: its launch recorded it (ledger
+    # 574; ledger 508 found the default place only).
+    candidates += [(kind, master) for master, kind in recorded_executions(template_dir).items()]
+    for kind, master in candidates:
         if (
             master.is_dir()
             and any(master.glob("*.pst"))
             and _a_master_of(master, template_dir)
+            and not any(master.resolve() == place.resolve() for place in found.get(kind, []))
         ):
             found.setdefault(kind, []).append(master)
     return {
@@ -357,8 +412,9 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
     """Discover the PEST runs under ``root``.
 
     Scans for ``myflopy_pest_metadata.json`` (one per ``PstFrom`` build) and pairs
-    each build with its executions: a serial run in the template, and the parallel
-    masters named exactly ``<name>_ies_master`` / ``<name>_prior_master`` beside it
+    each build with its executions: a serial run in the template, the parallel
+    masters named exactly ``<name>_ies_master`` / ``<name>_prior_master`` beside it,
+    and every master its launches recorded, wherever ``master_dir=`` put it
     (:attr:`PestRunHandle.executions`).
 
     Parameters

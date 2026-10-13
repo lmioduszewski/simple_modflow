@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 571 entries (576 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 574 entries (579 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 574 | Every PESTPP-IES launch is recorded in the template's metadata, and run discovery finds a master wherever... | 2026-10-12 |
+| 573 | The correlated prior myflopy draws is seeded: `seed=` on `run_ies()`/`prior()`/`draw_prior()`, recorded wit... | 2026-10-12 |
+| 572 | `noise=` is set or cleared by every `run_ies()`/`prior()`, and `ies_no_noise` by hand is refused | 2026-10-12 |
 | 571 | An `**extra` key the facade sets itself is refused, naming the argument that sets it | 2026-10-12 |
 | 570 | A correlated LIST `style="grid"` set is held to pyEMU's own covariance grouping, for every list target | 2026-10-12 |
 | 569 | `zones=` with `style="constant"` on a LIST target is refused | 2026-10-12 |
@@ -20373,9 +20376,11 @@ same day, which is the useful part of the result.
       held; a run with no execution still opens the template. A metadata copy whose
       `myflopy_pest_build.json` names another build directory of the same scan is
       skipped (ledger 516), and so is a `worker_<n>` whose marker does not
-      name it or that has none (a template built before ledger 360). **Not
+      name it or that has none (a template built before ledger 360). ~~**Not
       done:** a master passed as `master_dir=` somewhere else is not discovered; it
-      was found before only when its name happened to start with `<name>_`.
+      was found before only when its name happened to start with `<name>_`.~~
+      **Done by ledger 574:** each launch records its master in the
+      template's metadata, and discovery reads the record.
 
 509. **An `ies_par_en` passed to `run_ies`/`prior` is used as given, and an `ies_restart_obs_en` that a drawn correlated prior would orphan is refused (2026-10-12).**
       With a correlated `grid` or array `pilotpoints` parameter, every launch drew a
@@ -20388,7 +20393,8 @@ same day, which is the useful part of the result.
       cal.pst.pestpp_options[...]`. This is a behaviour change: an explicit
       `ies_par_en` was overwritten before. Reusing a prior Monte Carlo as IES
       iteration 0 is the case this enables. `ies_obs_en` (the noise ensemble) is not
-      tied to parameters and is left alone. A seed for the draw was not added.
+      tied to parameters and is left alone. ~~A seed for the draw was not added.~~
+      **Added by ledger 573:** `seed=`, recorded with the launch.
 
 510. **`run_ies`/`prior` hand PESTPP-IES `overdue_giveup_fac=5.0` unless told otherwise (2026-10-12).**
       Left unset, PESTPP-IES resets the factor to 2.0. A parallel model run that
@@ -21629,3 +21635,36 @@ same day, which is the useful part of the result.
       (`mfile_fmt`, `initial_value`, `apply_order`, ...) still pass. **Not refused:**
       `initial_value`, which can start a parameter outside its bounds, past ledger 518's
       check; it is no facade keyword, so it stays pyEMU's.
+
+572. **`noise=` is set or cleared by every `run_ies()`/`prior()`, and `ies_no_noise` by hand is refused (2026-10-12).**
+      `noise=True` set nothing, so an earlier `noise=False` persisted on `cal.pst` and a
+      later default run went without measurement noise. **Chosen:** `noise=True` removes
+      `ies_no_noise`, as `overdue_giveup_fac` is set by every call (ledger 510);
+      `ies_no_noise` in `**pestpp_options` raises `ValueError` naming `noise=` -- one
+      spelling. **Behaviour change:** a `cal.pst.pestpp_options["ies_no_noise"]` set by
+      hand is cleared by the next default call.
+
+573. **The correlated prior myflopy draws is seeded: `seed=` on `run_ies()`/`prior()`/`draw_prior()`, recorded with the launch (2026-10-12).**
+      Ledger 509's "A seed ... was not added". pyEMU draws from numpy's GLOBAL generator.
+      **Chosen:** the whole injected draw -- the bounds draw and every pilot-point set's
+      -- is made from ONE seed and the generator is handed back as it was. **Judgment
+      call, `seed=None`:** a seed is taken FROM the global generator (one draw), so
+      `np.random.seed(n)` beforehand still reproduces a run, and the seed used is
+      recorded either way (`executions[-1]["prior_seed"]`, ledger 574);
+      the realizations for a given global seed differ from before. **Refused:** `seed=`
+      when the call draws nothing (no correlated `grid`/array `pilotpoints` parameter, or
+      `ies_par_en` passed), naming `ies_random_seed=` -- PESTPP-IES then draws the prior
+      itself from its own fixed-default seed, which also draws its noise ensemble; `seed=`
+      does not set it.
+
+574. **Every PESTPP-IES launch is recorded in the template's metadata, and run discovery finds a master wherever `master_dir=` put it (2026-10-12).**
+      Ledger 508's "Not done". **Chosen:** `run_ies`/`prior`/`resume_ies` append
+      `{method, kind, directory, relative, workers, prior_seed, prior_ensemble,
+      launched}` to `myflopy_pest_metadata.json`'s `executions` before the master is
+      copied; `runs.recorded_executions` reads them (the path relative to the template
+      first, so a root moved whole keeps an inside master) and `_executions` adds each
+      existing master that passes ledger 508/516's copy test, the latest record of a
+      directory giving its kind. A rebuild carries the records into the new metadata, as
+      the default masters stay found by name. **Not done:** a master the template was
+      never told of (launched by hand with pyEMU) is still found only at the default
+      place.
