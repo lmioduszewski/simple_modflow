@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 583 entries (588 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 584 entries (589 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 584 | A map's hover footer dates its period from the TDIS clock when `model.per_dates` is unset, by the period's... | 2026-10-12 |
 | 583 | Each forward-run function is copied into `forward_run.py` once | 2026-10-12 |
 | 582 | The PEST forward run reads DRN and RIV zone sets from the run's outputs alone | 2026-10-12 |
 | 581 | The head targets have one reader; the value-table route kept for test doubles is gone | 2026-10-12 |
@@ -20700,8 +20701,10 @@ same day, which is the useful part of the result.
       `mf.tdis(...)`), a time zone, and a date string with no four-digit year (pandas
       reads `"October"` as year 1). **Not routed through it:** `ModelContext.dates`
       (declared by the user, read by nothing) and `model.per_dates` (user labels for map
-      footers) do not read the TDIS. `model_config._tdis_period_rows` still reads the
-      period block from a TDIS object for the config rows.
+      footers) do not read the TDIS (a map footer reads `model.calendar` when
+      `per_dates` is unset since ledger 584). ~~`model_config._tdis_period_rows`
+      still reads the period block from a TDIS object for the config rows.~~ (2026-10-12:
+      it reads `period_records` now.)
 
 530. **`mf.AverageYear`: one steady period, then calendar-month cycles, its run checked by `equilibrium` (2026-10-12).**
       One object states the period-to-month map for the TDIS, the STO flags, every
@@ -21804,3 +21807,12 @@ same day, which is the useful part of the result.
       group of pilot-point sets) and `carry_river_bottom` (one per RIV file -- Ten Trails'
       `riv` and `crisp`) still call `add_py_function` directly and duplicate the same way;
       they belong to the parameter modules.
+
+584. **A map's hover footer dates its period from the TDIS clock when `model.per_dates` is unset, by the period's MIDPOINT (2026-10-12).**
+      The footer read only the hand-set `model.per_dates`, so a run whose TDIS declares
+      `START_DATE_TIME` and `TIME_UNITS` drew no date. **Chosen:** `per_dates` still WINS
+      when set -- a label the caller chose -- and otherwise `model.calendar` dates the
+      period by its MIDPOINT, whose month is the period's calendar month (ledger 529's
+      rule): Ten Trails' first period starts 2017-09-30 and reads `Oct 2017`, where the
+      start would label every monthly period with the month before it. Same `%b %Y`
+      format as before. A TDIS with no start or no unit gives no date, as before.

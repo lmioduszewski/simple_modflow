@@ -303,3 +303,24 @@ def test_pest_takes_its_start_from_the_one_reader(runs):
     model = runs["none"].model("flow")
     assert not hasattr(model, "_tdis_start_datetime")
     assert str(model.pest("calib").start_datetime) == "2016-09-30"
+
+
+def test_a_map_hover_dates_its_period_from_the_tdis_clock(runs):
+    """The hover footer read only the hand-set ``model.per_dates``, so a run dated by
+    its TDIS drew no date. It reads ``model.calendar`` now -- the period's MIDPOINT,
+    whose month is the period's (ledger 584) -- and ``per_dates`` still wins
+    when it is set."""
+
+    model = mf.load_mf6_run(runs["none"].workspace)
+    assert model.per_dates is None
+    # Period 0 starts 2016-09-30 and is ten days long: its month is October.
+    assert model.plot.map(per=0)._build_hover_context().date == "Oct 2016"
+    assert model.plot.map(per=2)._build_hover_context().date == "Oct 2016"
+    model.per_dates = ["2001-01-31", "2001-02-28", "2001-03-31"]
+    assert model.plot.map(per=1)._build_hover_context().date == "Feb 2001"
+
+
+def test_a_map_of_an_undated_run_has_no_date(tmp_path):
+    run = _run(tmp_path / "undated", tdis=mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)],
+                                                   time_units="days"))
+    assert run.model("flow").plot.map()._build_hover_context().date is None

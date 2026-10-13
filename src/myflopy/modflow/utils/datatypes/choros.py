@@ -1602,6 +1602,42 @@ class Choro(Picture):
         values = values.mask(values < 0, 0).mask(no_value)
         return values.mask(no_value & (heads.to_numpy() < 0), 0.0)
 
+    def _period_date_label(self, period):
+        """The hover footer's date for stress period ``period`` (``"Oct 2017"``), or ``None``.
+
+        The hand-set ``model.per_dates`` wins when it is set -- a label the caller
+        chose. Otherwise the model's own TDIS clock, ``model.calendar``, dates the
+        period by its MIDPOINT, whose month is the period's calendar month (ledger
+        529): a monthly run starting 2017-09-30 labels its first period ``Oct 2017``,
+        not the ``Sep 2017`` of its start (ledger 584). Until then only
+        ``per_dates`` was read, so a run dated by its TDIS drew no date at all. A
+        model with neither -- no ``START_DATE_TIME`` or ``TIME_UNITS`` -- has no date.
+        """
+
+        if self.model is None or period is None:
+            return None
+        dates = getattr(self.model, "per_dates", None)
+        if dates is not None:
+            try:
+                if period < len(dates):
+                    return dates[period].strftime("%b %Y")
+            except (AttributeError, ValueError):
+                # AttributeError: `per_dates` holds something without
+                # `.strftime` (a plain int period label). ValueError: a date
+                # that pandas cannot format. The hover loses its date footer,
+                # which is strictly better than losing the map.
+                logger.debug("no date label for period %s", period)
+            return None
+        try:
+            midpoints = self.model.calendar.midpoints
+        except (AttributeError, ValueError):
+            # AttributeError: a model double with no calendar. ValueError: a TDIS
+            # declaring no START_DATE_TIME or no TIME_UNITS -- its periods have no
+            # dates, so the footer has none to show.
+            logger.debug("no TDIS dates for the hover's period %s", period)
+            return None
+        return midpoints[period].strftime("%b %Y") if period < len(midpoints) else None
+
     def _build_hover_context(self):
         """Assemble a :class:`HoverContext` from this map's data for ``hover_spec``."""
 
@@ -1611,18 +1647,7 @@ class Choro(Picture):
         period = step = date = None
         if self.kstpkper is not None:
             step, period = self.kstpkper
-        if self.model is not None and getattr(self.model, "per_dates", None) is not None:
-            try:
-                dates = self.model.per_dates
-                if period is not None and period < len(dates):
-                    date = dates[period].strftime("%b %Y")
-            except (AttributeError, ValueError):
-                # AttributeError: `per_dates` holds something without
-                # `.strftime` (a plain int period label). ValueError: a date
-                # that pandas cannot format. The hover loses its date footer,
-                # which is strictly better than losing the map.
-                logger.debug("no date label for period %s", period)
-                date = None
+        date = self._period_date_label(period)
 
         payload = dict(self._custom_hover) if self._custom_hover else {}
         if self.show_mounding:

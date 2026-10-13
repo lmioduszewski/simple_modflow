@@ -761,7 +761,12 @@ class SimulationBase:
 
     @property
     def per_dates(self):
-        """Optional stress-period date labels."""
+        """Optional stress-period date labels, set by hand.
+
+        A map's hover footer labels its period from these when they are set, and
+        otherwise from the TDIS clock, :attr:`calendar` (the period's midpoint;
+        ledger 584). Nothing else reads them.
+        """
 
         return self._per_dates
 
