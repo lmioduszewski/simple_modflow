@@ -1413,17 +1413,20 @@ class IesResults:
         """How many realizations the ``side`` ensemble's statistics rest on, of how many were drawn.
 
         ``drawn`` is the prior PARAMETER ensemble's rows -- every realization
-        PESTPP-IES started with. ``surviving`` is the posterior parameter ensemble's
-        rows (PESTPP-IES carries only the realizations it kept, failed runs and
-        ``ies_bad_phi_sigma`` rejections dropped), or, for the prior, the prior
-        OBSERVATION ensemble's: the ones whose model run finished. Measured on a run
-        whose forward run failed a third of the draw: 12 drawn, 9 run, 5 in the
+        PESTPP-IES started with. ``surviving`` is the rows of the PARAMETER ensemble the
+        caller averages: the posterior's (PESTPP-IES carries only the realizations it
+        kept, failed runs and ``ies_bad_phi_sigma`` rejections dropped), or, for the
+        prior, ``drawn`` itself -- the prior parameter ensemble keeps every realization,
+        a failed run included, so a prior statistic rests on all of them. Measured on a
+        run whose forward run failed a third of the draw: 12 drawn, 9 run, 5 in the
         posterior. Below half of ``drawn`` it is said with a ``UserWarning`` and the
-        logger (ledger 288's rule), since the statistics rest on what survived.
+        logger (ledger 288's rule), since the statistics rest on what survived. The
+        prior side read the prior OBSERVATION ensemble's 9 and warned that statistics
+        averaged over all 12 rested on 9 (review of ledger 575).
         """
 
         drawn = len(self.prior_parameters._df)
-        surviving = len((self.posterior_parameters if side == "posterior" else self.prior)._df)
+        surviving = len(self.posterior_parameters._df) if side == "posterior" else drawn
         if drawn and surviving < SURVIVING_SHARE_WARNING * drawn:
             message = (
                 f"{caller}: the {side} ensemble holds {surviving} of the {drawn} "
@@ -1470,12 +1473,13 @@ class IesResults:
         pandas.DataFrame
             Indexed by parameter group with columns ``n_parameters``,
             ``n_at_lower``, ``n_at_upper``, ``pct_at_bound``, ``n_reals`` -- the
-            realizations the means rest on: the posterior's, or for the prior the ones
-            whose run finished -- and ``n_reals_drawn``, the prior's; most-pinned group
-            first. Only parameters in both the ensemble and the control file count.
-            When ``n_reals`` is below half of ``n_reals_drawn`` -- PESTPP-IES dropped
-            most realizations -- a ``UserWarning`` says so (ledger
-            575).
+            realizations the means rest on: the posterior parameter ensemble's rows,
+            or for ``which="prior"`` every realization drawn, since the prior
+            parameter ensemble keeps a realization whose run failed -- and
+            ``n_reals_drawn``, the prior's; most-pinned group first. Only parameters
+            in both the ensemble and the control file count. When ``n_reals`` is
+            below half of ``n_reals_drawn`` -- PESTPP-IES dropped most realizations
+            -- a ``UserWarning`` says so (ledger 575).
         """
 
         side = _which_ensemble(which)

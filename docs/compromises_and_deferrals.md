@@ -21626,7 +21626,12 @@ same day, which is the useful part of the result.
       variogram means there, and pyEMU's comment says it is intended. Records sharing a
       whole cellid are ONE pyEMU parameter, so they are not two points (measured: two
       drains in one DIS cell build). The rhk refusal now calls the helper; on DIS its
-      reaches in two layers of one column pass where they were refused.
+      reaches in two layers of one column pass where they were refused. **(a) is refused
+      WHATEVER `nugget=`** (review): any nugget makes the draw succeed -- measured from
+      `1e-10` up, the column's records then correlated at `1 / (1 + nugget)` -- but that is
+      a structure along the column the map-plane variogram never described, which ledger
+      452 refuses for a DISU array's stacked nodes on the same ground; the refusal says so
+      rather than calling the covariance singular.
 
 571. **An `**extra` key the facade sets itself is refused, naming the argument that sets it (2026-10-12).**
       `extra` was applied last and overrode what the facade derived, which the docstring
@@ -21678,9 +21683,11 @@ same day, which is the useful part of the result.
       Measured (`docs/reproducers/ies_dropped_realizations.py`, real PESTPP-IES, a forward
       run failing every K multiplier below 1): iteration 0's parameter ensemble keeps all
       12 drawn, its observation ensemble the 9 that ran, and iteration 1-2's parameter
-      ensemble the 5 PESTPP-IES kept. **Chosen:** columns `n_reals` (the posterior
-      parameter ensemble's rows; for `which="prior"` the prior observation ensemble's)
-      and `n_reals_drawn` (the prior parameter ensemble's), and a `UserWarning` plus a
+      ensemble the 5 PESTPP-IES kept. **Chosen:** columns `n_reals` (the rows of the
+      parameter ensemble averaged: the posterior's, or for `which="prior"` every one drawn,
+      since the prior parameter ensemble keeps a failed run's realization -- the review
+      struck reading the prior OBSERVATION ensemble's 9 there, which warned that means
+      over 12 rested on 9) and `n_reals_drawn` (the prior parameter ensemble's), and a `UserWarning` plus a
       log line when `n_reals < n_reals_drawn / 2` (`ies.SURVIVING_SHARE_WARNING`); the
       half is the task's threshold, not a measurement. The statistics themselves are
       unchanged: `learned` still compares the whole prior with what survived.

@@ -1150,7 +1150,10 @@ class PestProject:
             records in two layers on DISV or DISU, where pyEMU keeps one group, or
             two reaches in one DIS cell and layer -- make the covariance singular
             (records sharing a whole cellid share ONE parameter, pyEMU's rule), and pyEMU's draw at :meth:`run_ies`/:meth:`prior` died with
-            ``Matrix is not positive definite``; and where pyEMU, finding a shared
+            ``Matrix is not positive definite`` -- refused whatever ``nugget``, which
+            makes the draw succeed but correlates the column's records at
+            ``1 / (1 + nugget)``, a structure the map-plane variogram never described
+            (ledger 452's rule); and where pyEMU, finding a shared
             point, splits the set into one group per record -- every reach of an
             ``sfr.rhk`` set on DISV -- the prior is drawn uncorrelated (both
             measured; ledger 558, ledger 570). On DIS a column's records

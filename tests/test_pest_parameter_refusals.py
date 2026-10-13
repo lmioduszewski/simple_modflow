@@ -245,6 +245,23 @@ def test_a_columns_records_on_disv_or_disu_are_refused_as_a_singular_prior(
         _build(cal, "col")
 
 
+def test_a_nugget_does_not_let_a_columns_records_through_and_the_refusal_says_why(
+        stacked, tmp_path):
+    """A nugget makes the stacked set drawable -- measured from ``1e-10`` up -- but
+    correlates a column's records at ``1 / (1 + nugget)``, a structure along the column
+    the map-plane variogram never described: refused whatever the nugget, as ledger 452
+    refuses a DISU array's stacked nodes. The refusal said the covariance was singular,
+    which a nugget makes false (review of ledger 570)."""
+
+    cal = _cal(stacked["disv"], tmp_path, "nug")
+    cal.parameterize("chd", style="grid", correlation=30.0, nugget=0.25)
+    with pytest.raises(ValueError, match=(
+            r"lie at one point .* so nugget=0\.25 correlates them at 0\.8 -- drawable, but "
+            r"a structure along the column .*ledger 452")) as caught:
+        _build(cal, "nug")
+    assert "singular" not in str(caught.value)
+
+
 def test_a_columns_records_on_dis_are_correlated_within_each_layer(stacked, tmp_path):
     """On DIS pyEMU splits a set whose records share a point by their LAYER: each layer's
     records are correlated with each other and not across layers. Let through."""

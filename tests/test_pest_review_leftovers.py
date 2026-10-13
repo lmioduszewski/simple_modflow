@@ -81,10 +81,22 @@ def test_the_review_reports_and_warns_when_most_realizations_were_dropped():
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        # 9 of 12 ran: more than half, so the prior's table says so quietly.
-        assert few.parameters_at_bounds(which="prior").loc["g", "n_reals"] == 9
         enough = _review_stub(prior_rows=12, posterior_rows=6, prior_ran=12)
         assert enough.sensitivity().loc["g", "n_reals"] == 6
+
+
+def test_a_prior_table_rests_on_every_realization_drawn():
+    """The prior PARAMETER ensemble keeps a realization whose run failed, so a prior
+    table averages all of them: ``n_reals`` is every one drawn, and nothing warns
+    however few ran -- it read the 3 that ran here and warned the means rested on 3
+    (review of ledger 575)."""
+
+    few = _review_stub(prior_rows=12, posterior_rows=5, prior_ran=3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        table = few.parameters_at_bounds(which="prior")
+    assert table.loc["g", ["n_reals", "n_reals_drawn"]].tolist() == [12, 12]
+    assert table.loc["g", "n_parameters"] == 1
 
 
 @needs_pestpp
@@ -122,7 +134,8 @@ def test_pestpp_drops_failed_realizations_from_the_ensembles_the_review_counts(
         table = review.sensitivity()
         prior = review.parameters_at_bounds(which="prior")
     assert set(table["n_reals"]) == {kept} and set(table["n_reals_drawn"]) == {drawn}
-    assert set(prior["n_reals"]) == {ran}
+    # The prior table averages every realization drawn, a failed run's included.
+    assert set(prior["n_reals"]) == {drawn}
 
 
 # -- a write-back refuses a scale or offset ----------------------------------------------

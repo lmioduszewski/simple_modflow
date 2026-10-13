@@ -3119,7 +3119,11 @@ def _refuse_records_pyemu_cannot_correlate(spec: NativeParameterSpec, modelgrid,
       cellid share one parameter, pyEMU's rule, so they are one point, not two):
       their correlation is 1, the covariance is singular, and pyEMU's draw at :meth:`PestProject.run_ies`/:meth:`PestProject.prior`
       died with ``LinAlgError: Matrix is not positive definite`` (measured on DISV and
-      DISU);
+      DISU). A ``nugget`` makes it drawable -- measured from ``1e-10`` up -- but
+      correlates the records of one column at ``1 / (1 + nugget)``, a vertical
+      structure the map-plane variogram never described, so this is refused WHATEVER
+      the nugget, as :func:`_refuse_a_singular_grid_prior` refuses a DISU array
+      (ledger 452; review of ledger 570);
     * a split that leaves every record a group of its own -- every reach of a
       ``sfr.rhk`` set on DISV: the prior came out uncorrelated, off-diagonal within
       0.03 of 0 against 0.66-0.83 without the shared cell (measured, ledger 558).
@@ -3165,14 +3169,22 @@ def _refuse_records_pyemu_cannot_correlate(spec: NativeParameterSpec, modelgrid,
         first = stacked.iloc[0]
         together = list(stacked.loc[(stacked["x"] == first["x"]) & (stacked["y"] == first["y"])
                                     & (stacked["group"] == first["group"]), "label"])
+        why = (
+            "so their correlation is 1, the prior covariance is singular, and pyEMU's "
+            "prior draw at run_ies()/prior() fails with 'Matrix is not positive definite' "
+            "(measured)"
+            if float(spec.nugget) == 0.0 else
+            f"so nugget={float(spec.nugget):g} correlates them at "
+            f"{1.0 / (1.0 + float(spec.nugget)):.3g} -- drawable, but a structure along the "
+            "column that the map-plane variogram never described, refused whatever the "
+            "nugget as a DISU array's stacked nodes are (ledger 452)"
+        )
         raise ValueError(
             f"correlation= on {canonical!r} with style='grid': {plural} {together} "
             f"(zero-based) lie at one point -- one model column"
             + (", one layer" if split else "")
             + f" -- in one covariance group ({len(stacked)} selected {plural} share a point "
-            "with another), so their correlation is 1, the prior covariance is singular, and "
-            "pyEMU's prior draw at run_ies()/prior() fails with 'Matrix is not positive "
-            f"definite' (measured). {advice} (ledger 570)."
+            f"with another), {why}. {advice} (ledger 570)."
         )
     if split and frame["group"].is_unique:
         shared = frame[frame.duplicated(["x", "y"], keep=False)]
