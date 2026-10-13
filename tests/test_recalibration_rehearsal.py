@@ -18,7 +18,8 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
 - the whole notebook, run once: the user's pass criteria (Q9) on its
   ``rehearsal_report`` -- the round trips, the equilibrium, phi and crisp's log gap
   asserted, the two posterior-coverage criteria held as a non-strict xfail until the user
-  decides (ledger 589: not met at any ensemble size measured).
+  decides (ledger 589: not met at any ensemble size measured; ledger
+  590: the ensemble has not converged).
 """
 
 from __future__ import annotations
@@ -135,10 +136,12 @@ def test_build_rehearsal_refuses(tmp_path, kwargs, match):
     ({"mode": "history", "years": 3}, "neither can act"),
     ({"noise_sd": -0.1}, ">= 0"),
 ])
-def test_synthetic_hydrographs_refuses_before_running_anything(case, kwargs, match):
+def test_synthetic_hydrographs_refuses_before_running_anything(case, kwargs, match, monkeypatch):
+    # The case is module-scoped, so whether its truth already ran depends on test order:
+    # make running it fail instead of reading case._runs.
+    monkeypatch.setattr(rehearsal, "_truth_heads", lambda *_: pytest.fail("a refusal ran a model"))
     with pytest.raises(ValueError, match=match):
         rehearsal.synthetic_hydrographs(case, **kwargs)
-    assert "truth" not in case._runs, "a refusal runs no model"
 
 
 # -- the data ---------------------------------------------------------------------------
@@ -237,9 +240,10 @@ def rehearsed(tmp_path_factory):
 MET = ("truth_round_trip", "write_back", "equilibrium", "phi_ratio", "crisp_gap_closed")
 #: The two it does not: the scalar truths inside their posterior 5-95% bands, and the
 #: forecast's truth inside the posterior's range. Measured at 16x2 to 48x3 over three
-#: seeds, three to five of the six scalar truths fall outside -- the heads' noise counted
-#: twice, levels and differences() both at full weight -- and the forecast range misses
-#: on some seeds: ledger 589, pending the user's decision.
+#: seeds, one to six of the six scalar truths fall outside and the forecast range misses
+#: on some seeds -- an ensemble that has not converged at this budget: the realization
+#: IES ends on fits the noisy data 1.6-3x worse than the truth's multipliers do (ledger
+#: 589, ledger 590), pending the user's decision.
 UNDECIDED = ("scalars_inside", "forecast_covered")
 
 
@@ -255,9 +259,9 @@ def test_rehearsal_notebook_recovers_the_truth(rehearsed):
 @pytest.mark.slow
 @NEEDS_PEST
 @pytest.mark.xfail(strict=False, reason=(
-    "the posterior 5-95% bands miss 3-5 of 6 scalar truths (levels and differences() both at "
-    "full weight) and the forecast range misses on some seeds -- ledger 589, "
-    "the user's decision"))
+    "an unconverged ensemble at 16x2: the posterior 5-95% bands miss 5-6 of 6 scalar truths "
+    "and the forecast range misses on some seeds -- ledger 590, the user's "
+    "decision"))
 def test_rehearsal_posterior_covers_the_truth(rehearsed):
     failed = sorted(name for name in UNDECIDED if not rehearsed["passes"][name])
     assert failed == [], {"scalars": rehearsed["scalars"],

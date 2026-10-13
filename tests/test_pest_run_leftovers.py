@@ -3,7 +3,9 @@
 The leftovers of the PEST-preparation run lanes:
 
 * ``noise=True`` set nothing, so an earlier ``noise=False`` stayed on ``cal.pst`` and the
-  next run went without noise (ledger 572);
+  next run went without noise (ledger 572) -- and a removed option is no noise either:
+  PESTPP-IES 5.2.16 given none draws none, so ``noise=True`` writes ``ies_no_noise
+  false`` (ledger 590);
 * the correlated prior myflopy draws into ``ies_par_en`` came from numpy's global
   generator with no seed, so no run could be drawn again (ledger 573);
 * a parallel run given ``master_dir=`` outside the default place was not found by
@@ -95,11 +97,23 @@ def test_noise_true_clears_an_earlier_noise_false(plain, monkeypatch):
     assert cal.pst.pestpp_options["ies_no_noise"] is True
     assert "ies_no_noise" in written.read_text()
     cal.run_ies(reals=3, iterations=1)
-    assert "ies_no_noise" not in cal.pst.pestpp_options
-    assert "ies_no_noise" not in written.read_text()
+    # WRITTEN false, not left out: PESTPP-IES 5.2.16 given no noise option draws none
+    # (ledger 590).
+    assert cal.pst.pestpp_options["ies_no_noise"] is False
+    assert _written_option(written, "ies_no_noise") == "false"
     cal.prior(reals=3, noise=False)
+    assert _written_option(written, "ies_no_noise") == "true"
     cal.prior(reals=3)
-    assert "ies_no_noise" not in written.read_text()
+    assert _written_option(written, "ies_no_noise") == "false"
+
+
+def _written_option(pst_file, name):
+    """The value a control file writes for PEST++ option ``name``, lower-cased."""
+
+    lines = [line.split() for line in pst_file.read_text().splitlines()]
+    values = [parts[1].lower() for parts in lines if len(parts) == 2 and parts[0] == name]
+    assert len(values) == 1, values
+    return values[0]
 
 
 def test_ies_no_noise_by_hand_is_refused_naming_noise(plain, monkeypatch):
@@ -156,11 +170,11 @@ def test_draw_prior_takes_a_seed_and_none_follows_numpys_generator(correlated):
         cal.draw_prior(5, seed=-1)
 
 
-def test_a_seed_where_nothing_is_drawn_is_refused_naming_ies_random_seed(
+def test_a_seed_where_nothing_is_drawn_is_refused_naming_random_seed(
         plain, correlated, monkeypatch):
     _stub_pestpp(monkeypatch, plain)
     with pytest.raises(ValueError, match=r"no grid or array pilotpoints parameter carries "
-                                         r"correlation=.*ies_random_seed=4"):
+                                         r"correlation=.*pass random_seed=4"):
         plain.run_ies(reals=3, seed=4)
     _stub_pestpp(monkeypatch, correlated)
     with pytest.raises(ValueError, match=r"ies_par_en is passed"):

@@ -913,7 +913,8 @@ when you give one (`cal.run_ies(seed=17)`, `cal.prior(seed=17)`, `cal.draw_prior
 seed=17)`), else from a seed taken from numpy's global generator; either way the seed is
 recorded with the launch, so the same prior can be drawn again (ledger
 573). `seed=` on a call that draws nothing is refused: PESTPP-IES then
-draws the prior itself, from its `ies_random_seed=` option. Pass
+draws the prior itself, from its `random_seed=` option (PESTPP-IES 5.2.16 refuses
+an `ies_random_seed` line; ledger 590). Pass
 `ies_restart_obs_en=` (a prior Monte Carlo's simulated values, which PESTPP-IES then
 does not rerun) together with the `ies_par_en` that produced them, for example
 `cal.run_ies(ies_par_en=prior_dir / "cal.0.par.csv", ies_restart_obs_en=prior_dir / "cal.0.obs.csv")`.
@@ -921,10 +922,15 @@ A restart ensemble set without one, while a prior would be drawn, is refused: it
 would pair every realization's observations with other parameters. The option
 persists on `cal.pst`, so `del cal.pst.pestpp_options["ies_restart_obs_en"]` drops it.
 
-**`noise=` is set by every call** (ledger 572). `noise=False` sets
-`ies_no_noise`, and `noise=True` -- the default -- removes it: an earlier `noise=False`
-no longer rides into the next run. Passing `ies_no_noise=` by hand is refused, naming
-`noise=`.
+**`noise=` is set by every call** (ledger 572). `noise=False` writes
+`ies_no_noise true`, and `noise=True` -- the default -- writes `ies_no_noise false`: an
+earlier `noise=False` no longer rides into the next run, and the default run DRAWS noise.
+Writing `false` is what draws it: PESTPP-IES 5.2.16 given no noise option resets
+`ies_no_noise` to true and fits every realization to the same data, which left every
+default run without noise until ledger 590 -- its posterior bands too
+narrow (on the rehearsal, scalar truths up to 9 posterior standard deviations outside). A run
+made then reviews with `ies.noise` `None`. Passing `ies_no_noise=` by hand is refused,
+naming `noise=`.
 
 **Every launch is recorded** (ledger 574). `run_ies`, `prior` and
 `resume_ies` append a record to the template's `myflopy_pest_metadata.json` under

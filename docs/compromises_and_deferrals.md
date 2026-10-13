@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 589 entries (594 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 590 entries (595 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 590 | `run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` --... | 2026-10-12 |
 | 589 | The recalibration rehearsal is the PEST preparation's acceptance test: a Ten Trails-shaped truth, declared... | 2026-10-12 |
 | 588 | A parallel run's master and workers are copies of the template as the BUILD left it | 2026-10-12 |
 | 587 | No `NaN` layer elevation reaches a DISV at a cell with `idomain != 0` | 2026-10-12 |
@@ -21687,8 +21688,10 @@ same day, which is the useful part of the result.
 
 572. **`noise=` is set or cleared by every `run_ies()`/`prior()`, and `ies_no_noise` by hand is refused (2026-10-12).**
       `noise=True` set nothing, so an earlier `noise=False` persisted on `cal.pst` and a
-      later default run went without measurement noise. **Chosen:** `noise=True` removes
-      `ies_no_noise`, as `overdue_giveup_fac` is set by every call (ledger 510);
+      later default run went without measurement noise. **Chosen:** ~~`noise=True` removes
+      `ies_no_noise`~~ `noise=True` WRITES `ies_no_noise false` -- PESTPP-IES 5.2.16 given no
+      noise option draws none, so removing it left every default run noise-free (ledger
+      590) -- as `overdue_giveup_fac` is set by every call (ledger 510);
       `ies_no_noise` in `**pestpp_options` raises `ValueError` naming `noise=` -- one
       spelling. **Behaviour change:** a `cal.pst.pestpp_options["ies_no_noise"]` set by
       hand is cleared by the next default call.
@@ -21702,7 +21705,8 @@ same day, which is the useful part of the result.
       recorded either way (`executions[-1]["prior_seed"]`, ledger 574);
       the realizations for a given global seed differ from before. **Refused:** `seed=`
       when the call draws nothing (no correlated `grid`/array `pilotpoints` parameter, or
-      `ies_par_en` passed), naming `ies_random_seed=` -- PESTPP-IES then draws the prior
+      `ies_par_en` passed), naming ~~`ies_random_seed=`~~ `random_seed=` -- PESTPP-IES 5.2.16
+      refuses an `ies_random_seed` line (ledger 590) -- PESTPP-IES then draws the prior
       itself from its own fixed-default seed, which also draws its noise ensemble; `seed=`
       does not set it.
 
@@ -21957,14 +21961,38 @@ same day, which is the useful part of the result.
       (4.6-6.7 min); the misses are not band edges but an over-confident posterior
       (32x3, seed 2: north bed leakance [1.58, 2.71] for a truth of 0.5, crisp
       [3.63, 3.86] for 3.0, z -7.7 and -9.4); and the forecast's truth inside the
-      posterior range -- 2 of 3 seeds at 16x2, 1 of 3 at 32x3, 3 of 3 at 48x3. **The
+      posterior range -- 2 of 3 seeds at 16x2, 1 of 3 at 32x3, 3 of 3 at 48x3. ~~**The
       over-confidence is the differences**: observing the levels AND `differences()` at
       the source weight (Q5) counts each head's noise twice, and PESTPP-IES draws the
-      two sets' noise independently. The same 32x3 run without `differences()` puts 6,
-      5 and 5 of 6 truths inside (|z| <= 1.8 bar one rch_dry at 3.6, bands 3-10x wider)
-      -- while its forecast range missed the truth on all 3 seeds, 0.01-0.11 ft low.
-      Even an exact posterior would put all six inside their 90% bands only about half the
-      time (0.9^6). The notebook keeps the user's declaration and knobs (differences,
+      two sets' noise independently.~~ **Those runs drew NO noise** -- `run_ies`'s default
+      left PESTPP-IES's noise off (ledger 590) -- **and the over-confidence
+      is an ensemble that has not converged**, not the differences: halving both head
+      weights (32x3, seed 2) left the same three truths outside at z -6.4/-8.3/-4.3, and
+      with noise drawn every 16x2 and 32x3 run measured ends at a posterior base whose
+      phi on the noisy data is 1.6-3.0x the phi of the TRUTH's multipliers on the same
+      data (503-1049 against 310-386). The same 32x3 run without `differences()` puts 6,
+      5 and 5 of 6 truths inside (|z| <= 1.8 bar one rch_dry at 3.6, bands 3-10x wider;
+      no noise drawn) -- while its forecast range missed the truth on all 3 seeds,
+      0.01-0.11 ft low. Even an exact posterior would put all six inside their 90% bands
+      only about half the time (0.9^6). The notebook keeps the user's declaration and knobs (differences,
       16x2); its report computes every criterion, `test_rehearsal_notebook_recovers_the_truth`
       asserts the met ones, and `test_rehearsal_posterior_covers_the_truth` holds the other
       two as a non-strict xfail until decided.
+
+590. **`run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` -- and `seed=`'s refusal names `random_seed` (2026-10-12).**
+      Found by the review of the recalibration rehearsal (ledger 589).
+      PESTPP-IES 5.2.16 given NO noise option resets `ies_no_noise` to true and writes an
+      `obs+noise` ensemble equal to the data in every realization, so ledger 572's
+      "`noise=True` removes `ies_no_noise`" made every default run noise-free
+      (`docs/reproducers/ies_noise_and_seed_options.py`: sd 0.000 absent, 0.46-0.51 for a
+      weight of 2 written `false`). **Chosen:** the option is WRITTEN either way;
+      `IesResults.noise` (and `settings.has_noise`) is `None` for a run whose `obs+noise`
+      file holds no spread, so a run made before reviews as what it was. In the same
+      pass: `seed=` refused on a call that draws nothing told the caller to pass
+      `ies_random_seed=`, which PESTPP-IES 5.2.16 REJECTS (a control-file parsing error);
+      it names `random_seed=`. **Not changed, the user's decision:** the rehearsal's
+      notebook calibrates at 16 realizations x 2 iterations with `ies_lambda_mults=1.0`,
+      `lambda_scale_fac=1.0`; with noise drawn, the posterior base still ends at 1.6-3.0x
+      the truth's phi on the same data and 5-6 of 6 scalar truths outside their bands
+      at 16x2 (3 at 32x3) -- an unconverged ensemble, so Q9's coverage criteria stay a
+      non-strict xfail. `rehearsal_recovery_budget.py` now prints both phis.

@@ -874,7 +874,11 @@ class IesResults:
         """The observation+noise ensemble, or ``None`` if the run used no noise.
 
         ``None`` whenever the run's control file sets ``ies_no_noise``, whatever an
-        earlier run left in the directory (ledger 507); else
+        earlier run left in the directory (ledger 507), and whenever the file holds
+        no noise -- every observation the same in every realization. PESTPP-IES
+        5.2.16 given no noise option draws none and still writes the file, which
+        every ``run_ies()``/``prior()`` at the default ``noise=True`` did until
+        ledger 590 (they left the option out). Else
         ``<case>.obs+noise.csv`` or ``.jcb``.
         """
 
@@ -883,7 +887,11 @@ class IesResults:
         path = self._ensemble_file(f"{self.case}.obs+noise")
         if path is None:
             return None
-        return self._read_ensemble("obs", path)
+        ensemble = self._read_ensemble("obs", path)
+        values = ensemble._df.to_numpy(dtype=float)
+        if len(values) > 1 and np.all(values == values[:1]):
+            return None
+        return ensemble
 
     @cached_property
     def phi(self) -> pd.DataFrame:

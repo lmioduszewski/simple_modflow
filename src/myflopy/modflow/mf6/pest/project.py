@@ -3078,11 +3078,14 @@ class PestProject:
             earlier run's outputs from the template first (above).
         noise : bool, optional
             Whether to carry measurement noise into the posterior (recommended,
-            the default ``True``, which REMOVES ``ies_no_noise`` from
-            ``cal.pst.pestpp_options`` -- an earlier ``noise=False`` included). ``False``
-            sets ``ies_no_noise``. Passing ``ies_no_noise`` in ``**pestpp_options``
-            instead raises ``ValueError`` naming ``noise=`` (ledger
-            572).
+            the default ``True``, which writes ``ies_no_noise false`` onto
+            ``cal.pst.pestpp_options`` -- replacing an earlier ``noise=False``'s
+            ``true``): PESTPP-IES then draws each realization's noise from the
+            observation weights (standard deviation ``1 / weight``). The option is
+            WRITTEN, not left out, because PESTPP-IES 5.2.16 given no noise option
+            draws no noise (ledger 590). ``False`` writes
+            ``ies_no_noise true``. Passing ``ies_no_noise`` in ``**pestpp_options``
+            instead raises ``ValueError`` naming ``noise=`` (ledger 572).
         bad_phi_sigma : float or None, optional
             Adaptive rejection threshold (``ies_bad_phi_sigma``);
             values of 1.5 (aggressive) to 2.5 (tolerant) help highly nonlinear
@@ -3149,8 +3152,9 @@ class PestProject:
             this call draws nothing -- no ``grid``/array ``pilotpoints`` parameter
             carries ``correlation=``, or ``ies_par_en`` is passed -- it raises
             ``ValueError``: PESTPP-IES then draws the prior itself, from its own
-            ``ies_random_seed`` (a fixed default; pass ``ies_random_seed=`` to
-            change it). PESTPP-IES's noise draw always uses ``ies_random_seed``.
+            ``random_seed`` (a fixed default; pass ``random_seed=`` to change it --
+            PESTPP-IES 5.2.16 REJECTS ``ies_random_seed``, ledger 590).
+            PESTPP-IES's noise draw always uses ``random_seed``.
         **pestpp_options
             Any additional ``pst.pestpp_options`` to set (e.g.
             ``ies_localizer="loc.mat"``), passed straight through and applied
@@ -3268,9 +3272,10 @@ class PestProject:
             results in ``master_dir``.
         noise : bool, optional
             Generate the measurement-noise ensemble too (default ``True``, which
-            removes ``ies_no_noise`` -- an earlier ``noise=False`` included). ``False``
-            sets ``ies_no_noise``. As :meth:`run_ies`'s ``noise`` (ledger
-            572).
+            writes ``ies_no_noise false`` -- replacing an earlier ``noise=False``'s
+            ``true``; PESTPP-IES 5.2.16 given no noise option draws none, ledger
+            590). ``False`` writes ``ies_no_noise true``. As
+            :meth:`run_ies`'s ``noise`` (ledger 572).
         master_dir : str or pathlib.Path or None, optional
             Master directory for a parallel run. ``None`` (default) uses
             ``<name>_prior_master`` beside the template workspace, which is where
@@ -4100,7 +4105,7 @@ class PestProject:
             raise ValueError(
                 f"{method}(seed={seed}) seeds the correlated prior myflopy draws, and this "
                 f"call draws none: {why}. PESTPP-IES draws the prior itself then, from its "
-                f"ies_random_seed -- pass ies_random_seed={seed} to set that -- or drop "
+                f"random_seed option -- pass random_seed={seed} to set that -- or drop "
                 "seed= (ledger 573)."
             )
         self._refuse_a_live_run(self.template_workspace, "template", method=method, instead="",
@@ -4121,12 +4126,12 @@ class PestProject:
         with self._recording_run_files():
             case = f"{self.name}.pst"
             self.pst.pestpp_options["ies_num_reals"] = int(reals)
-            # Set or removed by every call, as overdue_giveup_fac is: an earlier
-            # `noise=False` persisted under a later `noise=True` (ledger 572).
-            if noise:
-                self.pst.pestpp_options.pop("ies_no_noise", None)
-            else:
-                self.pst.pestpp_options["ies_no_noise"] = True
+            # Set by every call, as overdue_giveup_fac is: an earlier `noise=False`
+            # persisted under a later `noise=True` (ledger 572). WRITTEN either way:
+            # PESTPP-IES 5.2.16 given no noise option resets `ies_no_noise` to TRUE and
+            # draws no noise at all, so removing the option left every default run
+            # noise-free (ledger 590).
+            self.pst.pestpp_options["ies_no_noise"] = not noise
             if bad_phi_sigma is not None:
                 self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
             if overdue_giveup_fac is None:

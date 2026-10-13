@@ -141,6 +141,24 @@ def test_a_run_without_noise_has_none_whatever_an_earlier_run_left(tmp_path):
     assert IesResults(tmp_path, case_name="cal").noise is None
 
 
+def test_a_noise_ensemble_holding_no_noise_is_none(tmp_path):
+    """PESTPP-IES 5.2.16 given no noise option draws none and still writes the file --
+    every default run before ledger 590; one that varies is noise."""
+
+    _control_file(tmp_path, "cal")
+    _obs(tmp_path, "cal", 0, 1.0)
+    _phi(tmp_path, "cal", [0])
+    flat = pd.DataFrame({name: [1.0, 1.0, 1.0] for name in OBS}, index=["0", "1", "base"])
+    flat.to_csv(tmp_path / "cal.obs+noise.csv")
+    assert IesResults(tmp_path, case_name="cal").noise is None
+    assert IesResults(tmp_path, case_name="cal").settings.has_noise is False
+
+    noisy = flat.copy()
+    noisy.iloc[0, 0] = 1.2
+    noisy.to_csv(tmp_path / "cal.obs+noise.csv")
+    assert IesResults(tmp_path, case_name="cal").noise is not None
+
+
 def test_the_outputs_a_launch_clears_are_the_runs_and_nothing_else(tmp_path):
     names = [
         "cal.0.obs.csv", "cal.12.par.jcb", "cal.3.base.par", "cal.1.pcs.csv",
@@ -623,6 +641,15 @@ def test_reruns_in_one_template_review_their_own_iterations(toy, tmp_path):
 
     first = cal.run_ies(reals=3, iterations=2, **fast)
     assert first.iterations == [0, 1, 2]
+    # The default noise=True DRAWS noise: PESTPP-IES 5.2.16 given no noise option draws
+    # none (ledger 590), so the option is written.
+    assert cal.pst.pestpp_options["ies_no_noise"] is False
+    drawn = pd.read_csv(cal.template_workspace / "valley_pest.obs+noise.csv", index_col=0)
+    weighted = cal.pst.observation_data.index[cal.pst.observation_data["weight"] > 0]
+    assert len(weighted) > 0
+    assert (drawn[[name for name in drawn.columns if name.lower() in set(weighted)]]
+            .drop(index="base", errors="ignore").std() > 0).all()
+    assert first.noise is not None
     with pytest.warns(UserWarning, match=r"run_ies\(\) deleted \d+ output file"):
         second = cal.run_ies(reals=3, iterations=1, noise=False, ies_save_binary=True, **fast)
     assert second.iterations == [0, 1]
