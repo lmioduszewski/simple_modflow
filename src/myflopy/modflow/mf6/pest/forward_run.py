@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 #: The columns of a build's snapshot files that hold a target's NAME, or a label or
@@ -115,6 +114,7 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
 
     import json
 
+    import numpy as np
     import pandas as pd
 
     if isinstance(array_files, str):

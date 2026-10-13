@@ -399,3 +399,38 @@ def test_the_forward_run_weights_with_the_realizations_k(run, tmp_path):
         at_build_k = _by_hand(heads[per], K, 70.0, 20.0)
         assert written.loc[per, "W1"] == pytest.approx(expected, rel=1e-10)
         assert abs(expected - at_build_k) > 1e-3  # the build's K would read another head
+
+
+def test_a_screened_set_from_hydrographs_builds_and_its_forward_run_reads_it(tmp_path):
+    """Where three batches meet: a DATED screened set (``from_hydrographs``; the clock
+    check of ledgers 543 and 546, the period-end dates of 544) is built -- its K files found through
+    ``_dataset_files``, which grew a fourth field for an empty period block -- and its
+    map, a well named ``007`` on three rows, is read back as text (ledger 341's reader,
+    which ledger 550 widened) by the forward run, which writes the base run's heads.
+    """
+
+    workspace = _write_run(tmp_path / "dated")
+    sim = flopy.mf6.MFSimulation.load(sim_ws=str(workspace), verbosity_level=0)
+    sim.tdis.start_date_time.set_data("2020-01-01")
+    sim.tdis.write()
+    model = mf.load_mf6_run(workspace)
+    locations = pd.DataFrame({"name": ["007"], "cell": [WELL_CELL],
+                              "screen_top": [70.0], "screen_bottom": [20.0]})
+    readings = pd.DataFrame({"date": ["2020-01-02", "2020-01-03"], "007": [85.0, 86.0]})
+    targets = mf.HeadTargets.from_hydrographs(locations, readings, model=model)
+    cal = model.pest("hy", workspace=tmp_path / "hy", start_datetime="2020-01-01")
+    cal.observe(targets)
+    cal.parameterize("k", layers=[2], bounds=(0.1, 20.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        pst = cal.build("hy.pst", noptmax=0)
+    expected = [_by_hand(_heads(workspace)[per], K, 70.0, 20.0) for per in (0, 1)]
+    measured = pst.observation_data.loc[pst.observation_data["weight"] > 0]
+    assert measured["obsval"].tolist() == [85.0, 86.0]
+    base = pd.read_csv(cal.template_workspace / "hds_simulated_heads.csv", dtype={"007": float})
+    assert list(base.columns) == ["per", "007"]
+    assert base["007"].tolist() == pytest.approx(expected)
+    worker = _forward_run(cal, pst, tmp_path / "worker", {})
+    written = pd.read_csv(worker / "hds_simulated_heads.csv", dtype={"007": float})
+    assert list(written.columns) == ["per", "007"]
+    assert written["007"].tolist() == pytest.approx(expected, rel=1e-10)

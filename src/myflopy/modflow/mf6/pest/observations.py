@@ -750,7 +750,9 @@ def screen_k_sources(project, *, absolute: bool = False) -> list[dict]:
     storage = npf.k._get_storage_obj()
     elements = list(storage.layer_storage.elements()) if getattr(storage, "layered", False) else []
     sources: list[dict] = []
-    for _period, layer, filename in _dataset_files(npf.k):
+    # ``empty`` marks an empty PERIOD block, which a griddata array like NPF k
+    # never has.
+    for _period, layer, filename, _empty in _dataset_files(npf.k):
         layer = 0 if layer is None and nlay == 1 else layer
         element = elements[layer] if layer is not None and layer < len(elements) else None
         if layer is None:
