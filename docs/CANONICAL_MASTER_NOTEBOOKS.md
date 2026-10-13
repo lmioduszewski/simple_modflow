@@ -29,12 +29,16 @@ next topic.
 6. `canonical_05_pest_calibration_setup.ipynb`: the modern PEST setup in detail —
    `parameterize` / `observe` / `forecast` / `build` over the canonical model.
 7. `canonical_06_pest_ies_uncertainty.ipynb`: ensemble uncertainty + the per-cycle
-- `canonical_07_transport_and_prt.ipynb` — solute transport on the canonical model: the GWT sibling, the concentration reader and transport budget, PRT particle tracking from the contaminant source, and a PEST calibration whose observations are **concentrations** (it recovers K from plume shape and timing, which heads alone cannot pin down).
    IES diagnostics (prior Monte Carlo, prior-data conflict, phi distribution &
    contributions, parameters at bounds, forecast uncertainty) and the spatial
    review layer — parameter-field maps, the uncertainty-reduction map, the
    prior-vs-posterior mosaic and the observation residual map -- then takes the
    calibrated base realization home (`ies.calibrated()`, ledger 560).
+8. `canonical_07_transport_and_prt.ipynb`: solute transport on the canonical model: the
+   GWT sibling, the concentration reader and transport budget, PRT particle tracking
+   from the contaminant source, and a PEST calibration whose observations are
+   **concentrations** (it recovers K from plume shape and timing, which heads alone
+   cannot pin down).
 9. `canonical_08_recalibration_rehearsal.ipynb`: the dress rehearsal of the Ten Trails
    recalibration and the acceptance test of the PEST preparation (ledger
    589). Not the four-layer canonical model: the canonical valley's 21x21

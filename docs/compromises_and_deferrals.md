@@ -21950,8 +21950,10 @@ same day, which is the useful part of the result.
         every year's readings of that month, so the binned target is truth + that draw
         exactly; an odd count of readings offset symmetrically about it.
       - A flux target (crisp's baseflow, MF6 sign) is in the declaration because heads alone
-        cannot separate K from recharge (the design pass measured recharge at 0.534 for a
-        truth of 1.0 without one). The per-cell K field is not a criterion (Q9).
+        cannot separate K from recharge (the item-18 design pass measured recharge at 0.534
+        for a truth of 1.0 without one -- heads only, on the 4-layer canonical testing
+        profile at 12x2 and 24x3 IES, before ledger 590's noise fix; the rehearsal did not
+        re-measure it). The per-cell K field is not a criterion (Q9).
       **Measured** (`docs/reproducers/rehearsal_recovery_budget.py`, which executes the
       notebook; seeds 1-3, 6 workers, load average 11-21): the exact gates and phi pass at
       every size -- phi ratio 0.014-0.020 at 16x2, 0.007-0.010 at 32x3 and 48x3 (Q9:

@@ -2169,7 +2169,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   catches a parameter or observation routed to the wrong package, lake, month, layer or
   row before any IES; extend the rehearsal when a parameter or observation family is
   added. A flux target (crisp's baseflow) is mandatory: heads alone left recharge at
-  0.534 for a truth of 1.0.
+  0.534 for a truth of 1.0 -- measured by the item-18 design pass on the 4-layer
+  canonical testing profile (12x2 and 24x3 IES), before ledger 590's noise fix, not by
+  the rehearsal, which always carries the flux target.
 
 ### What's missing / next steps for PEST
 > Verify against the code before building — most of the old list is now done
