@@ -33,10 +33,14 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 567 entries (572 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 571 entries (576 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 571 | An `**extra` key the facade sets itself is refused, naming the argument that sets it | 2026-10-12 |
+| 570 | A correlated LIST `style="grid"` set is held to pyEMU's own covariance grouping, for every list target | 2026-10-12 |
+| 569 | `zones=` with `style="constant"` on a LIST target is refused | 2026-10-12 |
+| 568 | A `riv.stage` lower bound that would carry a record's river bottom below its CELL's bottom is refused at build | 2026-10-12 |
 | 567 | `model.targets.heads.differences()` is its set's `differences()`, and a target set's `kind=`/`inequality=`... | 2026-10-12 |
 | 566 | A reading of weight 0 is part of NO difference: left out of `kind="mean"`'s mean, and differenced ACROSS by... | 2026-10-12 |
 | 565 | Difference observations hand PEST each hydrograph's shape:... | 2026-10-12 |
@@ -20524,10 +20528,12 @@ same day, which is the useful part of the result.
       Measured on DISV, DIS and DISU: +1.5 moves both columns by 1.5, leaves cond, and
       MF6 terminates normally. A record whose stage is already below its bottom is
       refused at build (MF6 refuses it at any icelltype, and every realization would
-      carry it). **Not done:** an offset that lowers `rbot` below its CELL bottom is
+      carry it). ~~**Not done:** an offset that lowers `rbot` below its CELL bottom is
       not checked -- at icelltype != 0 MF6 fails that realization, at 0 it over-drains
       (ledger 290); keeping the bounds inside each record's clearance is left to the
-      caller, since the clearance differs per record and per layer.
+      caller, since the clearance differs per record and per layer.~~ **Restated by
+      ledger 568:** a lower bound past any record's clearance is refused
+      at build, naming the most negative safe one.
 
 520. **Every `parameterize` argument that cannot act is refused, and so is any style but the four (2026-10-12).**
       The user's rule (ledgers 332-334). Refused, naming the spelling that acts: a
@@ -21352,7 +21358,10 @@ same day, which is the useful part of the result.
       MF6 runs); ANY reach with cellid `NONE` -- one column short, pyEMU multiplied its
       Manning's n (C); `correlation=` on an rhk `"grid"` whose selected reaches share a
       model column -- pyEMU then gives every reach its own covariance group and the prior
-      is uncorrelated, within 0.03 of 0 against 0.62-0.82 without the shared cell (E) --
+      is uncorrelated, within 0.03 of 0 against 0.62-0.82 without the shared cell (E)
+      (on DISV; **restated by ledger 570**, which mirrors pyEMU's own
+      grouping for every list target: on DIS pyEMU splits by LAYER, so reaches of one
+      column in two layers are let through, and two in one cell and layer refused) --
       and on DISU, where pyEMU cannot look a two-column key up. Also refused: `zones=`
       but with `"zone"`, `features=` with `"zone"`, a tuple `package=` with `features=`
       or `"feature"`, two labels slugging alike, `"feature"` on an SFR with no
@@ -21378,10 +21387,11 @@ same day, which is the useful part of the result.
       makes EVERY label a parameter, 0 and -1 included (pyEMU's own zone path; the
       zone-0 warning already said so), `grid` only puts the label in each name, and
       `constant` ignores `zones=`; on DIS/DISV one label covers a whole column. It names
-      `package=` now, and `recharge`'s refusal says the same of a list RCH. **Not
+      `package=` now, and `recharge`'s refusal says the same of a list RCH. ~~**Not
       done:** `zones=` with `style="constant"` on a list target is still accepted and
       does nothing (pyEMU reads `zone_array` only for `zone`/`grid` list parameters);
-      refusing it is ledger 520's rule, left for the parameter lane.
+      refusing it is ledger 520's rule, left for the parameter lane.~~ **Done by ledger
+      569:** refused at `parameterize()`, naming `style="zone"`.
 
 560. **A calibrated realization comes back as library packages, rebuilt by replaying its own forward run (2026-10-12).**
       Item 14 and finding ies-9; the user's answer Q7. `ies.calibrated(realization="base",
@@ -21565,3 +21575,57 @@ same day, which is the useful part of the result.
       `_check_inequality` -- the one check, whose result all seven families now STORE --
       and `HeadDifferences` keep `str(value)`; refusing it would refuse a value read
       straight out of a numpy or pandas column.
+
+568. **A `riv.stage` lower bound that would carry a record's river bottom below its CELL's bottom is refused at build (2026-10-12).**
+      Ledger 519's "Not done". The offset moves `rbot` with the stage, so a lower bound
+      past a record's clearance put `rbot` inside the cell below: refused by MF6 at
+      `icelltype != 0`, over-draining at 0 (ledger 290). **Chosen:** refuse at build,
+      naming the count, the worst record (file row, zero-based cellid, rbot, cell bottom)
+      and the most negative safe lower bound, rounded toward zero; the floor is the cell
+      bottom plus `boundary_support.bottom_clearance` (ledger 290's exact-equality trap),
+      read from the staged DIS/DISV/DISU. Offsets on one file ADD in the forward run, so
+      the lower bounds of every `riv.stage` parameter already compiled onto it count.
+      **Not credited:** `physical=` (pyEMU clamps the stage, which would hold rbot up; the
+      arithmetic of several clamps on one file was not worth a looser check). **Not
+      checked:** a record whose rbot the run ALREADY holds at or below its floor -- no
+      offset puts it there, and the run that produced the base observations had it.
+      Tests: `tests/test_pest_parameter_refusals.py`.
+
+569. **`zones=` with `style="constant"` on a LIST target is refused (2026-10-12).**
+      Ledger 559's "Not done", ledger 520's rule: pyEMU reads `zone_array` only for a
+      `"zone"` or `"grid"` list parameter, so one number scaled every record and the
+      zones did nothing. Refused at `parameterize()`, naming `style="zone"`; for
+      `recharge`, whose form is its package's, once the form is known (at the call when
+      the model lists its packages, else at build). An ARRAY constant keeps `zones=`: it
+      masks the cells labelled `<= 0`.
+
+570. **A correlated LIST `style="grid"` set is held to pyEMU's own covariance grouping, for every list target (2026-10-12).**
+      Ledger 558 refused shared columns for `sfr.rhk` alone. Measured on a two-layer CHD
+      in both layers of three columns (`docs/reproducers/
+      correlated_list_grid_shared_points.py`): on DISV and DISU pyEMU keeps ONE covariance
+      group and its prior draw at `run_ies()`/`prior()` dies with `LinAlgError: Matrix is
+      not positive definite` after a clean build; on DIS it splits by the layer and
+      correlates each layer's records (0.44-0.74) and not across (-0.05 to 0.00).
+      **Chosen:** one helper, `native_parameters._refuse_records_pyemu_cannot_correlate`,
+      mirrors pyEMU's rule (split by the index column before the cell's, only when the key
+      has one) and refuses at build (a) two PARAMETERS at one point in one group, and (b) a
+      split that leaves every parameter a group of its own (rhk on DISV, ledger 558's
+      uncorrelated prior; a lone DIS column of one record per layer). **Judgment call:**
+      the DIS per-layer split is let through -- correlation within a layer is what a 2-D
+      variogram means there, and pyEMU's comment says it is intended. Records sharing a
+      whole cellid are ONE pyEMU parameter, so they are not two points (measured: two
+      drains in one DIS cell build). The rhk refusal now calls the helper; on DIS its
+      reaches in two layers of one column pass where they were refused.
+
+571. **An `**extra` key the facade sets itself is refused, naming the argument that sets it (2026-10-12).**
+      `extra` was applied last and overrode what the facade derived, which the docstring
+      advertised; `index_cols`/`use_rows` there failed only after the staging, and a
+      `pargp`/`par_type` there contradicted the `name=`/`style=` the build records. **Chosen (sole user, no
+      transition):** `par_type` (style=), `par_name_base`/`pargp` (name=),
+      `lower_bound`/`upper_bound` (bounds=), `transform`, `ult_lbound`/`ult_ubound`
+      (physical=), `par_style` (additive=), `zone_array` (zones=), `geostruct`
+      (correlation=), `index_cols`/`use_cols`/`use_rows` (the target, features=,
+      package=) raise `TypeError` at `parameterize()`. Keys the facade leaves alone
+      (`mfile_fmt`, `initial_value`, `apply_order`, ...) still pass. **Not refused:**
+      `initial_value`, which can start a parameter outside its bounds, past ledger 518's
+      check; it is no facade keyword, so it stays pyEMU's.

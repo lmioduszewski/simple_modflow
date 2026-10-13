@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.boundary_support import bottom_clearance
 from myflopy.modflow.mf6.hydraulics import declared_time_unit
 from myflopy.modflow.mf6.package_registry import (
     SeveralPackagesError,
@@ -1019,7 +1020,10 @@ class NativeParameterSpec:
         Zone labels for ``style="zone"`` (and to mask cells); with array-target
         ``style="pilotpoints"``, one pilot-point set per label ``> 0`` on each
         selected layer (ledger 527); see :meth:`PestProject.parameterize`.
-        Default ``None``.
+        Default ``None``. With ``style="constant"`` on a LIST target, which pyEMU
+        scales with one number whatever the labels, it raises ``ValueError`` naming
+        ``style="zone"`` -- here, or for ``recharge`` from :meth:`resolve_form` once
+        its package's form is known (ledger 569).
     layers : int or iterable of int or None, optional
         Zero-based layers an ARRAY target is restricted to, held as a tuple of
         ``int`` (:func:`checked_layers`, which refuses anything else). Default
@@ -1066,7 +1070,12 @@ class NativeParameterSpec:
     correlation : float or None, optional
         Variogram range (model length units) for ``style="grid"`` or
         ``"pilotpoints"``. Default ``None``. Given with ``"constant"``/``"zone"`` it
-        raises ``ValueError``: neither has anything to correlate.
+        raises ``ValueError``: neither has anything to correlate. On a LIST
+        ``"grid"`` whose parameters pyEMU places at one point in one covariance
+        group -- a column's records in two layers on DISV/DISU -- or then splits one
+        per group -- every reach of an ``sfr.rhk`` set on DISV, one record per layer
+        of a lone DIS column -- :meth:`PestProject.build` raises ``ValueError``
+        (ledger 570).
     anisotropy : float, optional
         Anisotropy ratio of the variogram (``1.0``, the default, is isotropic). Not
         ``1.0`` without ``correlation`` raises ``ValueError``.
@@ -1102,9 +1111,14 @@ class NativeParameterSpec:
         rows are lake connections and reaches, not one value per cell (deferred, ledger
         558).
     extra : dict, optional
-        Keyword arguments passed last to pyEMU's ``PstFrom.add_parameters``. Default
+        Keyword arguments passed to pyEMU's ``PstFrom.add_parameters``. Default
         empty. Not empty for array-target pilot points, which never call it, raises
-        ``ValueError``.
+        ``ValueError``. A key the facade sets itself (``_FACADE_KEYWORDS``:
+        ``par_type``, ``par_name_base``, ``pargp``, the bounds, ``transform``,
+        ``ult_lbound``/``ult_ubound``, ``par_style``, ``zone_array``, ``geostruct``,
+        ``index_cols``, ``use_cols``, ``use_rows``) raises ``TypeError`` naming the
+        argument that sets it (ledger 571), and so does a key
+        ``add_parameters`` does not take.
     resolved_files : list of str, optional
         Filled by :meth:`PestProject.build`: the template-relative files the
         parameter scales. Default empty.
@@ -1143,8 +1157,8 @@ class NativeParameterSpec:
         entry in its order: the PEST groups the build gave that group's parameters
         -- ``<name>_<label>``, or one per layer file of a ``"grid"`` array
         (``<name>_<label>l<layer>``) and one per pilot-point set
-        (``<name>_<label>[l<layer>][z<zone>]``), and whatever ``pargp=`` in
-        ``extra`` names instead.
+        (``<name>_<label>[l<layer>][z<zone>]``). ``pargp`` in ``extra`` is refused
+        (ledger 571), so these are the groups.
     """
 
     target: str
@@ -1251,7 +1265,11 @@ class NativeParameterSpec:
                 "records by it, 'constant' ignores it). Pick the package with package= "
                 "(ledger 559)."
             )
+        if recipe.family == "list" and declared.array_dataset is None:
+            # A target of two forms (`recharge`) is asked once its form is known.
+            self._refuse_zones_a_list_constant_ignores(recipe)
         self.periods = checked_periods(self.periods, declared)
+        _refuse_extra_keywords_the_facade_sets(self.extra)
         _refuse_extra_keywords_pyemu_does_not_take(self.extra)
         self._check_pilot_point_arguments()
         self._refuse_an_idle_variogram()
@@ -1297,6 +1315,27 @@ class NativeParameterSpec:
                 "558). Drop capture=; the parameter values are in the "
                 "ensembles."
             )
+
+    def _refuse_zones_a_list_constant_ignores(self, recipe: _Recipe) -> None:
+        """Refuse ``zones=`` on a LIST ``style="constant"`` parameter (ledger 569).
+
+        pyEMU reads ``zone_array`` only for a ``"zone"`` or ``"grid"`` list
+        parameter, so a constant one scaled every record with one number and the zones
+        did nothing (measured, ledger 559). A FEATURE target refuses it in
+        :meth:`_refuse_feature_arguments_that_cannot_act`.
+        """
+
+        if self.zones is None or self.style != "constant" or recipe.feature is not None:
+            return
+        raise ValueError(
+            f"zones= with style='constant' on list target {recipe.canonical!r}: pyEMU reads "
+            "zones= only for a 'zone' or 'grid' list parameter, so one "
+            + ("offset" if self.additive else "multiplier")
+            + " would scale every record of the package and zones= cannot act. Use "
+            "style='zone' -- one parameter per label, and on a list target every label, 0 "
+            "and negatives too, is one (ledger 559) -- or drop zones= (ledger "
+            "569)."
+        )
 
     def _refuse_an_idle_variogram(self) -> None:
         """Refuse a variogram argument the spec's style or other arguments leave idle."""
@@ -1446,10 +1485,13 @@ class NativeParameterSpec:
         ValueError
             When the packages mix the two forms, or ``style="pilotpoints"`` was given
             for a target whose package is the LIST form (pilot points interpolate onto
-            an array, ledger 520).
+            an array, ledger 520), or ``zones=`` with ``style="constant"`` for one
+            (pyEMU ignores it there, ledger 569).
         """
 
         recipe = recipe_for_packages(self.declared_recipe, packages)
+        if recipe.family == "list":
+            self._refuse_zones_a_list_constant_ignores(recipe)
         if self.style == "pilotpoints" and recipe.family == "list":
             raise ValueError(
                 f"style='pilotpoints' on {recipe.canonical!r}: package(s) "
@@ -1467,6 +1509,47 @@ class NativeParameterSpec:
         """Transform actually used (additive parameters cannot be log)."""
 
         return "none" if self.additive else self.transform
+
+
+#: The ``PstFrom.add_parameters`` keywords the facade sets itself, each with the
+#: :meth:`PestProject.parameterize` argument (or what else) that sets it. An
+#: ``**extra`` key among them is refused (ledger 571).
+_FACADE_KEYWORDS = {
+    "par_type": "style=",
+    "par_name_base": "name=",
+    "pargp": "name=",
+    "lower_bound": "bounds=",
+    "upper_bound": "bounds=",
+    "transform": "transform=",
+    "ult_lbound": "physical=",
+    "ult_ubound": "physical=",
+    "par_style": "additive=",
+    "zone_array": "zones=",
+    "geostruct": "correlation= (with anisotropy=, bearing=, nugget=)",
+    "index_cols": "the target: its recipe names the cellid columns on the model's grid",
+    "use_cols": "the target: one per column, e.g. 'riv.cond' or 'riv.stage'",
+    "use_rows": "features= on lak.bedleak/sfr.rhk, package= on any list target",
+}
+
+
+def _refuse_extra_keywords_the_facade_sets(extra: dict) -> None:
+    """Refuse an ``**extra`` key the facade itself hands ``PstFrom.add_parameters``.
+
+    They were applied last and overrode what the facade derived, so an ``index_cols``
+    or ``use_rows`` there failed only after the whole staging -- or, under
+    ``use_rows``, scaled rows the template check then refused -- and a ``pargp`` or
+    ``par_type`` moved what the build's metadata records out from under it (ledger
+    571). Each is named with the argument that sets it.
+    """
+
+    colliding = [key for key in extra if key in _FACADE_KEYWORDS]
+    if colliding:
+        raise TypeError(
+            "parameterize() sets "
+            + ", ".join(f"{key}= through {_FACADE_KEYWORDS[key]}" for key in colliding)
+            + " itself, so an extra keyword of that name would override it; give it there "
+            "(ledger 571)."
+        )
 
 
 def _refuse_extra_keywords_pyemu_does_not_take(extra: dict) -> None:
@@ -2170,11 +2253,11 @@ def refuse_storage_that_cannot_act(project, spec: NativeParameterSpec, model, pa
     Parameters
     ----------
     project : PestProject
-        The calibration being built; its model resolves ``zones=``.
+        The calibration being built.
     spec : NativeParameterSpec
         An ``sto.ss``/``sto.sy`` parameter.
     model : flopy.mf6.MFModel
-        The staged flow model.
+        The staged flow model; ``zones=`` is resolved on its grid.
     packages : list
         Its STO package (:func:`select_packages`).
     targets : list of TargetFile
@@ -2211,7 +2294,7 @@ def refuse_storage_that_cannot_act(project, spec: NativeParameterSpec, model, pa
     labels = None
     if spec.zones is not None:
         labels = np.asarray(
-            resolve_zone_array(spec.zones, family="array", model=project.model)).reshape(-1)
+            resolve_zone_array(spec.zones, family="array", model=model)).reshape(-1)
     covered = []
     for target in targets:
         cells = per_layer.reshape(-1) if target.layer is None else per_layer[target.layer]
@@ -2623,6 +2706,107 @@ def _refuse_a_river_stage_below_its_bottom(project, spec: NativeParameterSpec, g
             )
 
 
+def _cell_bottoms(model) -> np.ndarray:
+    """Every cell's bottom elevation on ``model``'s discretization, indexed by a cellid.
+
+    Read from the discretization package itself -- DIS ``botm`` ``(nlay, nrow, ncol)``,
+    DISV ``botm`` ``(nlay, ncpl)``, DISU ``bot`` ``(nodes,)`` -- so a ZERO-based FloPy
+    cellid indexes it as written: ``bottoms[(layer, cell)]``, ``bottoms[(node,)]``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The build's staged flow model (:func:`staged_model`).
+
+    Returns
+    -------
+    numpy.ndarray
+        The bottoms, float.
+
+    Raises
+    ------
+    ValueError
+        When the model holds no DIS, DISV or DISU package.
+    """
+
+    for package in model.packagelist:
+        kind = str(getattr(package, "package_type", "")).lower()
+        if kind in ("dis", "disv"):
+            return np.asarray(package.botm.array, dtype=float)
+        if kind == "disu":
+            return np.asarray(package.bot.array, dtype=float).reshape(-1)
+    raise ValueError(f"Model {model.name!r} holds no DIS, DISV or DISU package to read cell bottoms from.")
+
+
+def _refuse_a_river_bottom_lowered_through_its_cell(project, spec: NativeParameterSpec, model,
+                                                    grid_type: str) -> None:
+    """Refuse a ``riv.stage`` lower bound that carries a record's RBOT below its cell's bottom.
+
+    The offset moves each record's ``rbot`` with its stage (ledger 519), so a lower
+    bound below a record's clearance -- ``rbot`` minus its cell's bottom -- lowers that
+    ``rbot`` through the cell: at ``icelltype != 0`` MF6 refuses the realization by
+    name, at ``0`` it over-drains under Normal termination (ledger 290). The floor is
+    the cell bottom plus :func:`~myflopy.modflow.mf6.boundary_support.bottom_clearance`,
+    since FloPy's writing of the two numbers can round an exact equality below
+    (ledger 290). Offsets on one file ADD in the forward run, so the lower bounds of
+    every ``riv.stage`` parameter already compiled onto it count too. ``physical=``
+    is not credited. A record whose ``rbot`` the run already holds at or below its
+    floor is not this check's: no offset puts it there (ledger 568).
+    """
+
+    index_cols, _stage_col = list_columns(spec.recipe, grid_type)
+    _index, rbot_col = list_columns(spec.recipe, grid_type, field="rbot")
+    bottoms = _cell_bottoms(model)
+    # Emptied by each `PestProject.build`: the offsets one template's forward run adds.
+    floors = project.__dict__.setdefault("_river_offset_lower_bounds", {})
+    lower = float(spec.bounds[0])
+    offending = 0
+    worst = None
+    safest = -np.inf
+    for target in spec.resolved_targets:
+        rows = _read_list_file(Path(project.template_workspace) / target.filename)
+        cellids = rows[index_cols].astype(float).astype(int).to_numpy() - 1
+        bottom = bottoms[tuple(cellids.T)]
+        rbot = pd.to_numeric(rows[rbot_col]).to_numpy(dtype=float)
+        floor = bottom + bottom_clearance(bottom)
+        earlier = float(floors.get(target.filename, 0.0))
+        checked = rbot > floor
+        lowest = rbot + earlier + lower
+        below = checked & (lowest < floor)
+        if checked.any():
+            safest = max(safest, float(np.max((floor - rbot - earlier)[checked])))
+        offending += int(below.sum())
+        if below.any():
+            depth = (lowest - floor)[below]
+            row = int(np.flatnonzero(below)[np.argmin(depth)])
+            if worst is None or depth.min() < worst[0]:
+                worst = (float(depth.min()), target, row, tuple(int(value) for value in cellids[row]),
+                         float(rbot[row]), float(bottom[row]))
+    if offending:
+        _depth, target, row, cellid, rbot, bottom = worst
+        others = float(floors.get(target.filename, 0.0))
+        # Rounded TOWARD zero, so the bound named is safe as printed.
+        safe = np.ceil(safest * 1000.0) / 1000.0
+        stacked = (f" -- with the {others:g} the riv.stage parameters already on its "
+                   "file add" if others else "")
+        raise ValueError(
+            f"riv.stage {spec.name!r}: its lower bound {lower:g} carries the river bottom of "
+            f"{offending} record(s) below their cell's bottom{stacked} -- worst, row "
+            f"{row + 1} of {target.filename} (package {target.package!r}), cellid {cellid} "
+            f"(zero-based): rbot {rbot:g} over a cell bottom of {bottom:g}. The offset moves "
+            "each rbot with its stage, and an rbot below its cell is refused by MF6 at "
+            "icelltype != 0 and over-drains at 0 (ledger 290). "
+            + (f"The most negative lower bound that keeps every rbot inside its cell is "
+               f"{safe:g}: bounds=({safe:g}, {float(spec.bounds[1]):g})."
+               if safe < 0 else
+               "No negative lower bound keeps every rbot inside its cell: bounds=(0.0, "
+               f"{float(spec.bounds[1]):g}) only raises the river.")
+            + " (ledger 568)"
+        )
+    for target in spec.resolved_targets:
+        floors[target.filename] = float(floors.get(target.filename, 0.0)) + lower
+
+
 def _read_list_file(path: Path) -> pd.DataFrame:
     """An MF6 external list file as text columns (a boundname stays text)."""
 
@@ -2899,17 +3083,121 @@ def _feature_rows(project, spec: NativeParameterSpec, target: TargetFile, grid_t
     })
 
 
+def _record_points(modelgrid, keys: Sequence[tuple[int, ...]]) -> np.ndarray:
+    """Where pyEMU places each list record of a ``"grid"`` parameter: its cell's centre.
+
+    ``keys`` are the records' pyEMU index columns as the file writes them, ONE-based,
+    their cellid last -- pyEMU reads a record's ``(i, j)`` from its last two (DIS: row,
+    column), its cell from its last one (DISV) or its node (DISU, through
+    :func:`pyemu_spatial_reference`'s dict). Returns an ``(n, 2)`` array of x, y.
+    """
+
+    x = np.asarray(modelgrid.xcellcenters, dtype=float)
+    y = np.asarray(modelgrid.ycellcenters, dtype=float)
+    if modelgrid.grid_type == "structured":
+        rows = np.array([key[-2] - 1 for key in keys], dtype=int)
+        cols = np.array([key[-1] - 1 for key in keys], dtype=int)
+        return np.c_[x[rows, cols], y[rows, cols]]
+    cells = np.array([key[-1] - 1 for key in keys], dtype=int)
+    return np.c_[x.reshape(-1)[cells], y.reshape(-1)[cells]]
+
+
+def _refuse_records_pyemu_cannot_correlate(spec: NativeParameterSpec, modelgrid,
+                                          keys: Sequence[tuple[int, ...]], labels: Sequence,
+                                          *, plural: str, advice: str) -> None:
+    """Refuse ``correlation=`` on a LIST ``"grid"`` set whose records pyEMU cannot correlate.
+
+    pyEMU locates each record at its cell's centre (:func:`_record_points`) and draws
+    the prior from one covariance per covariance group. Where two records sit at one
+    point it splits the group by the index column before the cell's -- a DIS
+    cellid's layer, an SFR reach's number -- and only when it HAS one: a DISV or
+    DISU cellid has none. Mirrored here, two outcomes are refused at build (ledger
+    570; ledger 558 refused the second for ``sfr.rhk`` alone):
+
+    * two parameters at one point in ONE group -- a column's records in two layers
+      on DISV/DISU, or two reaches in one DIS cell and layer (records sharing a whole
+      cellid share one parameter, pyEMU's rule, so they are one point, not two):
+      their correlation is 1, the covariance is singular, and pyEMU's draw at :meth:`PestProject.run_ies`/:meth:`PestProject.prior`
+      died with ``LinAlgError: Matrix is not positive definite`` (measured on DISV and
+      DISU);
+    * a split that leaves every record a group of its own -- every reach of a
+      ``sfr.rhk`` set on DISV: the prior came out uncorrelated, off-diagonal within
+      0.03 of 0 against 0.66-0.83 without the shared cell (measured, ledger 558).
+
+    A DIS split into groups of several records each is let through: pyEMU correlates
+    the records of each LAYER and not across layers (measured: 0.44-0.74 within a
+    layer, -0.05 to 0.00 across; ``docs/reproducers/correlated_list_grid_shared_points.py``).
+
+    Parameters
+    ----------
+    spec : NativeParameterSpec
+        The parameter; nothing is asked unless its style is ``"grid"`` with
+        ``correlation=``.
+    modelgrid : flopy.discretization.Grid
+        The staged model's grid.
+    keys : sequence of tuple of int
+        One per PARAMETER, its pyEMU index columns as written in the file (one-based),
+        the cellid last.
+    labels : sequence
+        How each record is named in the refusal, in ``keys``' order.
+    plural : str
+        The records' noun, plural (``"records"``, ``"reaches"``).
+    advice : str
+        The spellings the refusal names.
+
+    Raises
+    ------
+    ValueError
+        In either case above.
+    """
+
+    if spec.style != "grid" or spec.correlation is None or len(keys) < 2:
+        return
+    points = _record_points(modelgrid, keys)
+    frame = pd.DataFrame({"x": points[:, 0], "y": points[:, 1], "label": list(labels)})
+    if not frame.duplicated(["x", "y"]).any():
+        return
+    split = len(keys[0]) > 2
+    frame["group"] = [key[-3] for key in keys] if split else 0
+    canonical = spec.recipe.canonical
+    stacked = frame[frame.duplicated(["group", "x", "y"], keep=False)]
+    if not stacked.empty:
+        first = stacked.iloc[0]
+        together = list(stacked.loc[(stacked["x"] == first["x"]) & (stacked["y"] == first["y"])
+                                    & (stacked["group"] == first["group"]), "label"])
+        raise ValueError(
+            f"correlation= on {canonical!r} with style='grid': {plural} {together} "
+            f"(zero-based) lie at one point -- one model column"
+            + (", one layer" if split else "")
+            + f" -- in one covariance group ({len(stacked)} selected {plural} share a point "
+            "with another), so their correlation is 1, the prior covariance is singular, and "
+            "pyEMU's prior draw at run_ies()/prior() fails with 'Matrix is not positive "
+            f"definite' (measured). {advice} (ledger 570)."
+        )
+    if split and frame["group"].is_unique:
+        shared = frame[frame.duplicated(["x", "y"], keep=False)]
+        first = shared.iloc[0]
+        together = list(shared.loc[(shared["x"] == first["x"]) & (shared["y"] == first["y"]),
+                                   "label"])
+        raise ValueError(
+            f"correlation= on {canonical!r} with style='grid': {plural} {together} "
+            f"(zero-based) lie in one model column ({len(shared)} selected {plural} share a "
+            "column with another), so pyEMU places them at one point and then draws EVERY "
+            "one's prior uncorrelated -- correlation= would not act (measured). "
+            f"{advice} (ledger 558, ledger 570)."
+        )
+
+
 def _refuse_an_uncorrelatable_reach_grid(spec: NativeParameterSpec, grid_type: str,
-                                         chosen: pd.DataFrame) -> None:
+                                         chosen: pd.DataFrame, modelgrid) -> None:
     """Refuse ``correlation=`` on ``sfr.rhk`` ``"grid"`` where pyEMU cannot correlate reaches.
 
-    pyEMU locates each reach at its cell's centre. Two selected reaches in one model
-    COLUMN sit at one point, and pyEMU then puts EVERY reach in a covariance group of
-    its own (``covgp`` ``<name>_cov<ifno>``): the prior draw came out uncorrelated --
-    off-diagonal correlations within 0.03 of 0 -- where the same reaches without the
-    shared cell drew 0.66-0.83 (measured; ledger 558). On DISU it cannot
-    locate a reach at all: a reach's key is two columns, and pyEMU looks a node up by
-    one.
+    On DISU pyEMU cannot locate a reach at all: a reach's key is two columns, and
+    pyEMU looks a node up by one. Elsewhere :func:`_refuse_records_pyemu_cannot_correlate`
+    asks what it asks of every list target: two selected reaches in one model COLUMN
+    sit at one point, and pyEMU then puts every reach on DISV in a covariance group of
+    its own (``covgp`` ``<name>_cov<ifno>``), drawing the prior uncorrelated (measured;
+    ledger 558).
     """
 
     if spec.style != "grid" or spec.correlation is None:
@@ -2921,18 +3209,11 @@ def _refuse_an_uncorrelatable_reach_grid(spec: NativeParameterSpec, grid_type: s
             "number and node, so it cannot be placed. Drop correlation=, or use "
             "style='feature'/'zone'/'constant'."
         )
-    shared = chosen[chosen.duplicated("column", keep=False)]
-    if shared.empty:
-        return
-    first = shared.iloc[0]["column"]
-    together = sorted(int(reach) for reach in shared.loc[shared["column"] == first, "feature"])
-    raise ValueError(
-        f"correlation= on {spec.recipe.canonical!r} with style='grid': reaches {together} "
-        f"(zero-based) lie in one model column ({len(shared)} selected reaches share a "
-        "column with another), so pyEMU places them at one point and then draws EVERY "
-        "reach's prior uncorrelated -- correlation= would not act (measured). Leave all "
-        "but one of each such set out with features=, drop correlation=, or use "
-        "style='feature' (one per named stream) or 'zone' (ledger 558)."
+    _refuse_records_pyemu_cannot_correlate(
+        spec, modelgrid, list(chosen["key"]), [int(reach) for reach in chosen["feature"]],
+        plural="reaches",
+        advice=("Leave all but one of each such set out with features=, drop correlation=, "
+                "or use style='feature' (one per named stream) or 'zone'"),
     )
 
 
@@ -3030,7 +3311,7 @@ def _add_feature_parameters(project, spec: NativeParameterSpec, targets: list[Ta
                         "multiply. Give those connections a bedleak, or leave their lakes "
                         "out with features= (ledger 558)."
                     )
-            _refuse_an_uncorrelatable_reach_grid(spec, grid_type, chosen)
+            _refuse_an_uncorrelatable_reach_grid(spec, grid_type, chosen, model.modelgrid)
             if chosen.empty:
                 raise ValueError(
                     f"{recipe.canonical!r}: the {plural} {list(feature_set.features)[:10]} of "
@@ -3065,6 +3346,31 @@ def _add_feature_parameters(project, spec: NativeParameterSpec, targets: list[Ta
     return pd.concat(frames, ignore_index=True)
 
 
+def _refuse_list_records_pyemu_cannot_correlate(project, spec: NativeParameterSpec, modelgrid,
+                                                targets: list[TargetFile],
+                                                index_cols: list[int]) -> None:
+    """:func:`_refuse_records_pyemu_cannot_correlate` on one ``add_parameters`` call's files.
+
+    pyEMU makes one ``"grid"`` parameter per distinct index key across the call's
+    files, so the keys are those, in the order the files hold them.
+    """
+
+    if spec.style != "grid" or spec.correlation is None:
+        return
+    keys: dict[tuple[int, ...], None] = {}
+    for target in targets:
+        rows = _read_list_file(Path(project.template_workspace) / target.filename)
+        for values in rows[index_cols].itertuples(index=False):
+            keys.setdefault(tuple(int(float(value)) for value in values), None)
+    ordered = list(keys)
+    _refuse_records_pyemu_cannot_correlate(
+        spec, modelgrid, ordered, [tuple(value - 1 for value in key) for key in ordered],
+        plural="records",
+        advice=("Drop correlation= (one uncorrelated parameter per record), or use "
+                "style='zone' or 'constant'"),
+    )
+
+
 def _record_pargps(pargps: list[str], frame) -> None:
     """Append the PEST groups of one ``add_parameters`` frame to a period group's list."""
 
@@ -3085,7 +3391,8 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     recipe = spec.recipe
     files = [target.filename for target in targets]
 
-    grid = flopy_model_for(project, recipe).modelgrid
+    staged = flopy_model_for(project, recipe)
+    grid = staged.modelgrid
     if recipe.family == "array":
         # Normalize MF6's wrapped array layout so pyEMU can read any cell count,
         # in the shape it reads on this grid (one grid row per line on DIS).
@@ -3098,6 +3405,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         _refuse_a_singular_grid_prior(spec, grid)
     if recipe.canonical == "riv.stage":
         _refuse_a_river_stage_below_its_bottom(project, spec, grid.grid_type)
+        _refuse_a_river_bottom_lowered_through_its_cell(project, spec, staged, grid.grid_type)
 
     kwargs: dict[str, Any] = {
         "par_type": spec.style,
@@ -3116,9 +3424,8 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         # Normalized per family: pyEMU wants per-cell for array targets and
         # (layer, cell) for list targets, and rejects the other with an error
         # that names neither the target nor the shape. See `pest/zones.py`.
-        kwargs["zone_array"] = resolve_zone_array(
-            spec.zones, family=recipe.family, model=project.model
-        )
+        # On the STAGED model's grid, like everything else the build reads (ledger 356).
+        kwargs["zone_array"] = resolve_zone_array(spec.zones, family=recipe.family, model=staged)
         spec.resolved_zone_labels = sorted(
             int(label) for label in np.unique(np.asarray(kwargs["zone_array"]))
         )
@@ -3159,6 +3466,9 @@ def add_native_parameter(project, spec: NativeParameterSpec):
                 frames.append(project.pf.add_parameters(target.filename, **layer_kwargs))
                 _record_pargps(pargps, frames[-1])
             continue
+        if recipe.family == "list":
+            _refuse_list_records_pyemu_cannot_correlate(project, spec, staged.modelgrid,
+                                                        group.targets, kwargs["index_cols"])
         group_kwargs = dict(kwargs)
         group_kwargs["par_name_base"] = name
         group_kwargs["pargp"] = name

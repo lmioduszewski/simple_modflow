@@ -349,11 +349,18 @@ or AUXILIARY on one only; ledger 559), and a call naming none raises
 offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bounds
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
 refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
-518, 519). An argument that cannot act -- `layers=` on a list
-target or on recharge, `correlation=` on constant/zone/feature, a style but the five
-or one the target does not take, `"pilotpoints"` on a list target, an `**extra` key
-pyEMU's `add_parameters` does not take -- raises (ledger
-520).
+518, 519), and a lower bound carrying any `rbot` below its cell's bottom is refused at
+build, naming the safe one (ledger 568). An argument that cannot act --
+`layers=` on a list target or on recharge, `zones=` with `style="constant"` on a list
+target (ledger 569), `correlation=` on constant/zone/feature, a style
+but the five or one the target does not take, `"pilotpoints"` on a list target, an
+`**extra` key pyEMU's `add_parameters` does not take or the facade sets itself
+(`pargp`, `use_rows`, ... -- named with the argument that sets it, ledger
+571) -- raises (ledger 520). A correlated list `"grid"` whose
+parameters pyEMU would put at one point in one covariance group (a column's records in
+two layers on DISV/DISU), or split one per group, is refused at build (ledger
+570). `zones=` is shaped on the grid of the model the build stages from
+the run's files (ledger 356).
 
 **`lak.bedleak` (`bedleak`) and `sfr.rhk` (`rhk`) are FEATURE targets** (ledger
 558): `style="feature"` is one multiplier per lake -- bedleak's default --

@@ -101,15 +101,30 @@ value a parameter starts at: 0 for an offset, 1.0 for a multiplier and every pil
 To raise K by 2-5x, change the model and calibrate around it. **`riv.stage` moves each
 record's river bottom by the same offset**, so its depth -- what sets the river's flux
 -- survives every realization (ledgers 290/291); a record already below its bottom is
-refused at build.
+refused at build, and so is a lower bound that would carry any record's bottom below
+its CELL's bottom (MF6 refuses that at `icelltype != 0` and over-drains at 0, ledger
+290): the refusal names how many records, the worst one and the most negative lower
+bound that is safe. Two `riv.stage` parameters on one file add, so their lower bounds
+are summed (ledger 568).
 
 **An argument that cannot act is refused, not ignored** (ledger 520):
-`layers=` on a list target (pick the package with `package=`; `zones=` leaves no list record out -- with `style="zone"` every label, 0 too, is a parameter, ledger 559), `correlation=` on `constant`/`zone`, a
+`layers=` on a list target (pick the package with `package=`; `zones=` leaves no list record out -- with `style="zone"` every label, 0 too, is a parameter, ledger 559), `zones=` with `style="constant"` on a list target (pyEMU scales every record with one number whatever the labels; use `style="zone"`, ledger 569), `correlation=` on `constant`/`zone`, a
 variogram shape (`anisotropy`/`bearing`/`nugget`) without `correlation=`,
-an `**extra` keyword pyEMU's `add_parameters` does not take, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
+an `**extra` keyword pyEMU's `add_parameters` does not take, or one the facade sets itself
+(`par_type`, `pargp`, `lower_bound`, `zone_array`, `geostruct`, `index_cols`, `use_rows`,
+...: each named with the argument that sets it, ledger 571), and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
 `"pp"` names `"pilotpoints"` -- and `"pilotpoints"` on a list target (pilot points
 interpolate onto an array; use `"grid"` with `correlation=`). A parameter name used twice is refused too: give each
 stacked call its own `name=`.
+
+**A correlated list `"grid"` is held to pyEMU's covariance grouping** (ledger
+570). pyEMU places each record at its cell's centre. On DISV and DISU a
+column's records in two layers sit at one point in ONE covariance group, and the prior
+draw died at `run_ies()` with `Matrix is not positive definite`; `build()` refuses it
+now. On DIS pyEMU splits such a set by layer and correlates each layer's records -- let
+through -- and a split that leaves every record alone (one record per layer of a lone
+column; every reach of an `sfr.rhk` set on DISV) is refused, its prior uncorrelated.
+Drop `correlation=` or use `style="zone"`.
 
 **Zones** are per-cell integer labels; `style="zone"` gives one adjustable multiplier
 per distinct label. `ZoneSpec.from_raster` samples a categorical raster by **majority
@@ -347,8 +362,9 @@ cal.parameterize("rhk", style="grid", features=["rock_creek"], name="rhkr")  # p
   `NONE` bedleak on a lake being scaled (MF6: no lakebed, nothing to multiply); ANY reach
   whose cellid is `NONE` -- its row is one column short, and pyEMU, reading columns by
   position, multiplied that reach's Manning's n; and `correlation=` on an rhk `"grid"`
-  whose reaches share a model column -- pyEMU then puts every reach in a covariance group
-  of its own, and the prior comes out uncorrelated. Each row is keyed by its lake and
+  whose reaches share a model column -- on DISV pyEMU then puts every reach in a
+  covariance group of its own, and the prior comes out uncorrelated (the rule every
+  list target follows, above; ledger 570). Each row is keyed by its lake and
   connection or reach NUMBER (never its cell, which a lake meets twice and two reaches can
   share), and the build checks the template pyEMU wrote scales exactly the rows chosen,
   because pyEMU falls back to every row when none matches.

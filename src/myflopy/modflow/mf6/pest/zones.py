@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import flopy
 import numpy as np
 
 from myflopy.modflow.mf6.grid.geometry import centroid_zones, model_cell_polygons, where_they_are
@@ -418,10 +419,17 @@ def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
     family : str
         The target's family: ``"array"`` or ``"list"``; anything else is read as
         ``"list"``.
-    model : SimulationBase
-        The calibrated model; its grid view's ``vor.ncpl`` (else the FloPy grid's
-        ``ncpl``) and its FloPy ``gwf.modelgrid`` (``nlay``, ``grid_type``, and
-        ``nrow``/``ncol`` on DIS) are read.
+    model : flopy.mf6.MFModel or SimulationBase
+        The model whose grid the labels are shaped for: a FloPy model -- what
+        :meth:`PestProject.build` passes, the copy of the run it STAGED
+        (:func:`~myflopy.modflow.mf6.pest.native_parameters.staged_model`, ledger
+        356) -- or a myflopy model, whose FloPy ``gwf`` is read. Only its
+        ``modelgrid`` is read: ``grid_type``, ``nlay``, the cells of one layer
+        (``ncpl``; every node, ``nnodes``, on DISU, which numbers its cells by node
+        and whose FloPy ``ncpl`` splits them by IHC-inferred layer) and
+        ``nrow``/``ncol`` on DIS. The build passed the CALLER's model here, and
+        read its grid view's ``vor.ncpl``, until every ``zones=`` it resolves went
+        through the staged model like the rest of what it reads (ledger 356).
 
     Returns
     -------
@@ -436,9 +444,14 @@ def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
 
     spec = zones if isinstance(zones, ZoneSpec) else ZoneSpec.from_array(zones)
     values = spec.values
-    modelgrid = model.gwf.modelgrid
-    vor = getattr(model, "vor", None)
-    ncpl = int(vor.ncpl) if vor is not None else int(modelgrid.ncpl)
+    # A FloPy model holds `modelgrid` itself; a myflopy model holds its FloPy `gwf`.
+    # Asked by type: FloPy answers `model.gwf` with a PACKAGE (an OBS file named
+    # `m.gwf.obs`), so `hasattr` is no test.
+    modelgrid = (model if isinstance(model, flopy.mf6.MFModel) else model.gwf).modelgrid
+    unstructured = getattr(modelgrid, "grid_type", None) == "unstructured"
+    # On DISU every node is a cell of the one "layer" a zone map labels (ledger 452):
+    # FloPy's `ncpl` there is its IHC-inferred per-layer split, `[12, 12]` for 24 nodes.
+    ncpl = int(modelgrid.nnodes) if unstructured else int(modelgrid.ncpl)
     nlay = int(modelgrid.nlay)
 
     flat = values.reshape(-1)

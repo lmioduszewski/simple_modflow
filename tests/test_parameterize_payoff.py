@@ -300,8 +300,7 @@ _PROBE = textwrap.dedent(
     from types import SimpleNamespace
     from myflopy.modflow.mf6.pest.zones import resolve_zone_array
     model = SimpleNamespace(
-        vor=SimpleNamespace(ncpl=4),
-        gwf=SimpleNamespace(modelgrid=SimpleNamespace(nlay=3)),
+        gwf=SimpleNamespace(modelgrid=SimpleNamespace(nlay=3, ncpl=4, grid_type="vertex")),
     )
     array_zones = resolve_zone_array([1, 1, 2, 2], family="array", model=model)
     list_zones = resolve_zone_array([1, 1, 2, 2], family="list", model=model)

@@ -725,6 +725,9 @@ class PestProject:
         # forward run -- kept across builds, a rebuild skipped every file and the
         # second template moved the stage alone (`_carry_river_bottom`).
         self._carried_river_files: set[str] = set()
+        # The summed riv.stage lower bound already compiled onto each RIV file, in the
+        # build under way (ledger 568).
+        self._river_offset_lower_bounds: dict[str, float] = {}
         # The simulation LOADED from the build's staging copy of the run, while
         # `build()` runs; every recipe that reads a package's array reads it here,
         # never off `self.model` (ledger 356).
@@ -837,7 +840,12 @@ class PestProject:
             each record's river bottom by the same offset as its stage, so the
             declared depth survives every realization (ledgers 290/291's pair rule,
             ledger 519); :meth:`build` refuses a record whose stage is
-            already below its bottom, which MF6 refuses at any icelltype.
+            already below its bottom, which MF6 refuses at any icelltype, and a lower
+            bound that would carry any record's bottom below its CELL's bottom --
+            refused by MF6 at ``icelltype != 0``, over-draining at ``0`` (ledger
+            290) -- naming how many, the worst record and the most negative lower
+            bound that is safe; the lower bounds of several ``riv.stage``
+            parameters on one file add (ledger 568).
 
             ``lak.bedleak`` and ``sfr.rhk`` are FEATURE targets (ledger
             558): their rows are lake connections and reaches, keyed
@@ -957,7 +965,13 @@ class PestProject:
             parameter. With any style, an array target leaves cells labelled
             ``<= 0`` unparameterized; a list target makes zone ``0`` a real
             parameter and warns. A length that is not one label per cell raises
-            ``ValueError`` at build.
+            ``ValueError`` at build; the labels are shaped on the grid of the model
+            the build stages from the run's files (ledger 356). With
+            ``style="constant"`` on a LIST target -- pyEMU reads ``zones=`` only for a
+            ``"zone"`` or ``"grid"`` list parameter, so one number scaled every record
+            -- it raises ``ValueError`` naming ``style="zone"``: here, or for
+            ``recharge`` once its RCH's form is known (here when the model lists its
+            packages, else at :meth:`build`; ledger 569).
             With array-target ``"pilotpoints"`` each label ``> 0`` gets its own
             pilot-point set on each selected layer -- its own net (or the
             explicit points inside it), interpolated onto its own cells only, so
@@ -1064,11 +1078,20 @@ class PestProject:
             inverse-distance. ``None`` (default) builds no variogram. Given with
             ``"constant"``, ``"zone"`` or ``"feature"`` it raises ``ValueError``
             here: they have nothing to correlate (a feature parameter is keyed by a
-            lake's or stream's number, not located at a cell). On ``sfr.rhk``
-            ``"grid"``, :meth:`build` refuses it where two selected reaches lie in
-            one model column -- pyEMU places them at one point and then draws
-            EVERY reach uncorrelated (measured) -- and on DISU, where pyEMU cannot
-            locate a reach (ledger 558).
+            lake's or stream's number, not located at a cell). On a LIST target's
+            ``"grid"`` pyEMU places each record at its cell's centre, and
+            :meth:`build` refuses it (``ValueError``) where it cannot correlate them:
+            two parameters at one point in one covariance group -- a column's
+            records in two layers on DISV or DISU, where pyEMU keeps one group, or
+            two reaches in one DIS cell and layer -- make the covariance singular
+            (records sharing a whole cellid share ONE parameter, pyEMU's rule), and pyEMU's draw at :meth:`run_ies`/:meth:`prior` died with
+            ``Matrix is not positive definite``; and where pyEMU, finding a shared
+            point, splits the set into one group per record -- every reach of an
+            ``sfr.rhk`` set on DISV -- the prior is drawn uncorrelated (both
+            measured; ledger 558, ledger 570). On DIS a column's records
+            in different layers are let through: pyEMU correlates each layer's records
+            and not across layers. On ``sfr.rhk`` on DISU, where pyEMU cannot locate a
+            reach, it is refused too (ledger 558).
         anisotropy : float, optional
             Anisotropy ratio of the variogram -- correlated this many
             times farther along the major axis than across it (``1.0`` =
@@ -1172,11 +1195,20 @@ class PestProject:
             558).
         **extra
             Advanced keyword arguments passed straight through to pyEMU's
-            ``PstFrom.add_parameters`` for cases the facade does not cover.
-            They are applied LAST, so a key here overrides what the facade
-            derived (``par_type``, the bounds, ``transform``, ``zone_array``,
-            ``geostruct``, ...). Given for array-target pilot points, which never
-            call ``add_parameters``, they raise ``ValueError`` here. Stored on the
+            ``PstFrom.add_parameters`` for what the facade does not set
+            (``mfile_fmt``, ``initial_value``, ``apply_order``, ...). A keyword
+            the facade sets itself raises ``TypeError`` here, naming the argument
+            that sets it: ``par_type`` (``style=``), ``par_name_base`` and ``pargp``
+            (``name=``), ``lower_bound``/``upper_bound`` (``bounds=``),
+            ``transform`` (``transform=``), ``ult_lbound``/``ult_ubound``
+            (``physical=``), ``par_style`` (``additive=``), ``zone_array``
+            (``zones=``), ``geostruct`` (``correlation=``), and ``index_cols``,
+            ``use_cols``, ``use_rows``, which the target, ``features=`` and
+            ``package=`` decide (ledger 571; they overrode the
+            facade's own, and an ``index_cols`` or ``use_rows`` failed only after
+            the staging). A keyword ``add_parameters`` does not take raises
+            ``TypeError`` too. Given for array-target pilot points, which never call
+            ``add_parameters``, they raise ``ValueError`` here. Stored on the
             returned spec as ``extra``.
 
         Returns
@@ -1193,6 +1225,9 @@ class PestProject:
             For an argument that cannot act or bounds that cannot hold (above), a
             ``name`` already declared, or a ``package=`` naming no package of the
             type.
+        TypeError
+            For an ``**extra`` keyword the facade sets itself or
+            ``PstFrom.add_parameters`` does not take (above).
         SeveralPackagesError
             When the model carries several packages of the target's type and no
             ``package=`` names one.
@@ -2631,6 +2666,9 @@ class PestProject:
             self._build_pstfrom(staging)
             self._prepare_observation_specs()
             self._carried_river_files = set()
+            # The riv.stage lower bounds compiled onto each file so far (ledger
+            # 568): offsets on one file add in the forward run.
+            self._river_offset_lower_bounds = {}
             # Pilot-point sets are collected afresh by every build.
             self._pilot_point_sets = []
             with self._quiet_pyemu_context():

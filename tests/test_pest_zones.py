@@ -77,8 +77,7 @@ def test_a_single_layer_list_target_is_padded_past_pyemus_reshape(zone_model):
 
     ncpl = int(zone_model.vor.ncpl)
     one_layer = SimpleNamespace(
-        vor=zone_model.vor,
-        gwf=SimpleNamespace(modelgrid=SimpleNamespace(nlay=1)),
+        gwf=SimpleNamespace(modelgrid=SimpleNamespace(nlay=1, ncpl=ncpl, grid_type="vertex")),
     )
     resolved = resolve_zone_array(
         ZoneSpec.from_array(_halves(zone_model)), family="list", model=one_layer

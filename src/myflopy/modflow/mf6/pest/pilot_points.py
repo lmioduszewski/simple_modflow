@@ -354,7 +354,7 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     labels = None
     if spec.zones is not None:
         labels = np.asarray(
-            resolve_zone_array(spec.zones, family="array", model=project.model)
+            resolve_zone_array(spec.zones, family="array", model=gwf)
         ).reshape(-1)
         # The labels the zone array holds, as `style="zone"` records them for the
         # build's metadata; the sets are the labels above 0.
