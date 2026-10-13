@@ -40,7 +40,7 @@ SY = (0.1, 0.2)
 SS = 1e-5
 
 
-def _run(workspace: Path, *, transient: bool) -> Path:
+def _run(workspace: Path, *, transient: bool, iconvert=(1, 0)) -> Path:
     sim = flopy.mf6.MFSimulation("s", sim_ws=str(workspace), exe_name="mf6")
     flopy.mf6.ModflowTdis(sim, nper=3, perioddata=[(1.0, 1, 1.0)] + [(10.0, 2, 1.0)] * 2,
                           time_units="days")
@@ -50,7 +50,7 @@ def _run(workspace: Path, *, transient: bool) -> Path:
         NLAY, NROW, NCOL, np.full(NCOL, 10.0), np.full(NROW, 10.0), 100.0, [50.0, 0.0]))
     flopy.mf6.ModflowGwfnpf(gwf, k=5.0, icelltype=[1, 0])
     flopy.mf6.ModflowGwfic(gwf, strt=99.0)
-    flopy.mf6.ModflowGwfsto(gwf, sy=list(SY), ss=SS, iconvert=[1, 0],
+    flopy.mf6.ModflowGwfsto(gwf, sy=list(SY), ss=SS, iconvert=iconvert,
                             steady_state={0: True},
                             transient={1: True} if transient else None)
     flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, 0), 100.0], [(0, NCPL - 1), 95.0]])
@@ -65,8 +65,12 @@ def _run(workspace: Path, *, transient: bool) -> Path:
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory):
     root = tmp_path_factory.mktemp("storage")
+    # "half": layer 0 convertible in its first ten cells only, layer 1 confined.
+    half = np.zeros((NLAY, NCPL), dtype=int)
+    half[0, :NCPL // 2] = 1
     return {"transient": _run(root / "transient", transient=True),
-            "steady": _run(root / "steady", transient=False)}
+            "steady": _run(root / "steady", transient=False),
+            "half": _run(root / "half", transient=True, iconvert=half)}
 
 
 def _cal(runs, tmp_path, kind="transient", name="st"):
@@ -199,6 +203,25 @@ def test_a_zone_label_only_on_confined_cells_is_refused_naming_it(runs, tmp_path
     cal.parameterize("sto.sy", style="zone", zones=zones, layers=[1])
     with pytest.raises(ValueError, match=r"every cell of zone 1 on the layers selected"):
         _build(cal)
+
+
+def test_a_pilot_point_sy_set_on_confined_cells_of_one_zone_is_refused_naming_it(runs, tmp_path):
+    """Pilot points under ``zones=`` are one set per layer file AND label (ledger 527): a
+    label whose cells in the layer are all confined is a set that cannot act, though
+    the layer's other label acts. The check read the whole layer, so it passed (ledger
+    548, restated); a zone over convertible cells still builds."""
+
+    zones = np.where(np.arange(NCPL) < NCPL // 2, 1, 2)
+    cal = _cal(runs, tmp_path, kind="half")
+    cal.parameterize("sto.sy", style="pilotpoints", layers=[0], zones=zones, pp_spacing=10.0)
+    with pytest.raises(ValueError, match=r"every cell of zone 2 of layer 0 \(m.sto_sy_layer1.txt\) "
+                                         r"has ICONVERT 0"):
+        _build(cal)
+
+    acting = _cal(runs, tmp_path, kind="half", name="ok")
+    acting.parameterize("sto.sy", style="pilotpoints", layers=[0], pp_spacing=10.0,
+                        zones=np.where(np.arange(NCPL) < NCPL // 2, 1, 0))
+    _build(acting, name="ok")
 
 
 def test_a_constant_sy_over_both_layers_acts_through_the_convertible_one(runs, tmp_path):

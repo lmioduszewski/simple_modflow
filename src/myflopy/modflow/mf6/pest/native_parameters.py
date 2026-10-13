@@ -2282,8 +2282,9 @@ def refuse_storage_that_cannot_act(project, spec: NativeParameterSpec, model, pa
     (``ICONVERT != 0``): a parameter on storage of an all-steady run, or on SY of
     cells that are all confined, is pure prior noise to PESTPP-IES. Refused per
     PARAMETER SET -- the whole selection for ``"constant"``, each zone label for
-    ``"zone"``, each layer file for ``"grid"``/``"pilotpoints"`` (each a set of its
-    own) -- with ``zones=`` labels ``<= 0`` left out of the selection.
+    ``"zone"``, each layer file for ``"grid"``, each layer file AND label for
+    ``"pilotpoints"`` under ``zones=`` (ledger 527's sets) --
+    with ``zones=`` labels ``<= 0`` left out of the selection.
 
     Parameters
     ----------
@@ -2348,11 +2349,22 @@ def refuse_storage_that_cannot_act(project, spec: NativeParameterSpec, model, pa
         )
 
     if spec.style in ("grid", "pilotpoints"):
-        for target, convertible, selected, _zone in covered:
+        for target, convertible, selected, zone in covered:
+            where = (f"layer {target.layer if target.layer is not None else 0} "
+                     f"({target.filename})")
             if not (convertible & selected).any():
-                refuse(f"layer {target.layer if target.layer is not None else 0} "
-                       f"({target.filename}) selected",
+                refuse(f"{where} selected",
                        "Leave it out with layers=, or make the layer convertible.")
+            if spec.style != "pilotpoints" or zone is None:
+                continue
+            # Pilot points under `zones=` are one SET per layer file and label (ledger
+            # 527), each with its own points and prior block: a label whose cells in this
+            # layer are all confined is a set that cannot act, though another label's acts.
+            for label in sorted({int(value) for value in zone[selected]}):
+                if not (convertible & (zone == label)).any():
+                    refuse(f"zone {label} of {where}",
+                           "Give it label 0 to leave it alone, leave the layer out with "
+                           "layers=, or make those cells convertible.")
     elif spec.style == "zone" and labels is not None:
         for label in sorted({int(value) for value in labels if value > 0}):
             if not any((convertible & (zone == label)).any()

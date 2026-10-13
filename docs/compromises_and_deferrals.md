@@ -21112,7 +21112,9 @@ same day, which is the useful part of the result.
       read by `period_calendar.steady_periods`, through a staged-model adapter); `sto.sy`
       where every cell of a PARAMETER SET has `ICONVERT` 0 -- the whole selection for
       `constant`, each label for `zone`, each layer file for `grid`/`pilotpoints` (each
-      its own set), `zones=` labels `<= 0` left out. A constant over a convertible and a
+      its own set; 2026-10-12: for `pilotpoints` under `zones=`, each layer file AND
+      label, ledger 527's sets -- the layer alone was checked, so a label on confined
+      cells passed beside a convertible one), `zones=` labels `<= 0` left out. A constant over a convertible and a
       confined layer is accepted: it acts through the convertible one.
 
 549. **`periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's midpoint, the steady period in none; `temporal=` is gone (2026-10-12).**
