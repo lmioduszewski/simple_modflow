@@ -123,6 +123,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.simulation.indexing`
+- `myflopy.modflow.mf6.target_values`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
 - `myflopy.project.components`
 - `myflopy.project.group.budget`

@@ -628,7 +628,9 @@
       "weight_column:POSITIONAL_OR_KEYWORD='weight'",
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='conc'",
-      "times:POSITIONAL_OR_KEYWORD=None"
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "screen_top_column:POSITIONAL_OR_KEYWORD='screen_top'",
+      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'"
     ],
     "ConcTargets.simulated_conc": [
       "model:POSITIONAL_OR_KEYWORD=<required>"
@@ -1343,7 +1345,9 @@
       "weight_column:POSITIONAL_OR_KEYWORD='weight'",
       "time_column:POSITIONAL_OR_KEYWORD='time'",
       "value_column:POSITIONAL_OR_KEYWORD='head'",
-      "times:POSITIONAL_OR_KEYWORD=None"
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "screen_top_column:POSITIONAL_OR_KEYWORD='screen_top'",
+      "screen_bottom_column:POSITIONAL_OR_KEYWORD='screen_bottom'"
     ],
     "HeadTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -1365,11 +1369,13 @@
       "values:KEYWORD_ONLY=<required>",
       "times:KEYWORD_ONLY=None",
       "names:KEYWORD_ONLY=None",
-      "layers:KEYWORD_ONLY=0",
+      "layers:KEYWORD_ONLY=None",
       "groups:KEYWORD_ONLY=None",
       "weights:KEYWORD_ONLY=None",
       "time_column:KEYWORD_ONLY='time'",
-      "value_column:KEYWORD_ONLY='head'"
+      "value_column:KEYWORD_ONLY='head'",
+      "screen_tops:KEYWORD_ONLY=None",
+      "screen_bottoms:KEYWORD_ONLY=None"
     ],
     "HeadTargets.from_hydrographs": [
       "locations:POSITIONAL_OR_KEYWORD=<required>",
@@ -1385,7 +1391,9 @@
       "weight_column:KEYWORD_ONLY='weight'",
       "max_offset:KEYWORD_ONLY=None",
       "between:KEYWORD_ONLY=None",
-      "min_years:KEYWORD_ONLY=None"
+      "min_years:KEYWORD_ONLY=None",
+      "screen_top_column:KEYWORD_ONLY='screen_top'",
+      "screen_bottom_column:KEYWORD_ONLY='screen_bottom'"
     ],
     "HeadTargets.from_records": [
       "records:POSITIONAL_OR_KEYWORD=<required>",
