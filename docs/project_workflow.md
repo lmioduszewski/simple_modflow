@@ -275,7 +275,10 @@ An override cannot be an array RECIPE (`mf.RasterValues`, `mf.Polygons`, a produ
 a recipe resolves at build from the package's recipe inputs, which an override does
 not reach, so both verbs raise `TypeError`. Declare that variant through the helper --
 `project.add_package("npf/high", mf.npf(k=mf.RasterValues("k_high.tif")))` -- instead
-(ledger 542).
+(ledger 542). The other direction works: an override of an option a recipe FILLS
+-- `packages.fork("npf/raster", "npf/flat", k=7.0)` over `mf.npf(k=mf.RasterValues(...))`
+-- REPLACES the recipe, which is dropped and named in the stamp's `replaced_inputs`
+(ledger 561). It used to build "supplied twice".
 
 Both **deep-copy by default**, including options the fork never touched. That is
 not caution for its own sake: `with_options` rebuilds the options dict but not its

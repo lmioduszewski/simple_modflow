@@ -17,7 +17,7 @@ import os
 import pickle
 import sys
 import warnings
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -1666,6 +1666,13 @@ def fork_package(
     own word, as at ``mf.disv`` (ledger 432), and an edited TDIS ``time_units`` one of
     MF6's six, as at ``mf.tdis`` (ledger 456).
 
+    An override REPLACES a recipe in ``inputs`` that fills the same option -- an
+    ``mf.Polygons``/``mf.RasterValues`` array, a product or per-layer list of them, any
+    other source spec -- which is dropped and named in the stamp's
+    ``replaced_inputs`` (:func:`replaced_sources`, ledger 561). A recipe
+    the builder itself requires (a lazy ``.gpkg`` declaration's ``stress_period_data``)
+    is not a source for an option and is still refused.
+
     ``deep=True`` (the default) also unaliases options the fork never touched,
     which is where the real hazard lives: :meth:`PackageSpec.with_options`
     rebuilds the options dict but not its values, so a "copy" can write through
@@ -1689,6 +1696,9 @@ def fork_package(
     if name is not None and name != package.name:
         options = _renamed_options(options, package.name, name, overrides)
     inputs = copy.deepcopy(package.inputs) if deep else dict(package.inputs)
+    # An override REPLACES the recipe that would fill the same option (ledger
+    # 561): left beside it, the pair built "supplied twice".
+    inputs, replaced = replaced_sources(package.builder, inputs, overrides)
     metadata = copy.deepcopy(package.metadata) if deep else dict(package.metadata)
     # An override REPLACES a resolved option wholesale (measured: 11 records -> 1), so
     # the library's pin stops being true of what is there now. Keyed on the override
@@ -1702,6 +1712,8 @@ def fork_package(
         provenance["key"] = source
     if note is not None:
         provenance["note"] = note
+    if replaced:
+        provenance["replaced_inputs"] = replaced
     metadata[stamp] = provenance
     return replace(
         package,
@@ -1710,6 +1722,63 @@ def fork_package(
         inputs=inputs,
         metadata=metadata,
     )
+
+
+def _fills_an_option(value: Any) -> bool:
+    """Whether an ``inputs`` entry is a SOURCE for the option of its name.
+
+    A source spec (``DataSourceSpec``/``LiteralSource`` -- ``mf.Polygons`` and
+    ``mf.RasterValues`` among them), an ``mf.RasterValues * factor`` product, or a
+    per-layer list / per-period dict holding an array recipe -- the shapes the array
+    helpers declare. A lazy declaration's plain builder keywords are not.
+    """
+
+    if isinstance(value, (DataSourceSpec, LiteralSource)) or _is_array_recipe(value):
+        return True
+    if isinstance(value, (list, tuple)):
+        return any(_is_array_recipe(item) for item in value)
+    if isinstance(value, dict):
+        return any(_is_array_recipe(item) for item in value.values())
+    return False
+
+
+def replaced_sources(
+    builder, inputs: Mapping[str, Any], overrides: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """``inputs`` without the recipes ``overrides`` replace, and their names.
+
+    The ONE rule for an edit that names an option a recipe fills (ledger
+    561): the override says what the caller wants, so the recipe goes.
+    Left beside it, the pair was accepted at the edit and refused at BUILD as
+    "supplied twice" (``fork_package(mf.npf(k=mf.Polygons(...)), k=array)``,
+    measured) -- or, for a product or a per-layer list, refused at the edit as "part
+    of this package's recipe". A recipe the builder REQUIRES as a keyword (a lazy
+    ``.gpkg`` declaration's ``stress_period_data``) is the builder's input, not a
+    source for an option, and stays; :func:`_check_input_collisions` refuses that
+    override as before.
+
+    Parameters
+    ----------
+    builder : callable
+        The package's builder (``PackageSpec.builder``), whose required keyword-only
+        parameters are never replaced.
+    inputs : mapping
+        The package's ``inputs``; not modified.
+    overrides : mapping
+        The option values the edit writes; only their NAMES are read.
+
+    Returns
+    -------
+    tuple of (dict, list of str)
+        A new ``inputs`` dict without the replaced entries, and their names, sorted.
+    """
+
+    resolves = set(_required_keyword_only(builder))
+    replaced = sorted(
+        key for key in set(inputs) & set(overrides)
+        if key not in resolves and _fills_an_option(inputs[key])
+    )
+    return {key: value for key, value in inputs.items() if key not in replaced}, replaced
 
 
 def _preview(values: Iterable[Any], *, limit: int = 4) -> str:
@@ -2285,9 +2354,13 @@ class PackageSpec:
             Option names and values merged over ``options`` key by key (an
             override replaces the whole value of its key; others are kept). The
             copy is re-validated like a new spec, so a name the builder does not
-            accept raises ``TypeError``, and so does one the recipe in ``inputs``
-            already supplies (at :meth:`build` rather than here when that recipe
-            entry is a source spec). Overriding an option the grid pin certifies
+            accept raises ``TypeError``, and so does one a recipe in ``inputs``
+            already supplies as a keyword the builder requires (a lazy ``.gpkg``
+            declaration's ``stress_period_data``). A recipe that FILLS the option
+            -- an ``mf.Polygons``/``mf.RasterValues`` array, a product or per-layer
+            list of them -- is replaced by the override and dropped from
+            ``inputs`` (ledger 561).
+            Overriding an option the grid pin certifies
             -- any option, for a pin that names none -- replaces the pin with a
             ``grid_pin_voided`` record naming the edit. On a DIS/DISV/DISU, a
             ``length_units`` must be MF6's own word -- ``"feet"``, ``"meters"``,
@@ -2304,9 +2377,11 @@ class PackageSpec:
         _check_unit_overrides(
             self.builder, overrides, route=f"{self.name}.with_options"
         )
+        inputs, _replaced = replaced_sources(self.builder, self.inputs, overrides)
         return replace(
             self,
             options={**self.options, **overrides},
+            inputs=inputs,
             metadata=void_pin(self.metadata, touched=set(overrides)),
         )
 

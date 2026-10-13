@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 559 entries (564 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 560 entries (565 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 561 | An edit's override REPLACES a recipe that fills the same option | 2026-10-12 |
 | 559 | One parameter set over packages whose records differ in width is refused, not split; and `zones=` leaves no... | 2026-10-12 |
 | 558 | `lak.bedleak` and `sfr.rhk` are calibration targets: `style="feature"` is one multiplier per lake or named... | 2026-10-12 |
 | 557 | `compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-dec... | 2026-10-12 |
@@ -20945,8 +20946,9 @@ same day, which is the useful part of the result.
       recipe into `inputs` also needs the recipe-resolving builder, which lives in
       `package_api` (import layer above `specs`). So a variant with a recipe is declared
       through `mf.npf(...)` and registered with `add_package(..., overwrite=True)`. The
-      opposite direction -- a plain override over a recipe package, which builds
-      `supplied twice` -- is item 14's (`fork_package` override replaces the recipe).
+      opposite direction -- a plain override over a recipe package, ~~which builds
+      `supplied twice` -- is item 14's (`fork_package` override replaces the recipe).~~
+      **Restated by ledger 561:** replaces the recipe it overrides.
       The scan is shallow (value, list items, dict values) so a record list is never
       walked on construction.
 
@@ -21371,3 +21373,16 @@ same day, which is the useful part of the result.
       done:** `zones=` with `style="constant"` on a list target is still accepted and
       does nothing (pyEMU reads `zone_array` only for `zone`/`grid` list parameters);
       refusing it is ledger 520's rule, left for the parameter lane.
+
+561. **An edit's override REPLACES a recipe that fills the same option (2026-10-12).**
+      `fork_package(mf.npf(k=mf.Polygons(...)), k=array)` -- and `packages.fork`/`edit`,
+      `with_options` -- kept `k` in both `options` and `inputs`, which `PackageSpec.build`
+      refused as "supplied twice"; over an `mf.RasterValues * f` product or a per-layer
+      list of recipes the edit was refused outright as "part of this package's recipe".
+      **Chosen (settled with the item-14 design):** the override says what the caller
+      wants, so the recipe goes, named in the stamp's `replaced_inputs`. ONE rule,
+      `specs.replaced_sources`: a source spec, an array recipe, or a list/dict holding one
+      -- never a keyword the builder REQUIRES (a lazy `.gpkg` declaration's
+      `stress_period_data` stays refused at the edit, since dropping it leaves a builder
+      with nothing to resolve). A hand-built spec carrying both is still refused at build
+      (ledger 299).
