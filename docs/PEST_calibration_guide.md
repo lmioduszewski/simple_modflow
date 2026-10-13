@@ -918,12 +918,20 @@ drawn, 1-6 seeds a row;
 - **Iterate until phi stops falling**: here iterations 4-6 lowered it 1.4-4.6% in all
   (the sixth under 0.7%), and 3 iterations recovered what 6 did. Two did not converge,
   with or without lambda testing.
-- **Converged looks like this**: the base realization's measured phi near the number of
-  weighted observations (269-343 for 340 here), not 1.5-3 times it, and flat over the last
-  iterations. A narrow band from a run that has not got there is not an uncertainty.
-- **Realizations**: 64 sufficed for 20 adjustable parameters; 32 converged in phi but
-  missed the forecast once in three. A model with more parameters the data inform wants
-  more.
+- **Converged looks like this**: phi flat over the last iterations, with lambda testing
+  finding nothing lower. A rehearsal adds a check a real model cannot: its weights ARE
+  1 / the noise and the model can reproduce its truth, so there the base realization's
+  measured phi ends near the number of weighted observations (269-343 for 340 here) and at
+  or below the truth's own, not 1.5-3 times it. On a real model the model's own error
+  keeps phi above that count however converged the run is -- do not iterate toward it. A
+  narrow band from a run that has not converged is not an uncertainty.
+- **Realizations**: 64 recovered 20 adjustable parameters' truths and covered the
+  forecast on every seed; 32 converged in phi but missed the forecast once in three. Even
+  at 64 the ensemble is NARROWER than the linear posterior for the recharge multipliers
+  (0.71-0.91x the dry-month one's sd over five runs; 128 realizations on one seed,
+  0.85x), and one levels-only miss (dry-month recharge, z +2.1) was that narrowness, not
+  the data: read recharge bands as a little optimistic. A model with more parameters the
+  data inform wants more realizations.
 - Even converged, each 5-95% band misses its truth one time in ten, so in a rehearsal
   with six known truths one or more is outside about half the time: judge coverage over
   several seeds, not one run.

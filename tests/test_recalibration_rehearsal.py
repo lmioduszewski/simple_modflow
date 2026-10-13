@@ -20,8 +20,8 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
   asserted, the two posterior-coverage criteria held as a non-strict xfail until the user
   decides: at the notebook's fast budget the ensemble has not converged (ledgers 589,
   590); at a converging one (64x6 or 64x3, PESTPP-IES's own lambda testing) the
-  forecast is covered on every seed and the scalar truths as often as the linear
-  posterior's bands allow (ledger 591).
+  forecast is covered on every seed and 28 of 36 scalar truths over six seeds, the
+  recharge bands somewhat narrower than the linear posterior's (ledger 591).
 """
 
 from __future__ import annotations

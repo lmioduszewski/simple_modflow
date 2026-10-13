@@ -109,14 +109,29 @@ third iteration (the fourth to sixth lower it 1.4-4.6% in all, the sixth under 0
 64x3 recovers what 64x6 does; two iterations, lambda testing or not, do not converge.
 
 ``--linear`` (``linear_check`` on five 64x6 runs: seeds 1, 3 and 6, seeds 3 and 6
-nodiff): the ensemble's posterior sd is the linear posterior's at the base -- 0.98-1.16x
-for sy, crisp and the bed leakances, 0.82-1.0x for rch_wet, 0.71-0.91x for rch_dry -- and
-the misses levels-only cannot explain are the linear posterior's own -- seed 3 sy z +2.97 linear,
-seed 6 bedleak_north -2.34 -- so they are the noise drawn, not the ensemble. The sd of z
-under the data's actual noise is 1.15-1.33 for rch_wet, rch_dry and sy with the
-differences beside the levels (each reading's noise counted twice in the shape) and
-0.82-0.98 for every parameter with the levels alone; crisp and the bed leakances 0.92-1.02
-either way (ledger 592).
+nodiff): the ensemble's posterior sd against the linear posterior's at the base is
+0.98-1.16x for sy, crisp and the bed leakances, 0.82-1.0x for rch_wet (0.82-0.83x levels
+only) and 0.71-0.91x for rch_dry -- the ensemble is NARROWER than the data say for the
+recharge multipliers, in all five runs. Of the four misses the levels alone leave on
+seeds 3 and 6, three are the linear posterior's own (|z_lin| > 1.645: seed 3 sy +2.97 and
+rch_wet +1.80, seed 6 bedleak_north -2.34), so the noise drawn; the fourth, seed 6
+rch_dry (z +2.08 against z_lin +1.40), is that narrowness. The sd of z under the data's
+actual noise is 1.15-1.33 for rch_wet, rch_dry and sy with the differences beside the
+levels (each reading's noise counted twice in the shape) and 0.82-0.98 for every parameter
+with the levels alone; crisp and the bed leakances 0.92-1.02 either way (ledger
+592).
+
+REVIEWED (ledger 591; 2026-10-13, load 7-16): ``64x3+lambda --seeds 2``
+reran to the digit (phi 53106 1785 657 619, base/truth 0.96, all six inside), and
+``128x3+lambda+nodiff --seeds 6 --linear`` (800 model runs, 13.6 min at 8 workers), the
+seed whose rch_dry the 64-member ensemble missed:
+
+     config               seed  phi by iteration          base/truth  forecast  outside (z; z_lin)
+     128x3+lambda+nodiff     6  52051 1204 405 370              0.90  yes       bedleak_north -1.8 (-2.0), rch_wet -1.6 (-1.5)
+
+rch_dry is inside (z +0.78) and its sd 0.85x the linear's (0.71x at 64x6); rch_wet 0.89x
+(0.82x), bedleak_south 1.29x. rch_wet is outside by 0.001 of its band at |z| < 1.645 --
+the band is the ensemble's percentiles, z its log mean and sd, and they need not agree.
 """
 
 from __future__ import annotations

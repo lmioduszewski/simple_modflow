@@ -38,7 +38,7 @@
 | # | Entry | Date |
 | --: | --- | --- |
 | 592 | Levels and their differences observed together at the source weight count each reading's noise twice in the... | 2026-10-13 |
-| 591 | At a converging PESTPP-IES budget the rehearsal recovers its truth as well as its posterior can; the notebo... | 2026-10-13 |
+| 591 | At a converging PESTPP-IES budget the rehearsal covers its forecast and most of its truths, its recharge ba... | 2026-10-13 |
 | 590 | `run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` --... | 2026-10-12 |
 | 589 | The recalibration rehearsal is the PEST preparation's acceptance test: a Ten Trails-shaped truth, declared... | 2026-10-12 |
 | 588 | A parallel run's master and workers are copies of the template as the BUILD left it | 2026-10-12 |
@@ -22008,7 +22008,7 @@ same day, which is the useful part of the result.
       inside their bands -- the unconverged ensemble is confirmed as the cause; the
       notebook keeps 16x2 for CI and the xfail stays.
 
-591. **At a converging PESTPP-IES budget the rehearsal recovers its truth as well as its posterior can; the notebook keeps its fast budget and the coverage test its non-strict xfail (2026-10-13).**
+591. **At a converging PESTPP-IES budget the rehearsal covers its forecast and most of its truths, its recharge bands somewhat narrower than the data say; the notebook keeps its fast budget and the coverage test its non-strict xfail (2026-10-13).**
       The user's Q9 follow-up: run `canonical_08` at a budget where PESTPP-IES converges.
       `docs/reproducers/rehearsal_recovery_budget.py` gained `+lambda` (drops the
       notebook's `ies_lambda_mults=1.0, lambda_scale_fac=1.0`: PESTPP-IES's own lambda
@@ -22018,24 +22018,34 @@ same day, which is the useful part of the result.
       gate, phi (0.007-0.014 of the prior's) and crisp's gap (0.97-1.02) hold on 6 seeds,
       the base fits the noisy data BETTER than the truth (0.82-0.95x its phi), the
       forecast's truth is inside the posterior range 12 of 12, and 28 of 36 scalar truths
-      (30 of 36 without the differences) sit inside their 5-95% bands. The ensemble is what
-      the data say: its sd is the linear posterior's (0.71-1.16x, five runs), and the two
-      misses the levels alone leave -- sy z +3.0 on seed 3, bedleak_north -2.3 on seed 6 --
-      are the linear posterior's own, so the noise drawn, not IES. Phi has nearly stopped
+      (30 of 36 without the differences) sit inside their 5-95% bands. Against the linear
+      posterior at the base (five runs) the ensemble's sd is 0.98-1.16x for sy, crisp and
+      the bed leakances but 0.71-0.91x for the dry-month recharge multiplier (0.82-1.0x
+      the wet): narrower than the data say for recharge in every run. Of the four misses
+      the levels alone leave on the two seeds checked, three are the linear posterior's own
+      (sy +3.0 and rch_wet +1.8 on seed 3, bedleak_north -2.3 on seed 6) -- the noise drawn
+      -- and one (rch_dry +2.1 on seed 6, +1.4 linear) is that narrowness; 128x3 on the
+      same seed (review) put it inside at z +0.8 with its sd 0.85x the linear's. Phi has nearly stopped
       falling after the THIRD iteration (1.4-4.6% more over the next three); 64x3 (5 min) recovers what 64x6 (8.6 min) does; 32x4 converges in
       phi but missed the forecast once in 3; 16x2 with lambda testing does not converge
       (base 1.43x the truth's phi). **Chosen:** no library change -- no parameter, noise
       or forecast was found misrouted. The notebook keeps the user's 16x2 single-lambda
       knobs (the CI budget), `test_rehearsal_posterior_covers_the_truth` stays a
       non-strict xfail with its reason citing this, and Q9's per-run "every scalar truth
-      inside" is NOT reworded -- an exact posterior meets it about half the time (0.9^6;
-      1 and 2 of 6 runs here) -- it goes back to the user. **For Ten Trails:** lambda
+      inside" is NOT reworded -- an exact posterior meets it about half the time (0.9^6,
+      some 3 runs of 6), where 1 of 6 here met it with the differences (2 without), the
+      double count and the recharge narrowness above both pulling it lower -- it goes back
+      to the user. **For Ten Trails:** lambda
       testing ON (do not copy the notebook's overrides), at least 3 iterations and on while
       phi still falls by more than ~1-2% an iteration, and 64 realizations sufficed for these
       20 adjustable parameters where 32 missed the forecast once in 3 -- more parameters
-      the data inform want more; converged means the base's measured phi
-      is near the count of weighted observations (150-187 here against 188, and 269-343
-      against 340), not 1.5-3x it.
+      the data inform want more; converged means phi flat over the last iterations with
+      lambda testing finding nothing lower. That the base's measured phi also ends near
+      the count of weighted observations (150-187 here against 188, 269-343 against 340)
+      holds only because a rehearsal's weights ARE 1 / its noise and its model can
+      reproduce its truth: Ten Trails' structural error keeps its phi above the count
+      however converged, so that is no target there. Read its recharge bands as somewhat
+      optimistic (the narrowness above).
 
 592. **Levels and their differences observed together at the source weight count each reading's noise twice in the hydrograph's shape; documented, not changed (2026-10-13).**
       `differences(kind="mean")` is a fixed linear map of the same binned readings the
