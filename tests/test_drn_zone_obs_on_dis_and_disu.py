@@ -94,6 +94,32 @@ def test_the_observation_route_reads_the_zone_its_package_declares(run):
     np.testing.assert_allclose(observed.simulated_series(model)["seep"], flow, rtol=1e-10)
 
 
+def test_the_forward_runs_outputs_only_reader_reads_what_the_loaded_model_reads(run):
+    """PEST's forward run reads a zone set through ``RunOutputs`` -- the build's JSON
+    record of the model plus the run's output files (ledger 582) -- and the
+    build's base table through the loaded model. On a DIS model (a cellid one column
+    wider) and a DISU one (one narrower) both routes read the same table either way,
+    the declared cellids recorded as the model numbers them."""
+
+    import json
+
+    from myflopy.modflow.mf6.pest.observations import snapshot_run_outputs
+    from myflopy.modflow.mf6.pest.run_outputs import RunOutputs
+
+    kind, _records, model = run
+    pairs, _cellids = _numbered(kind)
+    record = json.loads(json.dumps(snapshot_run_outputs(model, ["drn"])))
+    assert record["ncpl"] == ([NROW * NCOL] * NLAY if kind == "dis" else [NLAY * NROW * NCOL])
+    assert [row[2] for row in record["packages"]["drn"][0]["obs"][0]["seep.csv"]] == [
+        list(pair) for pair in pairs]
+    outputs = RunOutputs(model.workspace, record)
+    cells = [cell for _l, cell in pairs]
+    for name in ("seep", "basin"):  # the observation route, then the budget route
+        targets = mf.DrnFlowTargets(locations=[{"name": name, "layer": pairs[0][0], "cells": cells}])
+        pd.testing.assert_frame_equal(targets.simulated_series(outputs),
+                                      targets.simulated_series(model))
+
+
 @pytest.mark.parametrize("kind", ["dis", "disu"])
 def test_a_head_targets_obs_records_observe_its_own_cell(kind, tmp_path):
     """``HeadTargets.to_flopy_obs`` wrote ``(layer, cell)`` on every grid too (ledger

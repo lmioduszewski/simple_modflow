@@ -144,6 +144,31 @@ def test_a_transport_oc_declaring_no_concentration_file_is_refused(tmp_path):
     assert _declared_field_output(tmp_path, "u", "concentration", caller="x") == tmp_path / "u.ucn"
 
 
+def test_targets_on_a_run_with_no_output_control_are_refused_not_read_from_a_stale_hds(
+    tmp_path_factory, toy
+):
+    """A model with NO OC saves nothing either (MF6 runs it, writing no head file), and
+    the stale ``m.hds`` a reused directory holds was read as this run's -- one step
+    before the OC that names no head file (ledger 576, found in review)."""
+
+    grid, props, edge = _grid_and_edges()
+    model = mf.gwf("m", grid=grid, packages=[
+        _disv(grid, props), mf.npf(k=10.0, icelltype=0), mf.ic(strt=90.0),
+        mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 102.0] for c in edge]}),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])
+    run = _run(tmp_path_factory.mktemp("no_oc"), simulation)
+    assert not (Path(run.workspace) / "m.hds").exists()  # MF6 wrote none
+    shutil.copy(Path(toy.workspace) / "m.hds", Path(run.workspace) / "m.hds")
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1], "W": [95.0, 96.0]}))
+    with pytest.raises(ValueError, match=(
+            r"HeadTargets: model 'm''s name file 'm.nam' names no output control \(OC6\), so "
+            r"the run saved no head and a m.hds in the run directory is not this run's")):
+        heads.compare(run.model())
+
+
 # -- a cell id is checked before the repeated-name message prints it -------
 
 

@@ -1497,7 +1497,12 @@ class HeadTargets:
         ValueError
             When a period the file saved lacks its final step -- naming the
             period, the steps saved and the ``SAVE HEAD LAST`` setting that
-            fixes it; or when no target lands on an active cell (ledger 211).
+            fixes it; when no target lands on an active cell (ledger 211); when
+            the model's OC declares no ``HEAD FILEOUT`` (``CONCENTRATION
+            FILEOUT``), or the model has no OC at all, so a file of that name
+            in the run directory is another run's (ledger 576); or when
+            the model has no workspace or TDIS -- not a run (ledger
+            581).
         """
 
         refuse_another_clock(self, model, caller=f"{type(self).__name__}.simulated_heads(...)")
@@ -1596,8 +1601,10 @@ class HeadTargets:
             one period (PEST keeps one observation per target per period); when a
             target names a period the file did not save -- past the run's last
             period, say (ledger 500: it read ``NaN`` and ``stats()`` left
-            it out in silence); or when a period the file saved lacks its final
-            step (as :meth:`simulated_heads`).
+            it out in silence); when a ``time`` is ``True``/``False`` (pandas
+            reads them as periods 1 and 0); or as :meth:`simulated_heads` -- a
+            period saved without its final step, an OC declaring no head file,
+            a model that is not a run.
         """
 
         caller = f"{type(self).__name__}.compare(...)"

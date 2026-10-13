@@ -632,7 +632,6 @@ def _pyemu_warning_class(pyemu_module):
         return Warning
 
 
-
 def _add_forward_run_call(pf, source, call: str, *, is_pre_cmd: bool) -> None:
     """Have ``forward_run.py`` call ``call``, the function's source copied in ONCE.
 
@@ -658,6 +657,7 @@ def _add_forward_run_call(pf, source, call: str, *, is_pre_cmd: bool) -> None:
         (pf.pre_py_cmds if is_pre_cmd else pf.post_py_cmds).append(call)
     else:
         pf.add_py_function(str(source), call, is_pre_cmd=is_pre_cmd)
+
 
 class PestProject:
     """Build a pyEMU/PEST++ calibration workspace from a ``myflopy`` model.

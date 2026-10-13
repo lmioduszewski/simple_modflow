@@ -21716,7 +21716,9 @@ same day, which is the useful part of the result.
       in silence by `compare()`/`simulated_heads()`/`stats()` and by the PEST build.
       **Chosen:** ONE resolver for targets, `output_files._declared_field_output`, which
       refuses that case naming the OC file and the `mf.oc(head_filerecord=...)`
-      (`concentration_filerecord=`) spelling; an OC that cannot be READ (no name file)
+      (`concentration_filerecord=`) spelling. A readable NAME file naming no OC package at
+      all is refused the same way -- MF6 then saves nothing, and the stale file was read
+      just as silently (found in review). An OC that cannot be READ (no name file)
       still falls back to `<model>.<suffix>`, as before. **Not changed:** the
       cell-budget surfaces keep `_declared_output_path`'s fallback for an OC naming no
       `BUDGET FILEOUT`, which is the same trap one file over.
@@ -21778,8 +21780,10 @@ same day, which is the useful part of the result.
       (`pest.observations.snapshot_run_outputs`), and the forward run's
       `write_named_series_targets(..., outputs=)` reads the zone sets through
       `pest.run_outputs.RunOutputs`, which answers the five things the family's own
-      `simulated_series` asks of a model and opens only output files -- one code path for
-      the build's base table and every realization. The build refuses a model whose flat
+      `simulated_series` asks of a model and opens only output files -- the family's one
+      code path serves the build's base table (on the loaded run model) and every
+      realization (on `RunOutputs`); the two read equal tables on DIS and DISU runs, both
+      routes (`tests/test_drn_zone_obs_on_dis_and_disu.py`). The build refuses a model whose flat
       node numbering is not layer after layer. Measured on a copy of Ten Trails `ss`
       (`docs/reproducers/named_series_outputs_only.py`, three sets -- two RIV zone sets
       and a DRN zone -- at a load average of ~13): 10.55-14.69 s per realization with the

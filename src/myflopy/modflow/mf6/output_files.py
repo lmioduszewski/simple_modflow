@@ -31,22 +31,33 @@ def _model_dir(workspace: Path, model_name: str) -> Path:
 _OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds", "concentration": "ucn"}
 
 
-def _oc_declaration(workspace: Path, model_name: str, kind: str) -> tuple[Path | None, str | None]:
-    """The model's OC file and the file it names for ``kind``, as ``(oc_file, declared)``.
+def _name_file_oc(workspace: Path, model_name: str) -> tuple[Path | None, Path | None]:
+    """The model's name file and the OC file it names, as ``(name_file, oc_file)``.
 
-    ``oc_file`` is ``None`` when the name file or the OC file it names cannot be
-    read; ``declared`` is ``None`` when the OC file names no ``<KIND> FILEOUT``.
+    ``name_file`` is ``None`` when there is no name file to read; ``oc_file`` is
+    ``None`` when there is none, or when the name file names no OC package.
     """
 
     model_dir = _model_dir(workspace, model_name)
     name_file = model_dir / f"{model_name}.nam"
-    oc_file = None
-    if name_file.is_file():
-        for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            fields = line.split("#", 1)[0].split()
-            if len(fields) >= 2 and fields[0].upper().startswith("OC"):
-                oc_file = model_dir / fields[1]
-                break
+    if not name_file.is_file():
+        return None, None
+    for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        fields = line.split("#", 1)[0].split()
+        if len(fields) >= 2 and fields[0].upper().startswith("OC"):
+            return name_file, model_dir / fields[1]
+    return name_file, None
+
+
+def _oc_declaration(workspace: Path, model_name: str, kind: str) -> tuple[Path | None, str | None]:
+    """The model's OC file and the file it names for ``kind``, as ``(oc_file, declared)``.
+
+    ``oc_file`` is ``None`` when the name file or the OC file it names cannot be
+    read, or the name file names no OC; ``declared`` is ``None`` when the OC file
+    names no ``<KIND> FILEOUT``.
+    """
+
+    _name_file, oc_file = _name_file_oc(workspace, model_name)
     if oc_file is None or not oc_file.is_file():
         return None, None
     for line in oc_file.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -111,8 +122,10 @@ def _declared_field_output(workspace: Path, model_name: str, kind: str, *, calle
     576): MF6 refuses ``SAVE HEAD`` without one, so such a run saved no
     head at all, and the ``<model>.hds`` the fallback opened was another run's,
     left in a reused directory -- read in silence by ``compare()`` and by the
-    PEST build. An OC that cannot be read (no name file, a duck-typed model)
-    still falls back to ``<model>.<suffix>``.
+    PEST build. A readable name file naming NO OC package is refused the same
+    way (ledger 576): without an OC MF6 saves nothing. An OC that
+    cannot be read (no name file, a duck-typed model, an OC file the name file
+    names but the directory lacks) still falls back to ``<model>.<suffix>``.
 
     Parameters
     ----------
@@ -133,14 +146,27 @@ def _declared_field_output(workspace: Path, model_name: str, kind: str, *, calle
     Raises
     ------
     ValueError
-        When the OC is readable and declares no ``<KIND> FILEOUT``.
+        When the OC is readable and declares no ``<KIND> FILEOUT``, or the name
+        file is readable and names no OC.
     """
 
     oc_file, declared = _oc_declaration(workspace, model_name, kind)
+    word = kind.upper()
     if oc_file is None:
+        name_file, named_oc = _name_file_oc(workspace, model_name)
+        if name_file is not None and named_oc is None:
+            # No OC at all saves nothing either: the same stale file, one step
+            # earlier (ledger 576).
+            raise ValueError(
+                f"{caller}: model {model_name!r}'s name file {name_file.name!r} names no "
+                f"output control (OC6), so the run saved no {kind} and a "
+                f"{model_name}.{_OC_FILEOUT_SUFFIXES[kind]} in the run directory is not this "
+                f"run's (ledger 576). Give the model an OC that saves it "
+                f"(mf.oc({_FILERECORD_KEYWORDS[kind]}=\"{model_name}.{_OC_FILEOUT_SUFFIXES[kind]}\", "
+                f"saverecord=[(\"{word}\", \"LAST\"), ...])) and run the model again."
+            )
         return workspace / f"{model_name}.{_OC_FILEOUT_SUFFIXES[kind]}"
     if declared is None:
-        word = kind.upper()
         raise ValueError(
             f"{caller}: model {model_name!r}'s output control {oc_file.name!r} declares no "
             f"{word} FILEOUT, so the run saved no {kind} -- MF6 refuses SAVE {word} without "
