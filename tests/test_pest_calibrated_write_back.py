@@ -411,6 +411,59 @@ def test_a_boundname_differing_only_in_case_is_the_same_record():
         _substituted_records(run, {0: read}, ("cond",), "ghb")
 
 
+def test_a_number_flopy_reads_as_text_is_a_number_and_a_keyword_is_kept():
+    """FloPy reads LAK's ``bedleak`` (it may say ``NONE``) and SFR's ``man`` (it may name a
+    time series) as TEXT. A spelled number is a value -- written back, or for an unwritten
+    column not taken for identity -- and a ``NONE`` the forward run left on a lake it did
+    not select stays the run's (ledger 563). Before it, every SFR write-back was refused
+    (``man`` ``0.03`` against ``'0.03'``) and a ``NONE`` raised inside ``float()``.
+    """
+
+    from myflopy.modflow.mf6.pest.calibrated import (
+        CalibratedInputs,
+        _Dataset,
+        _records_frame,
+        _substituted_records,
+    )
+
+    # FloPy's own LAK layout: claktype and bedleak are object columns.
+    read = np.empty(3, dtype=[("ifno", "<i8"), ("iconn", "<i8"), ("cellid", "O"),
+                              ("claktype", "O"), ("bedleak", "O"),
+                              ("belev", "<f8")]).view(np.recarray)
+    read["ifno"], read["iconn"], read["belev"] = [0, 1, 1], [0, 0, 1], 0.0
+    for index, (cell, bedleak) in enumerate([(6, "1.0"), (13, "0.3"), (14, "none")]):
+        read["cellid"][index], read["claktype"][index] = (0, cell), "vertical"
+        read["bedleak"][index] = bedleak
+    run = [[0, 0, (0, 6), "VERTICAL", 0.1, 0.0], [1, 0, (0, 13), "vertical", 0.3, 0.0],
+           [1, 1, (0, 14), "vertical", "NONE", 0.0]]
+    assert _substituted_records(run, read, ("bedleak",), "lak") == [
+        [0, 0, (0, 6), "VERTICAL", 1.0, 0.0], [1, 0, (0, 13), "vertical", 0.3, 0.0],
+        [1, 1, (0, 14), "vertical", "NONE", 0.0]]
+    assert _records_frame(read, ("bedleak",))["bedleak"].tolist() == [1.0, 0.3, "none"]
+    dataset = _Dataset(model="m", package="lak", variable="connectiondata", family="list",
+                       fields=("bedleak",), parameters=["lakbedleak"], additive=False)
+    flat = CalibratedInputs._flat(read, dataset)
+    assert flat[:2].tolist() == [1.0, 0.3] and np.isnan(flat[2])
+    # A keyword where the run declared a number: the files are not the run's.
+    run[2][4] = 0.35
+    with pytest.raises(ValueError, match=r"record 2's bedleak is 0.35 in the run and "
+                                         r"'none' .*not a number"):
+        _substituted_records(run, read, ("bedleak",), "lak")
+
+    # FloPy's SFR layout: man is an object column the calibration does not write.
+    read = np.empty(1, dtype=[("ifno", "<i8"), ("cellid", "O"), ("rhk", "<f8"),
+                              ("man", "O"), ("boundname", "O")]).view(np.recarray)
+    read["ifno"], read["rhk"] = 0, 1.5
+    read["cellid"][0], read["man"][0], read["boundname"][0] = (0, 10), "0.03", "creek_b"
+    run = [[0, (0, 10), 0.5, 0.03, "Creek_B"]]
+    assert _substituted_records(run, read, ("rhk",), "sfr") == [
+        [0, (0, 10), 1.5, 0.03, "Creek_B"]]
+    # A time-series NAME there is identity, compared as text.
+    run[0][3] = "tsman"
+    with pytest.raises(ValueError, match="record 0's man is 'tsman'"):
+        _substituted_records(run, read, ("rhk",), "sfr")
+
+
 # -- refusals ---------------------------------------------------------------------------
 
 

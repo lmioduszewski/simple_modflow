@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 562 entries (567 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 563 entries (568 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 563 | A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left | 2026-10-12 |
 | 562 | A write-back compares text without regard to case, and refuses to fork a simulation the run did not run | 2026-10-12 |
 | 561 | An edit's override REPLACES a recipe that fills the same option | 2026-10-12 |
 | 560 | A calibrated realization comes back as library packages, rebuilt by replaying its own forward run | 2026-10-12 |
@@ -21414,8 +21415,9 @@ same day, which is the useful part of the result.
       `cal.build()`, no shim). **Not built:** writing back every posterior realization
       as an ensemble of packages; a RECIPE form (a pilot-point multiplier recipe composed
       on a K recipe, item 16's algebra) -- arrays/records only, per Q7; a TIED parameter
-      (refused); a LAK `bedleak`/SFR `rhk` write-back is generic over the record
-      (`packagedata`/`connectiondata`) but untested until those targets land. Cost:
+      (refused). A LAK `bedleak`/SFR `rhk` write-back is generic over the record
+      (`packagedata`/`connectiondata`); it was untested here and refused every SFR
+      package until ledger 563. Cost:
       `pest.ies` gains one deferred import (the method imports the layer-12 module),
       raising its ratchet count 0 -> 1.
 
@@ -21450,3 +21452,21 @@ same day, which is the useful part of the result.
       packages to compare (logged); an unfingerprinted package (`package_digest` None)
       passes. The fork is also validated (`register=False`) before any package is
       registered, so a refused swap leaves nothing behind.
+
+563. **A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left (2026-10-12).**
+      Integration of ledgers 560 and 558. FloPy reads a list column that may hold a
+      keyword or a time-series name as text -- LAK `bedleak` (`NONE`), SFR `man` -- so the
+      cell-identity check compared SFR's `man` `0.03` with `'0.03'` and refused EVERY
+      `sfr.rhk` write-back as "not this run's", and a `bedleak` `NONE` on a lake
+      `features=` left out (ledger 558 runs it) died inside `float()`. **Chosen:** where
+      the run declared a NUMBER and the file spells one, the column is a float field --
+      not compared, the run's value kept, as every float-typed column already was; a
+      WRITTEN field holding a keyword must equal the run's and keeps it; `get()` returns
+      a written field as floats (a keyword as its text) and `summary()` counts a keyword
+      as nothing. **Not converted:** an UNWRITTEN text column -- `get()` gives SFR's `man`
+      as FloPy's text -- since the same rule would turn a boundname `007` into 7.0.
+      Measured in `tests/test_pest_write_back_features.py`: from a real PESTPP-IES run,
+      per-lake leakance and per-stream rhk come back, and a model rebuilt from
+      `to_library` reproduces the base realization's `.rei` to 1e-6 ft, a well screened
+      across both layers included -- its T-weighted writer runs after the model command,
+      so the replay never reaches it.

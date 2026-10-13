@@ -1220,7 +1220,7 @@ returns a `CalibratedInputs`:
 
 | member | what it gives |
 | --- | --- |
-| `get(package, variable, *, model=None)` | one dataset as MF6 read it: `k` an `(nlay, ncpl)` array, an array RCH's `recharge` `{period: array}`, a list package's records as a table |
+| `get(package, variable, *, model=None)` | one dataset as MF6 read it: `k` an `(nlay, ncpl)` array, an array RCH's `recharge` `{period: array}`, a list package's records as a table (a LAK's `connectiondata`, an SFR's `packagedata`: the calibrated `bedleak`/`rhk` as floats even though FloPy reads `bedleak` as text, a `NONE` kept as `'none'`; ledger 563) |
 | `summary()` | one row per dataset: the parameters scaling it, layers/periods, and how far it moved from the run (`ratio`, or `offset` for an elevation) |
 | `packages()` | `{label: PackageSpec}`: the packages the RUN built (its frozen snapshot and library copies, never the library as it is now) with the values substituted -- an array replaced whole, a list package's calibrated fields only, after every record's cell is checked -- pin and lake rules kept, `metadata["calibrated_from"]` and the parameter file as `source_path` |
 | `to_library(project, *, keys=None, simulation=None, overwrite=False, note=None)` | registers them under NEW keys (`f"{label}/{pest}"`) and forks the run's simulation onto them (`f"{simulation}/{pest}"`; `simulation=False` forks none); returns `{label: key}` |

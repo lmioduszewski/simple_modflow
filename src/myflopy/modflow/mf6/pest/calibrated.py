@@ -464,13 +464,57 @@ def _name_file_packages(model) -> list[str]:
     return [str(row[2] if len(row) > 2 and row[2] else row[0]).lower() for row in rows]
 
 
+def _number(value) -> float | None:
+    """``value`` as a float when it is a number or SPELLS one, else ``None``.
+
+    FloPy reads a list column that may hold a keyword or a time-series name as TEXT --
+    LAK's ``bedleak`` (``NONE``), SFR's ``man`` -- so a number there comes back as its
+    spelling (``'0.03'``) and a keyword as itself (``'none'``; ledger 563).
+    """
+
+    if isinstance(value, (bool, np.bool_, tuple, list)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_number(value) -> bool:
+    """Whether ``value`` is an int or float (a bool is not)."""
+
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(
+        value, (bool, np.bool_))
+
+
+def _numbers(values) -> np.ndarray:
+    """``values`` as floats, NaN for a keyword (:func:`_number`)."""
+
+    return np.array([np.nan if (number := _number(value)) is None else number
+                     for value in values], dtype=float)
+
+
 def _records_frame(value, fields: tuple[str, ...]) -> pd.DataFrame:
-    """A list dataset as a table, one row per record, with ``per`` when it has periods."""
+    """A list dataset as a table, one row per record, with ``per`` when it has periods.
+
+    A written field FloPy read as text (LAK's ``bedleak``) holds numbers: floats, a
+    keyword kept as its text (ledger 563).
+    """
 
     frames = []
     items = value.items() if isinstance(value, dict) else [(None, value)]
     for per, records in items:
         frame = pd.DataFrame.from_records(records, columns=records.dtype.names)
+        for name in fields:
+            if name in frame.columns and frame[name].dtype == object:
+                numbers = [_number(item) for item in frame[name]]
+                frame[name] = (
+                    pd.Series(numbers, index=frame.index, dtype=float)
+                    if all(number is not None for number in numbers)
+                    else pd.Series([item if number is None else number
+                                    for item, number in zip(frame[name], numbers, strict=True)],
+                                   index=frame.index, dtype=object)
+                )
         if per is not None:
             frame.insert(0, "per", int(per))
         frames.append(frame)
@@ -507,6 +551,13 @@ def _substituted_records(base, read, fields: tuple[str, ...], label: str):
     equal the base record's by position -- text without regard to case
     (:func:`_identity`) -- or the template is not this run. The run's own values of
     those fields are kept, its spelling of a boundname included.
+
+    A column FloPy reads as TEXT because it may hold a keyword (ledger 563): where the
+    run declared a NUMBER and the file spells one (SFR's ``man``, ``'0.03'``), it is a
+    float field like any other -- not compared, the run's kept. A written field holding
+    a keyword (LAK's ``bedleak`` ``NONE`` on a lake the calibration did not select,
+    which the forward run leaves as it was) is no value: the run's record must say the
+    same, and keeps it.
     """
 
     def _one(records, recarray, where):
@@ -536,6 +587,8 @@ def _substituted_records(base, read, fields: tuple[str, ...], label: str):
                     "position."
                 )
             for name in identity:
+                if _is_number(record[positions[name]]) and _number(row[name]) is not None:
+                    continue  # a number FloPy read as text: a float field (ledger 563)
                 ours, theirs = _identity(record[positions[name]]), _identity(row[name])
                 if ours != theirs:
                     raise ValueError(
@@ -544,7 +597,17 @@ def _substituted_records(base, read, fields: tuple[str, ...], label: str):
                         "template is not this run's."
                     )
             for name in fields:
-                record[positions[name]] = float(row[name])
+                value = _number(row[name])
+                if value is None:
+                    ours, theirs = _identity(record[positions[name]]), _identity(row[name])
+                    if ours != theirs:
+                        raise ValueError(
+                            f"{label} {where}: record {index}'s {name} is {ours!r} in the "
+                            f"run and {theirs!r} in the realization's files, which is not a "
+                            "number; the calibration's template is not this run's."
+                        )
+                    continue
+                record[positions[name]] = value
             out.append(record)
         return out
 
@@ -670,8 +733,10 @@ class CalibratedInputs:
             (an array RCH's ``recharge``): ``{period: array}``, one per period block.
             A list dataset: one row per record (with ``per`` for period data) and one
             column per field, the calibrated fields as the realization's files hold
-            them -- a ``riv.stage`` offset moves ``rbot`` too (ledger 519). Copies:
-            editing one changes nothing here.
+            them -- a ``riv.stage`` offset moves ``rbot`` too (ledger 519) -- as
+            floats even where FloPy reads the column as text (LAK's ``bedleak``,
+            which may say ``NONE``: such a row keeps the text ``'none'``, ledger 563).
+            Copies: editing one changes nothing here.
 
         Raises
         ------
@@ -757,8 +822,10 @@ class CalibratedInputs:
                     array = array[sorted(dataset.layers)]
                 arrays.append(np.ravel(array))
             return np.concatenate(arrays) if arrays else None
+        # A keyword in a written field (LAK's bedleak NONE) is NaN, which no row
+        # of the summary counts (ledger 563).
         return np.concatenate([
-            np.concatenate([np.asarray(records[name], dtype=float) for name in dataset.fields])
+            np.concatenate([_numbers(records[name]) for name in dataset.fields])
             for records in items
         ]) if items else None
 

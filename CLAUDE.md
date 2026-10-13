@@ -2119,7 +2119,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   lower-cased); forks to `f"{label}/{pest}"` keys plus a forked simulation, never
   edits -- the fork is refused when the library's other packages moved since the run
   (ledger 562). A fork/edit/`with_options` override over a recipe-filled option REPLACES the
-  recipe (ledger 561).
+  recipe (ledger 561). LAK `bedleak` and SFR `rhk` come back too, and FloPy reads their
+  columns as TEXT (`bedleak` may say `NONE`, `man` may name a time series): a spelled
+  number is a number, never identity, and a keyword the forward run left stays (ledger 563).
   **A review reads ONE run** (ledgers 507, 508): a serial launch deletes
   an earlier run's `<name>.*` outputs from the template (`runs.pestpp_ies_outputs`, the
   one list) and says so (`UserWarning`, ledger 532), a parallel master is copied

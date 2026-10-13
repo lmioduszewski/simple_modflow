@@ -1064,6 +1064,9 @@ is refused when one of them was edited since the run (ledger 562):
 `simulation=False` registers the calibrated packages alone, to fork by hand. A calibrated array is `unverifiable` on a grid move, and
 `with_grid(remap=True)` is its route (ledger 300). Written back as resolved arrays and
 records; a RECIPE form -- a pilot-point multiplier recipe on a K recipe -- is not built.
+A lake's `bedleak` and a stream's `rhk` (`style="feature"`) come back the same way, record
+by record; a `NONE` bedleak on a lake the calibration did not select stays `NONE`
+(ledger 563).
 
 ---
 
