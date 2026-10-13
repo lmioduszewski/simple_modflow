@@ -207,7 +207,7 @@ def test_an_argument_that_cannot_act_on_a_reach_is_refused(kwargs, message):
 def test_a_correlated_grid_over_reaches_sharing_a_cell_is_refused(runs, tmp_path):
     """pyEMU places reaches 1 and 2 at one point and then draws EVERY reach uncorrelated
     (off-diagonal within 0.03 of 0, measured); without the shared cell the same draw
-    correlates neighbours at 0.82. ``docs/reproducers/sfr_grid_shared_cell_prior.py``."""
+    correlates neighbours at 0.82. ``docs/reproducers/feature_target_pyemu_keys.py``, section E."""
 
     cal = calibration(runs["named"], tmp_path)
     cal.parameterize("rhk", style="grid", correlation=50.0)
