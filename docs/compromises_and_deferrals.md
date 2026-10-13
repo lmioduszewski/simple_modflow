@@ -13843,7 +13843,8 @@ same day, which is the useful part of the result.
         the path" is ONE helper, `surfaces._content_keyed`, which `Surface.digest_payload`
         now uses too.
       - **An inline `mf.Area`'s `source` and `note` are not digested**: provenance and a
-        comment. Its WKT and CRS are.
+        comment. Its WKT and CRS are. (2026-10-12: nor its `name`, a label, which
+        `to_dict` now SAVES so an inline footprint taken from `model.aoi` keeps it.)
       - **`from_dict` builds entries DIRECTLY**, never through `excavate()`, whose
         declaration reads the file: a bundled payload names a project-RELATIVE path that
         only the build anchors, and reading it at load would check it against the working

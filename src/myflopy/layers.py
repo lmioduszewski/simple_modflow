@@ -3608,8 +3608,8 @@ class LayerStack:
         meets the ``Surface`` objects themselves and their own ``digest_payload`` would
         never be consulted. This is what reaches them (ledger 293's second pass) -- and
         an excavation's footprint file, whose hash replaces its path through the same
-        helper (``surfaces._content_keyed``). An inline ``mf.Area``'s ``source`` and
-        ``note`` are dropped: provenance and a comment, not content.
+        helper (``surfaces._content_keyed``). An inline ``mf.Area``'s ``source``,
+        ``note`` and ``name`` are dropped: provenance, a comment and a label, not content.
 
         Returns
         -------
@@ -3647,7 +3647,7 @@ class LayerStack:
             if "area" in entry:
                 entry["area"] = {
                     key: value for key, value in entry["area"].items()
-                    if key not in ("source", "note")
+                    if key not in ("source", "note", "name")
                 }
             _content_keyed(entry, excavation.source_shas)
         return payload

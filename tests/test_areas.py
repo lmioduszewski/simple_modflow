@@ -135,6 +135,31 @@ def test_the_saved_document_is_plain_json_at_full_precision():
     assert (back.crs, back.note) == ("EPSG:4326", "n")
 
 
+def test_an_inline_area_keeps_its_name_through_a_save():
+    """``to_dict`` wrote no name -- a library's key carries it -- so an INLINE area (an
+    excavation's footprint taken from ``model.aoi``) came back unnamed. It is written
+    now; a library's key still wins on reading, and the digest does not see it."""
+
+    pond = Area(shp.box(0.0, 0.0, 50.0, 50.0), "EPSG:2927", name="pond")
+    assert pond.to_dict()["name"] == "pond"
+    assert Area.from_dict(pond.to_dict()).name == "pond"
+    assert Area.from_dict(pond.to_dict(), name="site").name == "site"
+    assert "name" not in Area(shp.box(0.0, 0.0, 1.0, 1.0)).to_dict()
+
+    def stack(area):
+        return (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+                .excavate(bottom=93.0, within=area, name="cut"))
+
+    named, unnamed = stack(pond), stack(Area(pond.geometry, pond.crs))
+    back = mf.LayerStack.from_dict(json.loads(json.dumps(named.to_dict())))
+    assert back.to_dict()["excavations"][0]["area"]["name"] == "pond"
+    assert named.digest_payload() == unnamed.digest_payload()
+    basin = mf.Surface.basin(pond, depth=5.0, water_surface=100.0)
+    assert mf.Surface.from_dict(json.loads(json.dumps(basin.to_dict()))).zone.name == "pond"
+    assert basin.digest_payload() == mf.Surface.basin(
+        Area(pond.geometry, pond.crs), depth=5.0, water_surface=100.0).digest_payload()
+
+
 # --- the library -------------------------------------------------------------------
 
 

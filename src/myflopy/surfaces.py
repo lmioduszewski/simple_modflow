@@ -140,6 +140,23 @@ def _content_keyed(payload: dict[str, Any], source_shas: dict) -> dict[str, Any]
     return payload
 
 
+def _without_area_names(payload: dict[str, Any]) -> dict[str, Any]:
+    """``payload`` with the ``name`` of every inline ``mf.Area`` footprint removed, in place.
+
+    A name is a label, not content: an area taken from ``model.aoi`` carries one and
+    the same polygon drawn inline does not, and the two must digest alike. Walks the
+    ``operands`` too, which :meth:`Surface.to_dict` nests as plain dicts.
+    """
+
+    zone = payload.get("zone")
+    if isinstance(zone, dict) and zone.get("kind") == "Area":
+        zone.pop("name", None)
+    for operand in payload.get("operands") or ():
+        if isinstance(operand, dict):
+            _without_area_names(operand)
+    return payload
+
+
 def _carries_propagate(node) -> bool:
     """Whether ``node``, or any surface under it, reads ``fill="propagate"``.
 
@@ -633,10 +650,11 @@ class Surface:
         CACHE -- a file this surface WRITES -- and its content is fully determined by
         ``contours`` plus the build parameters, both of which are digested here. So it
         carries nothing the digest needs, while bundling repoints it like any other
-        path and would move the digest for a file nobody edited.
+        path and would move the digest for a file nobody edited. An inline footprint's
+        ``name`` is dropped too: a label, not content.
         """
 
-        payload = self.to_dict()
+        payload = _without_area_names(self.to_dict())
         payload.pop("out", None)
         return _content_keyed(payload, self.source_shas)
 

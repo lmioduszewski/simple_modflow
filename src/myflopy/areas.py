@@ -92,8 +92,12 @@ class Area:
         Free text kept with the area and written by :meth:`to_dict`. Default None.
     name : str or None, optional
         The name a library holds the area under (``add_aoi`` and
-        ``aoi[name] = ...`` set it). Shown by ``repr``; NOT written by
-        :meth:`to_dict`, because the library key carries it. Default None.
+        ``aoi[name] = ...`` set it), or any label it carries inline -- an
+        excavation's or a basin's footprint taken from ``model.aoi``. Shown by
+        ``repr``, and written by :meth:`to_dict` when set, so an inline area keeps it
+        through a save (a library's key still wins on reading it back,
+        :meth:`from_dict`). Not part of a package digest: a label, not content.
+        Default None.
     source : str or None, optional
         Provenance: the path of the vector file the geometry was read from, set by
         :meth:`coerce` for a path. Written by :meth:`to_dict`, never re-read -- the
@@ -251,7 +255,9 @@ class Area:
         # CRS-dependent loss is not worth the bytes.
         wkt = shp.to_wkt(self.geometry, rounding_precision=-1)
         doc: dict[str, Any] = {"kind": "Area", "wkt": wkt, "crs": self.crs}
-        for key in ("note", "source"):
+        # The name too: an INLINE area (an excavation's or a basin's footprint) has no
+        # library key to carry it, and lost it through a save.
+        for key in ("name", "note", "source"):
             value = getattr(self, key)
             if value is not None:
                 doc[key] = str(value)
@@ -265,20 +271,21 @@ class Area:
         ----------
         doc : dict
             A document :meth:`to_dict` wrote: ``"wkt"`` is required (a missing one
-            raises ``KeyError``); ``"crs"``, ``"note"`` and ``"source"`` are read
-            when present and default to None; ``"kind"`` and any other key are
-            ignored.
+            raises ``KeyError``); ``"crs"``, ``"name"``, ``"note"`` and ``"source"``
+            are read when present and default to None; ``"kind"`` and any other key
+            are ignored.
         name : str, optional
-            The name to give the area. :meth:`to_dict` does not store one -- the
-            library key is the name -- so a caller restoring a library passes its
-            key here. Default None.
+            The name to give the area, over the document's own ``"name"``: a caller
+            restoring a library passes its key here, and the key is the name the
+            library holds it under. Default None keeps the document's name (None when
+            it has none -- a document written before names were stored).
         """
 
         return cls(
             shp.from_wkt(doc["wkt"]),
             doc.get("crs"),
             doc.get("note"),
-            name,
+            doc.get("name") if name is None else name,
             doc.get("source"),
         )
 
