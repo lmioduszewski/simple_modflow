@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 558 entries (563 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 559 entries (564 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 559 | One parameter set over packages whose records differ in width is refused, not split; and `zones=` leaves no... | 2026-10-12 |
 | 558 | `lak.bedleak` and `sfr.rhk` are calibration targets: `style="feature"` is one multiplier per lake or named... | 2026-10-12 |
 | 557 | `compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-dec... | 2026-10-12 |
 | 556 | A well screened across layers is ONE observation of its K x saturated-open-length weighted head | 2026-10-12 |
@@ -21348,3 +21349,25 @@ same day, which is the useful part of the result.
       reach with no boundname keeps its rhk, said by a Python warning (ledger 288).
       Metadata records `features` and `feature_sets`. **Not done:** `capture=True` on
       these targets (refused: rows are not cells); a per-lake correlated prior.
+
+559. **One parameter set over packages whose records differ in width is refused, not split; and `zones=` leaves no list record alone (2026-10-12).**
+      Two R1-params leftovers (ledgers 517, 520). `package=("riv", "crisp")` where one
+      package declares BOUNDNAMES (or AUXILIARY) the other does not hands pyEMU files
+      of 5 and 6 columns in one `add_parameters` call, and pyEMU stopped with `shape
+      mismatch for array style` after the whole staging (measured on `riv.stage` and
+      `riv.cond`, `constant` and `grid`). **Refused at build, naming each package, its
+      width and its options, and the call per package that builds** -- which was run:
+      `package="riv"` and `package="crisp"` beside it build and MF6 terminates normally.
+      **Judgment call:** refused rather than split into one call per package under one
+      shared name, because pyEMU names a parameter per call, so "one shared set" across
+      two calls would be two sets under the hood -- exactly what the per-package calls
+      say out loud. A `style="feature"` set is one call per package and is let through.
+      The `layers=` refusal on a list target told the caller to "restrict it with zones=
+      -- labels <= 0 mark records left alone"; measured, a list target's `style="zone"`
+      makes EVERY label a parameter, 0 and -1 included (pyEMU's own zone path; the
+      zone-0 warning already said so), `grid` only puts the label in each name, and
+      `constant` ignores `zones=`; on DIS/DISV one label covers a whole column. It names
+      `package=` now, and `recharge`'s refusal says the same of a list RCH. **Not
+      done:** `zones=` with `style="constant"` on a list target is still accepted and
+      does nothing (pyEMU reads `zone_array` only for `zone`/`grid` list parameters);
+      refusing it is ledger 520's rule, left for the parameter lane.

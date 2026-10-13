@@ -87,7 +87,10 @@ was not found and a second DRN (`seeps` beside `drn`) was left out with no word 
 517). A model with SEVERAL packages of the type refuses a call with no
 `package=`, naming each and the spellings: `package="crisp"` picks one, and
 `package=("riv", "crisp")` shares one parameter set (its default name gains
-`_<package>`, `rivcond_crisp`). Two creeks are usually two parameters.
+`_<package>`, `rivcond_crisp`). Two creeks are usually two parameters. A shared set
+over packages whose records differ in width -- one declares BOUNDNAMES or AUXILIARY
+the other does not -- is refused at build, naming the call per package that builds:
+pyEMU reads one set's files as one table and stopped on the mismatch (ledger 559).
 
 **An elevation is an offset, never a multiplier.** `chd`, `ghb.bhead`, `drn.elev` and
 `riv.stage` are additive in model length units -- `bounds=(-2, 2)` by default --
@@ -101,7 +104,7 @@ record's river bottom by the same offset**, so its depth -- what sets the river'
 refused at build.
 
 **An argument that cannot act is refused, not ignored** (ledger 520):
-`layers=` on a list target (use `zones=`), `correlation=` on `constant`/`zone`, a
+`layers=` on a list target (pick the package with `package=`; `zones=` leaves no list record out -- with `style="zone"` every label, 0 too, is a parameter, ledger 559), `correlation=` on `constant`/`zone`, a
 variogram shape (`anisotropy`/`bearing`/`nugget`) without `correlation=`,
 an `**extra` keyword pyEMU's `add_parameters` does not take, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
 `"pp"` names `"pilotpoints"` -- and `"pilotpoints"` on a list target (pilot points

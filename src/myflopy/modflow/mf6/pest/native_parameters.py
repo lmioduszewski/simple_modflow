@@ -1011,16 +1011,20 @@ class NativeParameterSpec:
     layers : int or iterable of int or None, optional
         Zero-based layers an ARRAY target is restricted to, held as a tuple of
         ``int`` (:func:`checked_layers`, which refuses anything else). Default
-        ``None``: every layer. Given for a LIST target, or for ``recharge`` in either
-        form (MF6 applies it to one cell per column), it raises ``ValueError``, naming
-        ``zones=``.
+        ``None``: every layer. Given for a LIST target it raises ``ValueError``
+        naming ``package=`` -- nothing selects a list record by layer, and ``zones=``
+        leaves none out (with ``style="zone"`` every label, ``0`` too, is a parameter;
+        ledger 559); for ``recharge`` in either form (MF6 applies it to one cell
+        per column) it raises naming ``zones=``.
     package : str or tuple of str or None, optional
         Which package(s) of the target's TYPE are scaled, by NAME
         (:func:`checked_package_argument`). ``None`` (default): the model's only
         package of the type; several raise ``SeveralPackagesError`` at
         :meth:`PestProject.parameterize` or :meth:`PestProject.build`. A tuple shares
         one parameter set across the packages it names; refused with ``features`` or
-        ``style="feature"``, which number features within ONE package.
+        ``style="feature"``, which number features within ONE package, and at
+        :meth:`PestProject.build` when the packages' records differ in width -- one
+        declares BOUNDNAMES or AUXILIARY the other does not (ledger 559).
     features : int or str or sequence of int or str or None, optional
         The lakes (``lak.bedleak``) or reaches and named streams (``sfr.rhk``) the
         parameter covers, each MF6's number for it, ZERO-based, or its boundname (any
@@ -1220,15 +1224,20 @@ class NativeParameterSpec:
             raise ValueError(
                 f"layers= on target {declared.canonical!r}: MF6 applies it to ONE cell of "
                 "each column (IRCH, or the top active cell), in either form, so it has no "
-                "layers to restrict. Restrict it with zones= -- one label per cell of a "
-                "layer, labels <= 0 left alone."
+                "layers to restrict. Zone it by column with zones= -- one label per "
+                "cell of a layer: on an array RCH a label <= 0 is left alone, while on a "
+                "list RCH, with style='zone', every label -- 0 and negatives too -- is a "
+                "parameter of its own (ledger 559)."
             )
         if self.layers is not None and recipe.family == "list":
             raise ValueError(
                 f"layers= on list target {recipe.canonical!r}: it scales every record of "
                 "its package's files, whatever layer each names, so layers= cannot act. "
-                "Restrict it with zones= -- a (nlay, ncpl) label array whose labels <= 0 "
-                "mark records left alone -- or pick the package with package=."
+                "Nor can zones= leave records out: with style='zone' every label -- 0 "
+                "and negatives too -- is a parameter of its own, and on DIS/DISV one "
+                "label covers a whole column, every layer alike ('grid' only names its "
+                "records by it, 'constant' ignores it). Pick the package with package= "
+                "(ledger 559)."
             )
         self.periods = checked_periods(self.periods, declared)
         _refuse_extra_keywords_pyemu_does_not_take(self.extra)
@@ -2260,6 +2269,7 @@ def target_files(project, spec: NativeParameterSpec) -> list[TargetFile]:
         refuse_storage_that_cannot_act(project, spec, model, packages, targets)
     spec.period_groups = period_groups_for(project, spec, model, targets)
     spec.period_group_pargps = [[] for _group in spec.period_groups]
+    _refuse_one_set_over_records_of_unequal_width(spec, recipe, packages, workspace)
     targets = [target for group in spec.period_groups for target in group.targets]
     if spec.capture and sum(target.period is not None for target in targets) > 1:
         raise NotImplementedError(
@@ -2271,6 +2281,98 @@ def target_files(project, spec: NativeParameterSpec) -> list[TargetFile]:
     spec.resolved_targets = list(targets)
     spec.resolved_files = [target.filename for target in targets]
     return targets
+
+
+def _list_record_width(path: Path) -> int | None:
+    """The columns of an MF6 external list file's first record, as pyEMU splits it.
+
+    ``None`` for a file holding no record.
+    """
+
+    try:
+        first = pd.read_csv(path, sep=r"\s+", header=None, dtype=str, keep_default_na=False,
+                            comment="#", nrows=1)
+    except pd.errors.EmptyDataError:
+        return None
+    return int(first.shape[1])
+
+
+def _record_options(package) -> str:
+    """What a list package declares that widens its records: BOUNDNAMES, AUXILIARY."""
+
+    said = []
+    boundnames = getattr(package, "boundnames", None)
+    if boundnames is not None and boundnames.get_data():
+        said.append("BOUNDNAMES")
+    auxiliary = getattr(package, "auxiliary", None)
+    names = auxiliary.get_data() if auxiliary is not None else None
+    if names is not None and len(names):
+        said.append("AUXILIARY " + " ".join(str(name) for name in list(names[0])[1:]))
+    return ", ".join(said) if said else "neither BOUNDNAMES nor AUXILIARY"
+
+
+def _refuse_one_set_over_records_of_unequal_width(spec: NativeParameterSpec, recipe: _Recipe,
+                                                  packages, workspace: Path) -> None:
+    """Refuse ONE parameter set over list packages whose records are not one width.
+
+    ``package=("riv", "crisp")`` shares one set, and every ``add_parameters`` call
+    hands pyEMU the files of all the packages it names, which pyEMU reads as ONE
+    table: when one package declares BOUNDNAMES (or AUXILIARY variables) the other
+    does not, its records carry more columns and pyEMU stops with ``shape mismatch
+    for array style`` after the whole staging (ledger 559). A ``style="feature"``
+    set is one call per package (``package=`` there is one name, ledger 558), so it
+    is let through.
+
+    Parameters
+    ----------
+    spec : NativeParameterSpec
+        The parameter request; its ``period_groups`` (one ``add_parameters`` call
+        each) and ``name`` are read.
+    recipe : _Recipe
+        The target's recipe in its package's form. Anything but a ``"list"`` recipe
+        is let through.
+    packages : list
+        The FloPy packages :func:`select_packages` chose; their BOUNDNAMES and
+        AUXILIARY options are named in the refusal.
+    workspace : Path
+        The staged simulation's workspace, which the file names are relative to.
+
+    Raises
+    ------
+    ValueError
+        When the files one call would hand pyEMU hold records of different widths,
+        naming each package, its width and its options, and the spelling that
+        builds: one ``parameterize`` call per package.
+    """
+
+    if recipe.family != "list" or (recipe.feature is not None and spec.style == "feature"):
+        return
+    options = {package.package_name: package for package in packages}
+    for group in spec.period_groups:
+        widths: dict[str, int] = {}
+        for target in group.targets:
+            if target.package in widths:
+                continue
+            width = _list_record_width(Path(workspace) / target.filename)
+            if width is not None:
+                widths[target.package] = width
+        if len(set(widths.values())) <= 1:
+            continue
+        said = "; ".join(
+            f"{name!r} {width} columns ({_record_options(options[name])})"
+            if name in options else f"{name!r} {width} columns"
+            for name, width in widths.items()
+        )
+        calls = " and ".join(f"parameterize({recipe.canonical!r}, package={name!r})"
+                             for name in widths)
+        raise ValueError(
+            f"{recipe.canonical!r} shared over packages {tuple(widths)} ({spec.name!r}): "
+            f"their records are not one width -- {said}. One parameter set hands pyEMU "
+            "the files of every package it names as ONE table, and pyEMU stops on that "
+            "('shape mismatch for array style'). Declare one call per package -- "
+            f"{calls} -- or declare BOUNDNAMES and AUXILIARY alike on every package "
+            "(ledger 559)."
+        )
 
 
 

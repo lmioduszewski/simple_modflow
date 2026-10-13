@@ -343,8 +343,9 @@ Zones for `style="zone"` come from `mf.ZoneSpec` (`from_raster` — majority vot
 `riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `lak.bedleak`, `sfr.rhk`, `porosity` -- through the files FloPy's own
 records of the run's packages name (ledger 517). Several packages of the type
 (`riv` beside `crisp`) need `package=`: a name picks one, a sequence shares one
-parameter set, and a call naming none raises `mf.SeveralPackagesError` naming each
-(ledger 352). An ELEVATION (`chd`, `ghb.bhead`, `drn.elev`, `riv.stage`) is an additive
+parameter set (refused at build when the packages' records differ in width -- BOUNDNAMES
+or AUXILIARY on one only; ledger 559), and a call naming none raises
+`mf.SeveralPackagesError` naming each (ledger 352). An ELEVATION (`chd`, `ghb.bhead`, `drn.elev`, `riv.stage`) is an additive
 offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bounds
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
 refused; `riv.stage` moves each record's `rbot` with its stage (ledgers

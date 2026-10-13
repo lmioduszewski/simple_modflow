@@ -43,17 +43,20 @@ RIV = {(0, 6): (99.0, 10.0, 98.0), (0, 7): (99.0, 20.0, 98.5)}
 CRISP = {(0, 12): (98.0, 5.0, 96.0)}
 
 
-def _flow_packages(gwf, cell, *, array_recharge=True):
+def _flow_packages(gwf, cell, *, array_recharge=True, crisp_boundnames=False):
     """Every package but the discretization, on a cellid of the grid's form. MF6 reads
-    array recharge on DIS and DISV only."""
+    array recharge on DIS and DISV only. ``crisp_boundnames`` gives ``crisp`` alone
+    BOUNDNAMES, one column wider than ``riv``'s records (ledger 559)."""
 
     flopy.mf6.ModflowGwfnpf(gwf, k=5.0, k33=0.5, icelltype=0)
     flopy.mf6.ModflowGwfic(gwf, strt=100.0)
     flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[cell(0, 0), 100.0], [cell(0, 4), 99.0]])
     flopy.mf6.ModflowGwfriv(gwf, pname="riv", filename="m.riv", stress_period_data=[
         [cell(*key), *values] for key, values in RIV.items()])
-    flopy.mf6.ModflowGwfriv(gwf, pname="crisp", filename="m.crisp", stress_period_data=[
-        [cell(*key), *values] for key, values in CRISP.items()])
+    flopy.mf6.ModflowGwfriv(gwf, pname="crisp", filename="m.crisp", boundnames=crisp_boundnames
+                            or None, stress_period_data=[
+        [cell(*key), *values, *(["crisp_creek"] if crisp_boundnames else [])]
+        for key, values in CRISP.items()])
     flopy.mf6.ModflowGwfghb(gwf, pname="edge", filename="m.edge",
                             stress_period_data=[[cell(0, 19), 97.0, 3.0]])
     flopy.mf6.ModflowGwfdrn(gwf, pname="drn", filename="m.drn",
@@ -68,7 +71,7 @@ def _flow_packages(gwf, cell, *, array_recharge=True):
                            saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
 
 
-def _run(workspace: Path, grid: str) -> Path:
+def _run(workspace: Path, grid: str, *, crisp_boundnames=False) -> Path:
     sim = flopy.mf6.MFSimulation("s", sim_ws=str(workspace), exe_name="mf6")
     flopy.mf6.ModflowTdis(sim, nper=2, perioddata=[(1.0, 1, 1.0)] * 2)
     flopy.mf6.ModflowIms(sim)
@@ -92,7 +95,7 @@ def _run(workspace: Path, grid: str) -> Path:
 
         def cell(layer, number):
             return (layer * NCPL + number,)
-    _flow_packages(gwf, cell, array_recharge=grid != "disu")
+    _flow_packages(gwf, cell, array_recharge=grid != "disu", crisp_boundnames=crisp_boundnames)
     sim.write_simulation(silent=True)
     assert sim.run_simulation(silent=True)[0]
     return workspace
@@ -281,6 +284,48 @@ def test_a_river_stage_below_its_bottom_is_refused_at_build(runs, tmp_path):
         _build(cal, "low")
 
 
+@pytest.fixture(scope="module")
+def named_crisp_run(tmp_path_factory):
+    """The DISV run with BOUNDNAMES on ``crisp`` alone: its records are 6 columns to
+    ``riv``'s 5."""
+
+    return _run(tmp_path_factory.mktemp("named_crisp") / "disv", "disv", crisp_boundnames=True)
+
+
+@pytest.mark.parametrize("target, style", [("riv.stage", "constant"), ("riv.cond", "grid")])
+def test_one_set_over_packages_of_unequal_record_width_is_refused_at_build(
+        named_crisp_run, tmp_path, target, style):
+    """Ledger 559: one shared set hands pyEMU both packages' files as one table, and with
+    BOUNDNAMES on ``crisp`` alone pyEMU stopped with 'shape mismatch for array style'
+    after the whole staging. Refused at build naming both packages, their widths and the
+    call per package -- and that call builds, the forward run moves each river and MF6
+    terminates normally."""
+
+    runs = {"disv": named_crisp_run}
+    cal = _cal(runs, tmp_path, name="wide")
+    cal.parameterize(target, style=style, package=("riv", "crisp"))
+    with pytest.raises(ValueError, match=(
+            rf"(?s){re.escape(target)!s}' shared over packages \('riv', 'crisp'\).*"
+            r"'riv' 5 columns \(neither BOUNDNAMES nor AUXILIARY\); 'crisp' 6 columns "
+            r"\(BOUNDNAMES\).*"
+            rf"parameterize\('{re.escape(target)}', package='riv'\) and "
+            rf"parameterize\('{re.escape(target)}', package='crisp'\)")):
+        _build(cal, "wide")
+
+    cal = _cal(runs, tmp_path, name="each")
+    riv = cal.parameterize("riv.stage", package="riv")
+    crisp = cal.parameterize("riv.stage", package="crisp")
+    pst = _build(cal, "each")
+    worker = _forward_run(cal, pst, tmp_path, {riv.name: 1.0, crisp.name: -0.5})
+    for filename, table, shift in (("m.riv_stress_period_data_1.txt", RIV, 1.0),
+                                   ("m.crisp_stress_period_data_1.txt", CRISP, -0.5)):
+        rows = _records(worker / filename)
+        assert np.allclose(rows.iloc[:, 2], [values[0] + shift for values in table.values()])
+        assert np.allclose(rows.iloc[:, 4], [values[2] + shift for values in table.values()])
+    assert list(_records(worker / "m.crisp_stress_period_data_1.txt").iloc[:, 5]) == [
+        "crisp_creek"]
+
+
 # -- what an argument means, and the ones that cannot act --------------------------
 
 
@@ -349,6 +394,32 @@ def test_an_argument_that_cannot_act_is_refused(kwargs, message):
 
     with pytest.raises(ValueError, match=message):
         np_mod.NativeParameterSpec(**kwargs)
+
+
+def test_layers_on_a_list_target_does_not_promise_zones_leave_a_record_alone(runs, tmp_path):
+    """Ledger 559: the refusal said to restrict a list target with zones= 'whose labels
+    <= 0 mark records left alone'. Measured below: on a list target every label is a
+    parameter of its own, 0 and -1 included, so the refusal names package= instead --
+    and recharge's says the same of a LIST RCH."""
+
+    with pytest.raises(ValueError) as refused:
+        np_mod.NativeParameterSpec(target="riv.cond", layers=(1,))
+    message = str(refused.value)
+    assert "left alone" not in message
+    assert "Pick the package with package=" in message
+    assert "0 and negatives too -- is a parameter of its own" in message
+    with pytest.raises(ValueError, match=(
+            r"on an array RCH a label <= 0 is left alone, while on a list RCH, with "
+            r"style='zone', every label")):
+        np_mod.NativeParameterSpec(target="recharge", layers=0)
+
+    cal = _cal(runs, tmp_path, name="zoned")
+    zones = np.ones(NCPL, dtype=int)
+    zones[6], zones[7] = 0, -1  # the cells of riv's two records
+    spec = cal.parameterize("riv.cond", style="zone", zones=zones, package="riv")
+    _build(cal, "zoned")
+    names = cal._native_parameter_frames[spec.name]["parnme"]
+    assert sorted(names.str.extract(r"_zone:(-?\d+)$")[0].astype(int)) == [-1, 0]
 
 
 @pytest.mark.parametrize("target, kwargs, given", [

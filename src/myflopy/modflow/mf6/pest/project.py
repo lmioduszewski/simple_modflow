@@ -963,9 +963,11 @@ class PestProject:
             ``int``); other layers keep their input value. ``None`` (default)
             covers all layers. A value that is not a whole number at or above 0,
             or an empty list, raises ``ValueError`` here. Given for a LIST target it raises ``ValueError``
-            here, naming ``zones=``: a list target scales every record of its
-            package's files -- and so does ``recharge`` in either form, which MF6
-            applies to one cell per column. :meth:`build` raises ``ValueError`` when no requested
+            here, naming ``package=``: a list target scales every record of its
+            package's files, and ``zones=`` leaves none of them out (with
+            ``style="zone"`` every label, ``0`` and negatives too, is a parameter of
+            its own; ledger 559). ``recharge`` in either form, which MF6 applies to
+            one cell per column, raises the same, naming ``zones=``. :meth:`build` raises ``ValueError`` when no requested
             layer has its own file, or the target is written as one whole-grid
             file.
         package : str or sequence of str or None, optional
@@ -977,7 +979,11 @@ class PestProject:
             the type; with several it raises ``SeveralPackagesError`` naming each
             and these spellings -- a package is never picked in silence (ledger
             352) -- here when the model's packages can be listed, else at
-            :meth:`build`. A name that is no package of the type raises
+            :meth:`build`. A sequence whose packages' records differ in width -- one
+            declares BOUNDNAMES or AUXILIARY variables the other does not -- raises
+            ``ValueError`` at :meth:`build`, naming each package and the call per
+            package that builds (pyEMU reads one set's files as one table; ledger
+            559). A name that is no package of the type raises
             ``ValueError`` naming the ones there are; a name given twice, or an
             empty one, raises here. The default ``name`` gains ``_<package>``.
             A sequence with ``features=`` or ``style="feature"`` raises

@@ -1861,12 +1861,15 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   records of the staged model (`native_parameters.target_files`, ledger
   517) -- never a file-name glob, which scaled one of two GHBs in silence --
   and several packages of the type are REFUSED without `package=` (a name, or a
-  sequence sharing ONE set; ledger 352's rule). **An ELEVATION (`chd`, `ghb.bhead`,
+  sequence sharing ONE set; ledger 352's rule -- refused at build when the packages'
+  records differ in width, BOUNDNAMES or AUXILIARY on one only, since pyEMU reads one
+  set's files as one table; ledger 559). **An ELEVATION (`chd`, `ghb.bhead`,
   `drn.elev`, `riv.stage`, from `FieldSpec.kind`) is an ADDITIVE offset in model units**,
   default bounds (-2, 2), a multiplier on it refused; bounds that exclude the starting
   value (0 for an offset, 1 for a multiplier and every pilot point) are refused
   (ledger 518); `riv.stage` moves RBOT with STAGE (ledger 519).
-  An argument that cannot act is refused (`layers=` on a list target or recharge,
+  An argument that cannot act is refused (`layers=` on a list target -- naming
+  `package=`, since `zones=` leaves no list record out (ledger 559) -- or recharge,
   `correlation=` on constant/zone/feature, `pp_spacing`/`pp_points`/`pp_nearest` on any
   style but array pilot points, a style other than the five or one the target does not
   take, an `**extra` key pyEMU's `add_parameters` does not take; ledger 520), and so is a
