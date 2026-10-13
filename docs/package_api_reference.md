@@ -1076,7 +1076,8 @@ group was one well. The PEST guide shows the groups with PEST++'s phi-factor fil
 (ledger 565) returns `mf.HeadDifferences` (`mf.ConcDifferences` from
 `ConcTargets`): each label's readings minus their mean over ITS measured periods
 (default, at the reading's weight), or minus the previous measured one (at
-`1/sqrt(1/w1²+1/w2²)`, `w/sqrt(2)` for equal weights); `weight=` replaces both. A label
+`1/sqrt(1/w1²+1/w2²)`, `w/sqrt(2)` for equal weights); `weight=` replaces both. A reading
+of weight 0 is in no mean and no pair (ledger 566). A label
 read fewer than twice is left out and warned by name (none left raises), a bound source
 raises. It answers `get()`/`to_wide()`/`summary()` and `compare(model)`/`residuals()`/
 `stats()` (`target_difference`, `sim_difference`, the same periods on both sides).

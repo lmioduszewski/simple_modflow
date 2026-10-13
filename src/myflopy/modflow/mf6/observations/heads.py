@@ -1905,7 +1905,11 @@ class HeadTargets:
             measured in -- the same periods for the simulated value -- keeping every
             reading as an observation. ``"previous"``: each measured period minus the
             label's previous measured one; its first measured period has none.
-            Anything else raises ``ValueError``.
+            Anything else raises ``ValueError``. A reading of weight 0 (its own, else
+            its location's) is no measurement of either: it is in no mean and no
+            pair, and its row has no difference (ledger 566) -- a
+            silenced outlier would otherwise move the target of every weighted
+            reading of its label.
         weight : float or None, optional
             Every difference's PEST weight, replacing the default rule. Default
             ``None``: under ``"mean"`` each difference keeps its reading's weight (the
@@ -1941,7 +1945,8 @@ class HeadDifferences:
     ``ConcTargets.differences``): the SHAPE of each hydrograph, which a datum or
     screen-elevation error cannot move. ``kind="mean"`` subtracts each label's mean
     over the periods it was measured in -- the same periods on the simulated side --
-    and ``kind="previous"`` each measured period's previous measured value. A LABEL is
+    and ``kind="previous"`` each measured period's previous measured value; a reading
+    of weight 0 is not a measurement of either (ledger 566). A LABEL is
     what the source's observation is: a name, or a name in one of its layers for a
     well given in two (ledger 234); a screened well is one label, its head the
     transmissivity-weighted one (ledger 556).
@@ -2012,9 +2017,13 @@ class HeadDifferences:
         self.weight = weight
         values = source._values
         caller = f"{type(source).__name__}.differences()"
-        per = _measured_periods(values, value_column="head_target", name_column="name_key", caller=caller)
-        measured = values.assign(per=per.to_numpy()).loc[values["head_target"].notna()]
-        counts = measured.groupby("name_key")["per"].nunique()
+        # Validates the values (two readings of one name in one period are refused).
+        _measured_periods(values, value_column="head_target", name_column="name_key", caller=caller)
+        # Counted on the RESOLVED weights (a reading's own, else its location's): a
+        # reading of weight 0 is not a measurement here (ledger 566).
+        joined = source.get()
+        joined = joined.assign(per=_numeric_periods(joined, caller=caller).to_numpy())
+        counts = joined.loc[_difference_readings(joined)].groupby("name_key")["per"].nunique()
         names = dict(zip(source._locations["name_key"], source._locations["name"].astype(str), strict=False))
         self._kept_keys = [key for key in names if counts.get(key, 0) >= 2]
         self.names = [names[key] for key in self._kept_keys]
@@ -2023,12 +2032,14 @@ class HeadDifferences:
             raise ValueError(
                 f"{caller}: no label has 2 measured periods, so there is no difference to "
                 "take -- a label read once has a mean-removed residual of 0 whatever the model "
-                "does, and no previous value."
+                "does, and no previous value. A reading of weight 0 does not count "
+                "(ledger 566)."
             )
         if self.left_out:
             message = (
                 f"{caller}: {len(self.left_out)} label(s) have fewer than 2 measured periods "
-                f"and are left out of the differences: {_listing(self.left_out)}."
+                "(a reading of weight 0 does not count) and are left out of the differences: "
+                f"{_listing(self.left_out)}."
             )
             logger.warning(message)
             warnings.warn(message, UserWarning, stacklevel=3)
@@ -2053,7 +2064,7 @@ class HeadDifferences:
     def _differenced(self, kept: pd.DataFrame, columns: dict[str, str]) -> pd.DataFrame:
         """``kept`` plus each of ``columns`` (source column -> new column) differenced, and ``weight``."""
 
-        measured = kept.loc[kept["head_target"].notna(), ["_label", "per"]].drop_duplicates()
+        measured = kept.loc[_difference_readings(kept), ["_label", "per"]].drop_duplicates()
         periods = measured.rename(columns={"_label": "obsname"})
         out = kept.copy()
         for source_column, new_column in columns.items():
@@ -2180,6 +2191,37 @@ class HeadDifferences:
         return _default_compare_stats(self.compare(model))
 
 
+def _difference_readings(frame: pd.DataFrame, *, value_column: str = "head_target") -> pd.Series:
+    """Which rows of a target frame a DIFFERENCE is taken over: a value, at a weight above 0.
+
+    The ONE rule (ledger 566) the difference set's label count, its
+    measured periods, its weights and the build's ``<prefix>_difference_periods.csv``
+    read. A reading of weight 0 -- an outlier its user silenced -- is no measurement
+    here: counted in, it moved the MEAN, and so the target of every weighted reading of
+    its label (an outlier of 50 among readings of 10 and 12 made their differences -14
+    and -12, where they are -1 and +1). ``weight`` is the resolved one (``NaN``
+    meaning 1.0, as on the source).
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        Rows holding ``value_column`` and, optionally, ``weight``.
+    value_column : str, default "head_target"
+        The measured value's column.
+
+    Returns
+    -------
+    pandas.Series
+        Boolean, aligned with ``frame``.
+    """
+
+    holds = frame[value_column].notna()
+    if "weight" not in frame.columns:
+        return holds
+    weights = pd.to_numeric(frame["weight"], errors="coerce").fillna(1.0)
+    return holds & (weights != 0.0)
+
+
 def _difference_weights(frame: pd.DataFrame, *, kind: str, weight: float | None) -> pd.Series:
     """Each difference's PEST weight (ledger 565); ``NaN`` where it has none.
 
@@ -2196,7 +2238,7 @@ def _difference_weights(frame: pd.DataFrame, *, kind: str, weight: float | None)
     if kind == "mean":
         return readings.where(defined)
     result = pd.Series(np.nan, index=frame.index)
-    measured = frame["head_target"].notna()
+    measured = _difference_readings(frame)
     for _label, rows in frame.loc[measured].sort_values("per").groupby("_label", sort=False):
         w = readings.loc[rows.index].fillna(1.0).to_numpy(dtype=float)
         for position in range(1, len(w)):

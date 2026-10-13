@@ -382,7 +382,8 @@ def _pest_residuals(pst, simulated: pd.Series) -> tuple[pd.Series, pd.Series]:
     simulated <= measured; ``"at_least"``: simulated >= measured -- and its whole
     residual where it is violated; any other is simulated minus measured. Without it
     a satisfied bound read as a misfit: ``phi_contributions`` gave an ``l_`` group
-    satisfied by every realization 3,229,693 where PESTPP-IES's own file says 0.
+    satisfied by every realization 2,423,185 where PESTPP-IES's own file says 0
+    (``docs/reproducers/pest_inequality_targets.py``).
 
     Parameters
     ----------
@@ -1784,7 +1785,12 @@ class IesResults:
         the run) is scored here instead: the sum of squared weighted residuals per
         group, a bound's residual 0 where it holds -- PEST++'s rule, through the
         review's one helper. Both were two-sided before: an ``l_`` group satisfied
-        by every realization read 3,229,693 where PESTPP-IES's file says 0.
+        by every realization read 2,423,185 where PESTPP-IES's file says 0
+        (``docs/reproducers/pest_inequality_targets.py``). Under an
+        ``ies_phi_factor_file`` the file holds phi at PESTPP-IES's ADJUSTED weights --
+        the balance the run fitted (measured there: a group of phi 4.0 at the control
+        file's weight read 21.6) -- while the recomputation uses the control file's
+        weights, so compare such a run's groups through one route.
 
         Parameters
         ----------

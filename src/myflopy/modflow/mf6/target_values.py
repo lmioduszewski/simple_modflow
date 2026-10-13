@@ -343,7 +343,9 @@ def read_target_values(
 DIFFERENCE_KINDS = ("mean", "previous")
 
 
-def target_differences(table: pd.DataFrame, periods: pd.DataFrame, *, kind: str) -> pd.DataFrame:
+def target_differences(
+    table: pd.DataFrame, periods: pd.DataFrame, *, kind: str, undefined: float = np.nan
+) -> pd.DataFrame:
     """Each label's DIFFERENCES over its own measured periods: the ONE rule (ledger 565).
 
     What ``HeadDifferences`` compares -- applied to the targets and to the simulated
@@ -351,8 +353,11 @@ def target_differences(table: pd.DataFrame, periods: pd.DataFrame, *, kind: str)
     (``forward_run._write_target_difference_csv``), so a calibration and the
     off-PEST review read one definition. A period the label was not measured in, and
     a label's first measured period under ``kind="previous"``, has no difference:
-    ``NaN`` here (the forward run writes ``0.0`` there, at weight 0, because PEST++
-    fails a run on an empty field, ledger 351).
+    ``undefined`` there (the forward run passes ``0.0``, which the build weights 0,
+    because PEST++ fails a run on an empty field, ledger 351). A NaN VALUE at a
+    measured period is not that: it stays ``NaN`` whatever ``undefined`` is, so a
+    realization whose model wrote no number fails its run rather than scoring a flat
+    hydrograph (ledger 565).
 
     Parameters
     ----------
@@ -367,6 +372,11 @@ def target_differences(table: pd.DataFrame, periods: pd.DataFrame, *, kind: str)
         periods (a ``NaN`` among them makes every difference of the label ``NaN``);
         ``"previous"``: value minus the value at the label's previous measured
         period.
+    undefined : float, default numpy.nan
+        What a row with NO difference holds -- a period the label was not measured
+        in, its first measured period under ``"previous"``, every period of a label
+        ``periods`` does not name. Never applied where a difference is defined and
+        its values are ``NaN``.
 
     Returns
     -------
@@ -394,7 +404,7 @@ def target_differences(table: pd.DataFrame, periods: pd.DataFrame, *, kind: str)
                 f"table holds no row for (it has {sorted(rows)})."
             )
         values = table[label].to_numpy(dtype=float)
-        result = np.full(len(table), np.nan)
+        result = np.full(len(table), float(undefined))
         positions = [rows[per] for per in measured]
         if positions:
             picked = values[positions]

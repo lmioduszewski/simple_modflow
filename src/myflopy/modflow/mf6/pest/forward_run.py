@@ -352,6 +352,7 @@ def _target_table(
     k_sources=None,
     periods_csv=None,
     kind=None,
+    undefined=float("nan"),
 ):
     """A head or concentration target map's values at each period's END -- or their differences.
 
@@ -392,6 +393,10 @@ def _target_table(
         a label has no difference). Default ``None``: the values themselves.
     kind : str or None, optional
         With ``periods_csv``: ``"mean"`` or ``"previous"``. Default ``None``.
+    undefined : float, default nan
+        With ``periods_csv``: what a row with no difference holds
+        (``target_values.target_differences``); a ``NaN`` value at a measured
+        period stays ``NaN`` (ledger 565).
 
     Returns
     -------
@@ -429,7 +434,7 @@ def _target_table(
     )
     if periods_csv is None:
         return table
-    return target_differences(table, read_target_table(periods_csv), kind=kind)
+    return target_differences(table, read_target_table(periods_csv), kind=kind, undefined=undefined)
 
 
 def _write_target_difference_csv(
@@ -455,7 +460,9 @@ def _write_target_difference_csv(
     (``target_values.target_differences``), the rule ``HeadDifferences.compare()``
     applies. A row with no difference -- an unmeasured period, a label's first
     measured period under ``kind="previous"`` -- is written ``0.0``, which the build
-    weights 0: PEST++ fails a run on an empty field or ``nan`` (ledger 351).
+    weights 0: PEST++ fails a run on an empty field or ``nan`` (ledger 351). A
+    measured row whose model wrote no number stays empty, so PEST++ fails THAT run
+    rather than read it as a flat hydrograph (ledger 565).
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so its imports live inside it.
@@ -505,8 +512,8 @@ def _write_target_difference_csv(
     _target_table(
         model_name, mapping_csv, field=field, perlen=perlen, sim_ws=sim_ws,
         field_file=head_file if field == "head" else conc_file, k_sources=k_sources,
-        periods_csv=periods_csv, kind=kind,
-    ).fillna(0.0).to_csv(output_csv, index=False)
+        periods_csv=periods_csv, kind=kind, undefined=0.0,
+    ).to_csv(output_csv, index=False)
 
 
 def write_named_series_targets(sets, sim_ws=".", model_name=None):

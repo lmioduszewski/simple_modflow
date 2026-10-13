@@ -75,6 +75,33 @@ def test_the_one_rule_by_hand():
     assert list(previous.columns) == ["per", "a", "b"]
 
 
+
+def test_a_measured_row_with_no_number_stays_empty_for_pest(tmp_path, monkeypatch):
+    """Only a row with NO difference is written 0.0 (ledger 565): a model
+    that wrote NaN at a measured period left an empty field, so PEST++ fails that run --
+    filling it 0.0 scored a broken realization as a flat hydrograph."""
+
+    from myflopy.modflow.mf6 import target_values
+    from myflopy.modflow.mf6.pest.forward_run import _write_target_difference_csv
+
+    table = pd.DataFrame({"per": [0, 1, 2], "W1": [10.0, np.nan, 14.0], "W2": [5.0, 6.0, 9.0]})
+    monkeypatch.setattr(target_values, "read_target_values", lambda *args, **kwargs: table.copy())
+    pd.DataFrame({"obsname": ["W1", "W1", "W1", "W2", "W2"], "per": [0, 1, 2, 0, 2]}).to_csv(
+        tmp_path / "periods.csv", index=False)
+    pd.DataFrame({"obsname": ["W1", "W2"], "name": ["W1", "W2"], "layer": [0, 0], "cell": [1, 2]}).to_csv(
+        tmp_path / "map.csv", index=False)
+    for kind in ("mean", "previous"):
+        _write_target_difference_csv("m", tmp_path / "map.csv", tmp_path / "out.csv",
+                                     tmp_path / "periods.csv", kind, sim_ws=tmp_path)
+        written = pd.read_csv(tmp_path / "out.csv").set_index("per")
+        # W1's NaN reaches every difference it is part of, and stays empty.
+        assert written["W1"].isna().sum() == (3 if kind == "mean" else 2)
+        # W2 is unmeasured in period 1 (and has no previous in period 0): 0.0 there.
+        assert written.loc[1, "W2"] == 0.0
+        assert written.loc[2, "W2"] == pytest.approx(2.0 if kind == "mean" else 4.0)
+    assert target_differences(table, pd.read_csv(tmp_path / "periods.csv"), kind="previous",
+                              undefined=0.0)["W1"].tolist()[0] == 0.0
+
 def test_mean_differences_ignore_a_constant_offset_where_absolute_heads_do_not(toy):
     """The feature's point: a datum error moves every reading of a well alike."""
 
@@ -188,6 +215,47 @@ def test_the_build_hands_pest_the_differences_in_one_group(toy, tmp_path):
     entry = next(item["metadata"] for item in cal._prepared_observations if item["prefix"] == "hdiff")
     assert entry["kind"] == "head_differences" and entry["difference_kind"] == "mean"
     assert entry["geometry"] == "points"
+
+
+
+def test_a_reading_of_weight_0_moves_no_difference(toy, tmp_path):
+    """A silenced outlier is no measurement of a difference (ledger 566): it
+    moved the MEAN, so the target of every weighted reading of its well -- 10 and 12 beside
+    an outlier of 50 at weight 0 read -14 and -12, where they are -1 and +1."""
+
+    readings = pd.DataFrame({"name": ["W1"] * 3 + ["W2"] * 2, "time": [0, 1, 2, 0, 2],
+                             "head": [10.0, 12.0, 50.0, 5.0, 9.0],
+                             "weight": [1.0, 1.0, 0.0, 1.0, 1.0]})
+    targets = mf.HeadTargets(locations={"W1": 1, "W2": 2}, values=readings)
+    mean = targets.differences().get().set_index(["name", "per"])
+    assert mean.loc[("W1", 0), "target_difference"] == -1.0
+    assert mean.loc[("W1", 1), "target_difference"] == 1.0
+    assert np.isnan(mean.loc[("W1", 2), "target_difference"])
+    # "previous" differences ACROSS it, at the two counted readings' weight.
+    middle = readings.assign(head=[10.0, 50.0, 11.0, 5.0, 9.0], weight=[1.0, 0.0, 1.0, 1.0, 1.0])
+    previous = mf.HeadTargets(locations={"W1": 1, "W2": 2}, values=middle).differences("previous")
+    step = previous.get().set_index(["name", "per"])
+    assert np.isnan(step.loc[("W1", 1), "target_difference"])
+    assert step.loc[("W1", 2), "target_difference"] == 1.0
+    assert step.loc[("W1", 2), "weight"] == pytest.approx(1.0 / np.sqrt(2.0))
+    # A well whose second reading is silenced has one reading left: it is left out.
+    with pytest.warns(UserWarning, match=r"weight 0 does not count.*left out of the differences: W1"):
+        lone = mf.HeadTargets(locations={"W1": 1, "W2": 2},
+                              values=readings.assign(weight=[1.0, 0.0, 0.0, 1.0, 1.0])).differences()
+    assert lone.names == ["W2"]
+    # The build hands PEST the same targets, and its forward run the same periods.
+    cal, pst = _build(toy, tmp_path / "pest", targets.differences())
+    obs = pst.observation_data
+    usecol = "oname:hdiff_otype:lst_usecol:w1_per:{}"
+    assert obs.loc[usecol.format(0), "obsval"] == pytest.approx(-1.0)
+    assert obs.loc[usecol.format(1), "obsval"] == pytest.approx(1.0)
+    assert obs.loc[usecol.format(2), ["weight", "obgnme"]].tolist() == [0.0, "hdiff_unmeasured"]
+    periods = pd.read_csv(cal.template_workspace / "hdiff_difference_periods.csv")
+    assert periods.to_dict("list") == {"obsname": ["W1", "W1", "W2", "W2"], "per": [0, 1, 0, 2]}
+    base = pd.read_csv(cal.template_workspace / "hdiff_simulated_differences.csv").set_index("per")
+    sim = _simulated(toy)
+    assert base.loc[0, "W1"] == pytest.approx(sim.loc[0, "W1"] - sim.loc[[0, 1], "W1"].mean())
+    assert base.loc[2, "W1"] == 0.0
 
 
 @pytest.fixture(scope="module")

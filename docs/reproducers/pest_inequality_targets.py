@@ -23,6 +23,11 @@ THE SETUP.
      Reported: PESTPP-IES's ``phi.group.csv`` base row, the review's
      ``phi_contributions()``, the same scored two-sided (the rule before), and the
      share of ``l_cap`` observations ``conflict()`` flags.
+  C. Which weights ``phi.group.csv`` holds (review of ledger 564): A's
+     model with ``o_eq`` measured at 6 (weight 1), NOPTMAX=1, 5 reals, once plainly and
+     once with an ``ies_phi_factor_file`` (``eq`` 0.9, ``l_hds`` 0.1, ``g_hds`` 0.2).
+     Reported: the base row's ``eq`` at iteration 0 against ``(8 - 6)**2 = 4`` at the
+     control file's weight. (At NOPTMAX=0 PESTPP-IES applies no phi factor: 4.0 both.)
 
 MEASURED (mf6 6.8.0.dev0, PEST++ 5.2.16, pyEMU 1.4.0, 2026-10-12)
   A  no noise option     PESTPP-IES "resetting to `ies_no_noise` to true"; noise
@@ -38,6 +43,10 @@ MEASURED (mf6 6.8.0.dev0, PEST++ 5.2.16, pyEMU 1.4.0, 2026-10-12)
                          for a bound every realization holds; after: l_cap 0,
                          l_low 10,187.4, hds 49.0 (read from the file)
      conflict, l_cap     before 3 of 3 in conflict; after 0 of 3
+  C  phi.group.csv eq    plain: 4.0 (the control file's weight); with the phi factor
+                         file: 21.6 -- PESTPP-IES's ADJUSTED weights, so
+                         ``phi_contributions()`` reports the balance the run fitted while
+                         its fallback (no file) recomputes at the control file's weights
 (the measured numbers are printed by ``main()``; the table above is one run's.)
 """
 
@@ -113,6 +122,44 @@ def _one_parameter(root: pathlib.Path, *, noise: bool) -> dict:
     }
 
 
+def section_c(root: pathlib.Path) -> None:
+    for factors in (None, "eq,0.9\nl_hds,0.1\ng_hds,0.2\n"):
+        case = root / f"c_{'factors' if factors else 'plain'}"
+        case.mkdir(parents=True)
+        (case / "model.py").write_text(
+            "x = float(open('par.dat').read().split()[0])\n"
+            "open('out.dat', 'w').write(f'{x:.8f}\\n{x:.8f}\\n{x:.8f}\\n')\n"
+        )
+        (case / "par.dat.tpl").write_text("ptf ~\n~   x    ~\n")
+        (case / "out.dat.ins").write_text("pif ~\nl1 !o_eq!\nl1 !o_lt!\nl1 !o_gt!\n")
+        (case / "par.dat").write_text("8.0\n")
+        subprocess.run([sys.executable, "model.py"], cwd=case, check=True)
+        here = pathlib.Path.cwd()
+        try:
+            os.chdir(case)
+            pst = pyemu.Pst.from_io_files(["par.dat.tpl"], ["par.dat"], ["out.dat.ins"], ["out.dat"])
+        finally:
+            os.chdir(here)
+        pst.parameter_data.loc["x", ["parval1", "parlbnd", "parubnd", "partrans"]] = [8.0, 0.1, 20.0, "none"]
+        obs = pst.observation_data
+        obs.loc["o_eq", ["obsval", "weight", "obgnme"]] = [6.0, 1.0, "eq"]
+        obs.loc["o_lt", ["obsval", "weight", "obgnme"]] = [5.0, 2.0, "l_hds"]
+        obs.loc["o_gt", ["obsval", "weight", "obgnme"]] = [3.0, 2.0, "g_hds"]
+        pst.model_command = ["python3 model.py"]
+        pst.control_data.noptmax = 1
+        pst.pestpp_options.update({"ies_num_reals": 5, "random_seed": 7})
+        if factors:
+            (case / "pf.csv").write_text(factors)
+            pst.pestpp_options["ies_phi_factor_file"] = "pf.csv"
+        pst.write(str(case / "t.pst"), version=2)
+        subprocess.run([IES, "t.pst"], cwd=case, check=True, capture_output=True)
+        table = pd.read_csv(case / "t.phi.group.csv")
+        base = table.loc[(table["par_realization"].astype(str) == "base")
+                         & (table["iteration"] == 0)].iloc[0]
+        print(f"C  phi factors {'on ' if factors else 'off'}: phi.group.csv base eq "
+              f"{float(base['eq']):.1f} (control-file weight: 4.0)")
+
+
 def _heads(values, *, names, cells, inequality=None):
     locations = pd.DataFrame({"name": list(names), "cell": list(cells), "layer": 0})
     return mf.HeadTargets(locations=locations, values=pd.DataFrame(values), inequality=inequality)
@@ -162,6 +209,7 @@ def main() -> None:
                 f"{found['zero_phi_reals']}"
             )
         section_b(root)
+        section_c(root)
 
 
 if __name__ == "__main__":

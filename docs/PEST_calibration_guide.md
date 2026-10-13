@@ -659,6 +659,11 @@ cal.observe(heads.differences("previous"), prefix="hstep")   # or period-to-peri
   errors, so its weight is `1 / sqrt(1/w1² + 1/w2²)` -- `w / sqrt(2)` for equal ones.
 - **`weight=`** replaces either rule with one number for every difference -- how much
   the shape should count against the level is yours to decide.
+- **A reading of weight 0 is not a measurement of a difference** (ledger
+  566): it is in no mean and no pair, and its row is unmeasured. Counted
+  in, a silenced outlier moved its well's MEAN and with it every weighted reading's
+  target (an outlier of 50 among readings of 10 and 12 made theirs -14 and -12, not -1
+  and +1); `"previous"` differences across it.
 
 A LABEL is what the source's observation is: a well, a well in one of its layers, or a
 screened well -- one label whose head is the T-weighted one (ledger 556), differenced in
@@ -706,6 +711,13 @@ prefix of your own starting `l_`, `less`, `g_` or `greater` is still refused (le
 358), and the refusal names `inequality=`. `cal.forecast()` refuses a bound set (a
 bound on a zero-weight quantity constrains nothing), and so does
 `HeadTargets.differences()` (a bound has no mean).
+
+**Phi factors.** A bound's group CONTAINS the group its targets would have had: a bound
+labelled `"north"` is `l_north`, and an `ies_phi_factor_file` tag matches anywhere in a
+group's name (ledger 359), so a `north` tag meant for the measured wells takes the
+bound group too, and tagging `l_north` as well is refused by PESTPP-IES (a group
+matching two tags). Give a bound set's targets no label of a measured set's -- the
+bound set's own prefix (`l_dry`) is its group then.
 
 **A flow bound is on the number as written, in MF6's sign** (ledger 350): a reach's
 streamflow and a drain's discharge are negative, water leaving. "At least 2 cfs of

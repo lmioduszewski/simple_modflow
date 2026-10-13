@@ -54,7 +54,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _shown,
 )
 from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
-from myflopy.modflow.mf6.observations.heads import _difference_weights
+from myflopy.modflow.mf6.observations.heads import _difference_readings, _difference_weights
 from myflopy.modflow.mf6.observations.hydrographs import refuse_another_clock
 from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.period_calendar import period_calendar
@@ -1132,7 +1132,8 @@ def prepare_difference_observations(
     mapping = labels.loc[:, ["obsname", "name", "layer", "cell", *(SCREEN_COLUMNS if screened else ())]]
     mapping_path = project.template_workspace / f"{spec.prefix}_difference_map.csv"
     _write_frame(mapping, mapping_path)
-    measured = frame.loc[frame["value"].notna(), ["column", "per"]].drop_duplicates()
+    # A reading of weight 0 is not part of any difference (ledger 566).
+    measured = frame.loc[_difference_readings(frame, value_column="value"), ["column", "per"]].drop_duplicates()
     periods = (
         measured.rename(columns={"column": "obsname"})
         .assign(_order=lambda table: table["obsname"].map(

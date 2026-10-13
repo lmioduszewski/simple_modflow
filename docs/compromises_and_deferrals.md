@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 565 entries (570 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 566 entries (571 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 566 | A reading of weight 0 is not a measurement of a DIFFERENCE: it is in no label's mean and no `"previous"` pair | 2026-10-12 |
 | 565 | Difference observations hand PEST each hydrograph's shape:... | 2026-10-12 |
 | 564 | A target set can be a one-sided BOUND -- `inequality="at_most"\|"at_least"` -- that the build writes as PEST... | 2026-10-12 |
 | 563 | A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left | 2026-10-12 |
@@ -21527,7 +21528,24 @@ same day, which is the useful part of the result.
       which holds many wells since ledger 358. **One group per set** (`hdiff`/`cdiff`):
       a per-label `hdiff_north` would be matched by a `north` phi-factor tag too (ledger
       359). **Undefined rows** are written 0.0 at weight 0 -- PEST++ fails on an empty
-      field (ledger 351). **One reader, no ratchet move:** the head, concentration and
+      field (ledger 351) -- and ONLY they: a measured row whose model wrote no number
+      stays empty, so PEST++ fails that run rather than scoring a flat hydrograph. **One reader, no ratchet move:** the head, concentration and
       difference writers share `forward_run._target_table`; folding the differencing
       into it kept the deferred-import count at 6. **Deferred:** lake-stage differences
       (same class pattern); differences of a bound set are refused, not defined.
+
+566. **A reading of weight 0 is not a measurement of a DIFFERENCE: it is in no label's mean and no `"previous"` pair (2026-10-12).**
+      Review of ledger 565 (judgment call). The mean of `kind="mean"` was
+      over every reading HOLDING a value, so an outlier its user silenced with weight 0
+      still moved its label's mean, and with it the target of every WEIGHTED reading:
+      readings 10 and 12 beside a weight-0 50 were handed PEST as -14 and -12, where
+      their shape is -1 and +1 (measured, `tests/test_head_differences.py::
+      test_a_reading_of_weight_0_moves_no_difference`). `"previous"` already gave the two
+      differences touching it weight 0 (the combined-weight rule), losing the step
+      across it. One rule now, `heads._difference_readings` (a value at a resolved weight
+      above 0), read by the label count (a label left with one such reading is left out
+      and named), the measured periods of `compare()`/`get()`, the weights, and the
+      build's `<prefix>_difference_periods.csv` -- so the forward run differences over
+      the same periods. **Chosen over** keeping it in the mean at weight 0: weight 0 is
+      how PEST says "do not fit this", and a difference that reads it is fitting it
+      through every other reading of the well.
