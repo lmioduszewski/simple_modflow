@@ -19,12 +19,14 @@ HeadTargets``.
 from __future__ import annotations
 
 from myflopy.modflow.mf6.observations.conc import (
+    ConcDifferences,
     ConcTargets,
 )
 from myflopy.modflow.mf6.observations.drn import BoundDrnFlowTargets, DrnFlowTargets
 from myflopy.modflow.mf6.observations.heads import (
     BoundHeadTargetPlots,
     BoundHeadTargets,
+    HeadDifferences,
     HeadTargets,
 )
 from myflopy.modflow.mf6.observations.lake import BoundLakeStageTargets, LakeStageTargets
@@ -47,8 +49,10 @@ __all__ = [
     "BoundRivFlowTargets",
     "BoundSfrFlowTargets",
     "BoundSfrStageTargets",
+    "ConcDifferences",
     "ConcTargets",
     "DrnFlowTargets",
+    "HeadDifferences",
     "HeadTargets",
     "LakeStageTargets",
     "RivFlowTargets",

@@ -1072,6 +1072,22 @@ becomes the same name as a different label (`"North"`, `"north"`); a DRN or RIV 
 rows carry one label. pyEMU used to give every simulated column a group of its own, so a
 group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
 
+**Difference observations: `HeadTargets.differences(kind="mean"|"previous", *, weight=None)`**
+(ledger 565) returns `mf.HeadDifferences` (`mf.ConcDifferences` from
+`ConcTargets`): each label's readings minus their mean over ITS measured periods
+(default, at the reading's weight), or minus the previous measured one (at
+`1/sqrt(1/w1²+1/w2²)`, `w/sqrt(2)` for equal weights); `weight=` replaces both. A label
+read fewer than twice is left out and warned by name (none left raises), a bound source
+raises. It answers `get()`/`to_wide()`/`summary()` and `compare(model)`/`residuals()`/
+`stats()` (`target_difference`, `sim_difference`, the same periods on both sides).
+`cal.observe(diffs)` wraps it in `mf.HeadDifferenceObservationSpec(prefix="hdiff")`
+(`mf.ConcDifferenceObservationSpec`, `"cdiff"`): one PEST group per set, rows with no
+difference 0.0 at weight 0 in `<prefix>_unmeasured`; the forward run's
+`_write_target_difference_csv` differences the one period-end reader's values
+(`target_values.target_differences` is the one rule), so a screened well is its
+T-weighted head with the realization's K. Files: `<prefix>_difference_map.csv`,
+`<prefix>_difference_periods.csv`, `<prefix>_simulated_differences.csv`.
+
 **A target set can be a one-sided BOUND: `inequality="at_most"` / `"at_least"`**
 (ledger 564) on `HeadTargets`, `ConcTargets`, `LakeStageTargets`,
 `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, `RivFlowTargets` and every

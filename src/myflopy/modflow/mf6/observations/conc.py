@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from myflopy.modflow.mf6.observations.heads import HeadTargets
+from myflopy.modflow.mf6.observations.heads import HeadDifferences, HeadTargets
 
 
 @dataclass
@@ -152,4 +152,31 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         return self.simulated_heads(model)
 
 
-__all__ = ["ConcTargets"]
+class ConcDifferences(HeadDifferences):
+    """A concentration set's readings differenced over each label's measured periods (ledger 565).
+
+    The concentration twin of
+    :class:`~myflopy.modflow.mf6.observations.heads.HeadDifferences`, made by
+    ``ConcTargets.differences()``: ``cal.observe(...)`` registers it as
+    ``ConcDifferenceObservationSpec`` under the prefix ``cdiff``, its values read from
+    the TRANSPORT model's concentration file.
+
+    Parameters
+    ----------
+    source : ConcTargets
+        The measured concentration set; not a bound (``ValueError``).
+    kind : str, default "mean"
+        ``"mean"`` or ``"previous"``, as ``HeadTargets.differences`` says; anything
+        else raises ``ValueError``.
+    weight : float or None, optional
+        Every difference's PEST weight, replacing the default rule; finite and from
+        0. Default ``None``.
+    """
+
+    _SOURCE = ConcTargets
+
+
+ConcTargets._DIFFERENCES = ConcDifferences
+
+
+__all__ = ["ConcDifferences", "ConcTargets"]

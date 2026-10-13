@@ -107,8 +107,10 @@ if TYPE_CHECKING:
     )
     from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
     from myflopy.modflow.mf6.observations import (
+        ConcDifferences,
         ConcTargets,
         DrnFlowTargets,
+        HeadDifferences,
         HeadTargets,
         LakeStageTargets,
         RivFlowTargets,
@@ -125,9 +127,11 @@ if TYPE_CHECKING:
     )
     from myflopy.modflow.mf6.period_calendar import PeriodCalendar, period_calendar
     from myflopy.modflow.mf6.pest import (
+        ConcDifferenceObservationSpec,
         ConcObservationSpec,
         DrnFlowObservationSpec,
         ExpGeoStruct,
+        HeadDifferenceObservationSpec,
         HeadTargetObservationSpec,
         LakeStageObservationSpec,
         PestProject,
@@ -468,6 +472,8 @@ _EXPORTS = {
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
     "RivFlowTargets": ("myflopy.modflow.mf6.observations", "RivFlowTargets"),
     "ConcTargets": ("myflopy.modflow.mf6.observations", "ConcTargets"),
+    "ConcDifferences": ("myflopy.modflow.mf6.observations", "ConcDifferences"),
+    "HeadDifferences": ("myflopy.modflow.mf6.observations", "HeadDifferences"),
     "ZoneSpec": ("myflopy.modflow.mf6.pest.zones", "ZoneSpec"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "ModelMapStyle": ("myflopy.modflow.mf6.interactive_plotting", "ModelMapStyle"),
@@ -488,6 +494,8 @@ _EXPORTS = {
     "RivFlowObservationSpec": ("myflopy.modflow.mf6.pest", "RivFlowObservationSpec"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
     "ConcObservationSpec": ("myflopy.modflow.mf6.pest", "ConcObservationSpec"),
+    "ConcDifferenceObservationSpec": ("myflopy.modflow.mf6.pest", "ConcDifferenceObservationSpec"),
+    "HeadDifferenceObservationSpec": ("myflopy.modflow.mf6.pest", "HeadDifferenceObservationSpec"),
     "HeadTargetObservationSpec": (
         "myflopy.modflow.mf6.pest",
         "HeadTargetObservationSpec",

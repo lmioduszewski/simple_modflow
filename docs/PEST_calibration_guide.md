@@ -634,6 +634,48 @@ stream's too and PESTPP-IES stopped ("group 'SFR_STAGE' mapped to multiple tags"
 ledger 359). A template built before then keeps `stage` in its observation names and
 groups -- and, like every template built before ledger 340, must be rebuilt anyway.
 
+### Differences: each hydrograph's shape (ledger 565)
+
+A head's LEVEL carries every error of its datum -- a surveyed casing off by a foot, a
+screen whose elevation is a guess, a layer the model places too high -- while its rises
+and falls do not. `targets.differences()` turns a head (or concentration) set into its
+hydrographs' shapes:
+
+```python
+heads = mf.HeadTargets.from_hydrographs("wells.gpkg", "hydrographs.csv", model=flow)
+cal.observe(heads)                         # the levels (optional: leave out to fit shape only)
+cal.observe(heads.differences())           # kind="mean": each reading minus its well's mean
+cal.observe(heads.differences("previous"), prefix="hstep")   # or period-to-period changes
+```
+
+- **`kind="mean"`** (default): each reading minus its label's MEAN over the periods it
+  was measured in, the simulated side over the SAME periods. A constant added to every
+  reading of a well leaves it unchanged -- measured, an offset model scores 0 on the
+  differences while its absolute heads miss by the offset
+  (`docs/reproducers/pest_head_differences.py`). It keeps every reading; weights are the
+  readings' own (row, else location, else 1.0).
+- **`kind="previous"`**: each measured period minus the label's previous measured one;
+  its first measured period has none. A difference of two readings carries both their
+  errors, so its weight is `1 / sqrt(1/w1² + 1/w2²)` -- `w / sqrt(2)` for equal ones.
+- **`weight=`** replaces either rule with one number for every difference -- how much
+  the shape should count against the level is yours to decide.
+
+A LABEL is what the source's observation is: a well, a well in one of its layers, or a
+screened well -- one label whose head is the T-weighted one (ledger 556), differenced in
+every realization from that realization's K. A label measured in fewer than 2 periods is
+left out with a warning naming it (its mean-removed residual is 0 whatever the model
+does); none left raises, and so does `differences()` of a BOUND set. The differences are
+built in myflopy's forward run from the same period-end reader as the absolute heads,
+never pyEMU's `setup_temporal_diff_obs` (deprecated, and it differences by GROUP, which
+holds many wells since ledger 358). Every measured difference is in ONE group, the set's
+prefix (`hdiff`; `cdiff` for `ConcTargets`) -- a source label is not read, because a
+phi-factor tag matches anywhere in a group's name and `hdiff_north` would be matched by
+a `north` tag too. Every other row is `hdiff_unmeasured`, written 0.0 at weight 0 (PEST++
+fails on an empty field). Off-PEST, `diffs.compare(model)` gives `target_difference`,
+`sim_difference` and their residual; `stats()`, `get()`, `to_wide()` and `summary()` too.
+A dated set (`from_hydrographs`) keeps its dates in the review, which titles each panel
+`hdiff: <well>`.
+
 ### Bounds: a target that is a one-sided limit (ledger 564)
 
 Some data say only which side of a number the model must be on: a well found **dry**

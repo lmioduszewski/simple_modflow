@@ -634,8 +634,10 @@ class IesResults:
         One entry per ``cal.observe(...)`` **and** ``cal.forecast(...)`` call —
         a forecast is registered as an ordinary observation set carrying weight
         0, and nothing in the persisted metadata distinguishes the two. Each
-        entry has its ``kind`` (``head_targets``, ``drn_flow``, ``riv_flow``,
-        ``lake_stage``, ``sfr_stage``, ``sfr_flow``), observation-name ``prefix``, and the
+        entry has its ``kind`` (``head_targets``, ``conc_targets``, ``drn_flow``,
+        ``riv_flow``, ``lake_stage``, ``sfr_stage``, ``sfr_flow``, and
+        ``head_differences``/``conc_differences`` -- ledger 565 -- whose
+        panels are titled ``hdiff: <well>``), observation-name ``prefix``, and the
         snapshot files written beside the control file. This is what lets a
         completed run be re-joined to where its observations are on the grid.
         """

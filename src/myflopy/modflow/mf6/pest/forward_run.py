@@ -6,7 +6,8 @@ import pandas as pd
 
 #: The columns of a build's snapshot files that hold a target's NAME, or a label or
 #: column derived from it: the target map's ``name``/``obsname``, a locations or
-#: values snapshot's ``name``, the values snapshot's ``column`` (ledger 358).
+#: values snapshot's ``name``, the values snapshot's ``column`` (ledger 358) -- and a
+#: difference set's periods file's ``obsname`` (ledger 565).
 TARGET_NAME_COLUMNS = ("name", "obsname", "column")
 
 #: The columns of a build's snapshot files read back as TEXT besides the names: a zone
@@ -272,23 +273,11 @@ def _write_head_target_csv(
     """
 
     # Imported here, not hoisted: pyEMU copies only this function's source.
-    from pathlib import Path
+    from myflopy.modflow.mf6.pest.forward_run import _target_table
 
-    from myflopy.modflow.mf6.pest.forward_run import read_target_table
-    from myflopy.modflow.mf6.target_values import k_from_sources, read_target_values
-
-    # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
-    # named NA as a missing value, so the columns written would be 7 and nan while
-    # the target map, the targets and the base table's header say 007 and NA
-    # (ledger 341). ``read_target_table`` is the one rule for that read.
-    mapping = read_target_table(mapping_csv)
-    # The file the OC declares, which the build recorded (ledger 505).
-    head_name = str(head_file) if head_file else f"{model_name}.hds"
-    # The K this realization's model READ, after pyEMU and the pilot points
-    # rewrote its files (ledger 556); never the build's K.
-    k = None if not k_sources else k_from_sources(k_sources, base=sim_ws)
-    read_target_values(
-        Path(sim_ws) / head_name, mapping, perlen=perlen, file=head_name, saves="HEAD", k=k,
+    _target_table(
+        model_name, mapping_csv, field="head", perlen=perlen, sim_ws=sim_ws,
+        field_file=head_file, k_sources=k_sources,
     ).to_csv(output_csv, index=False)
 
 
@@ -343,24 +332,181 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     """
 
     # Imported here, not hoisted: pyEMU copies only this function's source.
+    from myflopy.modflow.mf6.pest.forward_run import _target_table
+
+    # A concentration map never holds a screened well (refused, ledger 556).
+    _target_table(
+        model_name, mapping_csv, field="concentration", perlen=perlen, sim_ws=sim_ws,
+        field_file=conc_file,
+    ).to_csv(output_csv, index=False)
+
+
+def _target_table(
+    model_name,
+    mapping_csv,
+    *,
+    field,
+    perlen=None,
+    sim_ws=".",
+    field_file=None,
+    k_sources=None,
+    periods_csv=None,
+    kind=None,
+):
+    """A head or concentration target map's values at each period's END -- or their differences.
+
+    The body ``_write_head_target_csv``, ``_write_conc_target_csv`` and
+    ``_write_target_difference_csv`` share (ledger 565), so the
+    absolute and the differenced tables are read by ONE period-end reader,
+    :func:`myflopy.modflow.mf6.target_values.read_target_values` (ledger 557): a
+    screened well is one label, its head weighted by the K this realization read
+    (ledger 556). The writers import it inside their bodies, because pyEMU copies only
+    a writer's source into the generated forward run.
+
+    Parameters
+    ----------
+    model_name : str
+        The model whose file is read; its default file is ``<model_name>.hds``
+        (``.ucn`` for a concentration).
+    mapping_csv : str or pathlib.Path
+        The target map the build wrote (``obsname``/``name``, ``layer``, ``cell``
+        and, for a screened well, ``target_values.SCREEN_COLUMNS``); its labels are
+        read as text, verbatim (ledger 341, :func:`read_target_table`).
+    field : str
+        ``"head"`` or ``"concentration"``: which file and which record text.
+    perlen : list of float or None, optional
+        Each period's length from the TDIS; with it a period saved without its end is
+        refused (ledger 336). Default ``None``: unchecked.
+    sim_ws : str or pathlib.Path, default "."
+        The directory holding the file.
+    field_file : str or None, optional
+        The file the OC declares, relative to ``sim_ws`` (ledger 505). Default
+        ``None``: ``<model_name>.hds`` / ``.ucn``.
+    k_sources : list of dict or None, optional
+        A screened map's K files (``target_values.k_from_sources``, ledger 556).
+        Default ``None``: no K read.
+    periods_csv : str or pathlib.Path or None, optional
+        A difference set's periods file (``obsname``, ``per``: each label's measured
+        periods, its names read as text). Given, the values are returned
+        DIFFERENCED over them by ``target_values.target_differences`` (``NaN`` where
+        a label has no difference). Default ``None``: the values themselves.
+    kind : str or None, optional
+        With ``periods_csv``: ``"mean"`` or ``"previous"``. Default ``None``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``per`` plus one column per label, in map order.
+
+    Raises
+    ------
+    ValueError
+        For another ``field``, or another ``kind`` with ``periods_csv``; as
+        ``read_target_values`` (a period saved without its end; a screened map with
+        no K).
+    FileNotFoundError
+        When the file, or a K file, is not there.
+    """
+
     from pathlib import Path
 
-    from myflopy.modflow.mf6.pest.forward_run import read_target_table
-    from myflopy.modflow.mf6.target_values import read_target_values
+    from myflopy.modflow.mf6.target_values import (
+        k_from_sources,
+        read_target_values,
+        target_differences,
+    )
 
-    # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
-    # named NA as a missing value, so the columns written would be 7 and nan while
-    # the target map, the targets and the base table's header say 007 and NA
-    # (ledger 341). ``read_target_table`` is the one rule for that read.
+    if field not in ("head", "concentration"):
+        raise ValueError(f"field={field!r}: a target table reads 'head' or 'concentration'.")
     mapping = read_target_table(mapping_csv)
-    # The file the OC declares, which the build recorded (ledger 505).
-    conc_name = str(conc_file) if conc_file else f"{model_name}.ucn"
-    # The one period-end reader (ledger 557); a concentration
-    # map never holds a screened well (refused, ledger 556).
-    read_target_values(
-        Path(sim_ws) / conc_name, mapping, perlen=perlen, file=conc_name,
-        saves="CONCENTRATION", text="concentration",
-    ).to_csv(output_csv, index=False)
+    suffix, saves = {"head": (".hds", "HEAD"), "concentration": (".ucn", "CONCENTRATION")}[field]
+    name = str(field_file) if field_file else f"{model_name}{suffix}"
+    # The K this realization's model READ, after pyEMU and the pilot points rewrote
+    # its files (ledger 556); never the build's K.
+    k = None if not k_sources else k_from_sources(k_sources, base=sim_ws)
+    table = read_target_values(
+        Path(sim_ws) / name, mapping, perlen=perlen, file=name, saves=saves, text=field, k=k,
+    )
+    if periods_csv is None:
+        return table
+    return target_differences(table, read_target_table(periods_csv), kind=kind)
+
+
+def _write_target_difference_csv(
+    model_name,
+    mapping_csv,
+    output_csv,
+    periods_csv,
+    kind,
+    field="head",
+    perlen=None,
+    sim_ws=".",
+    head_file=None,
+    conc_file=None,
+    k_sources=None,
+):
+    """Write each target label's DIFFERENCES over its measured periods (ledger 565).
+
+    Post-model command of a ``HeadDifferences``/``ConcDifferences`` set, and the ONE
+    writer of its table: the build writes the base run's copy through it (ledger
+    340). It reads the values through the writers' shared body (:func:`_target_table`,
+    the one period-end reader, so a screened well is its T-weighted head with THIS
+    realization's K) and differences them by the one rule
+    (``target_values.target_differences``), the rule ``HeadDifferences.compare()``
+    applies. A row with no difference -- an unmeasured period, a label's first
+    measured period under ``kind="previous"`` -- is written ``0.0``, which the build
+    weights 0: PEST++ fails a run on an empty field or ``nan`` (ledger 351).
+
+    Self-contained: pyEMU copies only this function's source into the generated
+    forward run, so its imports live inside it.
+
+    Parameters
+    ----------
+    model_name : str
+        The model whose file is read (the flow model, or the transport model for a
+        concentration).
+    mapping_csv : str or pathlib.Path
+        The target map the build wrote, of the labels kept (two measured periods or
+        more), as :func:`_write_head_target_csv` reads one.
+    output_csv : str or pathlib.Path
+        The table to write: ``per`` then one column per label, in map order.
+    periods_csv : str or pathlib.Path
+        The build's ``<prefix>_difference_periods.csv``: ``obsname`` and ``per``, each
+        label's MEASURED periods, read with its names as text.
+    kind : str
+        ``"mean"`` or ``"previous"`` (``target_values.DIFFERENCE_KINDS``).
+    field : str, default "head"
+        ``"head"`` or ``"concentration"``.
+    perlen : list of float or None, optional
+        Each period's length (ledger 336), as :func:`_write_head_target_csv`.
+    sim_ws : str or pathlib.Path, default "."
+        The directory holding the file.
+    head_file : str or None, optional
+        The head file the OC declares (``field="head"``), as
+        :func:`_write_head_target_csv` reads it. Default ``None``.
+    conc_file : str or None, optional
+        The concentration file the OC declares (``field="concentration"``). Default
+        ``None``.
+    k_sources : list of dict or None, optional
+        A screened map's K files, as :func:`_write_head_target_csv` reads them.
+        Default ``None``.
+
+    Raises
+    ------
+    ValueError
+        As :func:`_target_table`; for another ``kind``.
+    FileNotFoundError
+        As :func:`_target_table`.
+    """
+
+    # Imported here, not hoisted: pyEMU copies only this function's source.
+    from myflopy.modflow.mf6.pest.forward_run import _target_table
+
+    _target_table(
+        model_name, mapping_csv, field=field, perlen=perlen, sim_ws=sim_ws,
+        field_file=head_file if field == "head" else conc_file, k_sources=k_sources,
+        periods_csv=periods_csv, kind=kind,
+    ).fillna(0.0).to_csv(output_csv, index=False)
 
 
 def write_named_series_targets(sets, sim_ws=".", model_name=None):

@@ -16,6 +16,8 @@ import myflopy.modflow.mf6.observations as obs_pkg
 EXPECTED_HOMES = {
     "HeadTargets": "heads",
     "ConcTargets": "conc",
+    "HeadDifferences": "heads",
+    "ConcDifferences": "conc",
     "BoundHeadTargets": "heads",
     "BoundHeadTargetPlots": "heads",
     "LakeStageTargets": "lake",

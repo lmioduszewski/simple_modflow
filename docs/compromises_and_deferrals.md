@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 564 entries (569 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 565 entries (570 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 565 | Difference observations hand PEST each hydrograph's shape:... | 2026-10-12 |
 | 564 | A target set can be a one-sided BOUND -- `inequality="at_most"\|"at_least"` -- that the build writes as PEST... | 2026-10-12 |
 | 563 | A write-back reads a number FloPy loads as TEXT as a number, and keeps a keyword the forward run left | 2026-10-12 |
 | 562 | A write-back compares text without regard to case, and refuses to fork a simulation the run did not run | 2026-10-12 |
@@ -21507,3 +21508,26 @@ same day, which is the useful part of the result.
       bound when noise is on (std 0.5: an at-most 5 drawn at mean 4.945, sd 0.513; with no
       noise option it resets `ies_no_noise` and draws it exactly) -- a bound is as
       uncertain as the reading it came from.
+
+565. **Difference observations hand PEST each hydrograph's shape: `HeadTargets.differences(kind="mean"|"previous", weight=None)` is a derived target set, differenced in myflopy's forward run from the one period-end reader, one PEST group per set (2026-10-12).**
+      Item 9 of the PEST preparation; the user's answers Q5/Q10. **An object, not an
+      `observe()` argument** (settled): it answers `compare()`/`stats()` off-PEST, and
+      registering it with or without the absolute set is two `observe()` calls.
+      **`kind="mean"` is the default, at the SOURCE weight; `"previous"` at the two
+      readings' combined weight** -- `1/sqrt(1/w1²+1/w2²)`, the user's `w/sqrt(2)`
+      generalized to unequal weights (judgment call: the obviously correct reading,
+      equal to it for equal weights); `weight=` replaces both. The mean is over each
+      LABEL's own measured periods, the same periods on the simulated side, so a
+      constant offset scores 0 (measured, `docs/reproducers/pest_head_differences.py`:
+      base realization hdiff 0, hds 174.0). A label is the source's observation label
+      -- a screened well one, its T-weighted head with the realization's K (ledger 556).
+      **Left out, warned by name:** a label measured fewer than twice (its mean-removed
+      residual is 0 identically); none left raises. **Not pyEMU's
+      `setup_temporal_diff_obs`:** deprecated, untested, and it differences by GROUP,
+      which holds many wells since ledger 358. **One group per set** (`hdiff`/`cdiff`):
+      a per-label `hdiff_north` would be matched by a `north` phi-factor tag too (ledger
+      359). **Undefined rows** are written 0.0 at weight 0 -- PEST++ fails on an empty
+      field (ledger 351). **One reader, no ratchet move:** the head, concentration and
+      difference writers share `forward_run._target_table`; folding the differencing
+      into it kept the deferred-import count at 6. **Deferred:** lake-stage differences
+      (same class pattern); differences of a bound set are refused, not defined.

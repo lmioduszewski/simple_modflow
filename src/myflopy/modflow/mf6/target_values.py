@@ -40,10 +40,12 @@ from myflopy.modflow.mf6.hydraulics import screened_head
 from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
 __all__ = [
+    "DIFFERENCE_KINDS",
     "SCREEN_COLUMNS",
     "k_from_sources",
     "period_end_records",
     "read_target_values",
+    "target_differences",
     "target_value_table",
 ]
 
@@ -332,3 +334,73 @@ def read_target_values(
 
     records = period_end_records(path, perlen=perlen, file=file, saves=saves, text=text)
     return target_value_table(records, mapping, k=k)
+
+
+#: The two derived observations :func:`target_differences` makes (ledger
+#: 565): ``"mean"`` -- each value minus its label's mean over its
+#: measured periods -- and ``"previous"`` -- each measured period minus the previous
+#: one of that label.
+DIFFERENCE_KINDS = ("mean", "previous")
+
+
+def target_differences(table: pd.DataFrame, periods: pd.DataFrame, *, kind: str) -> pd.DataFrame:
+    """Each label's DIFFERENCES over its own measured periods: the ONE rule (ledger 565).
+
+    What ``HeadDifferences`` compares -- applied to the targets and to the simulated
+    values alike -- and what PEST's forward run writes
+    (``forward_run._write_target_difference_csv``), so a calibration and the
+    off-PEST review read one definition. A period the label was not measured in, and
+    a label's first measured period under ``kind="previous"``, has no difference:
+    ``NaN`` here (the forward run writes ``0.0`` there, at weight 0, because PEST++
+    fails a run on an empty field, ledger 351).
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        ``per`` (zero-based stress period) plus one column of values per label, as
+        :func:`read_target_values` returns.
+    periods : pandas.DataFrame
+        ``obsname`` (a label of ``table``) and ``per``: each label's MEASURED periods.
+        A label it does not name has no difference anywhere.
+    kind : str
+        ``"mean"``: value minus the mean of the label's values at its measured
+        periods (a ``NaN`` among them makes every difference of the label ``NaN``);
+        ``"previous"``: value minus the value at the label's previous measured
+        period.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``table``'s shape and columns: ``per`` unchanged, each label's differences.
+
+    Raises
+    ------
+    ValueError
+        When ``kind`` is not one of :data:`DIFFERENCE_KINDS`, or ``periods`` names a
+        period ``table`` holds no row for.
+    """
+
+    if kind not in DIFFERENCE_KINDS:
+        raise ValueError(f"kind={kind!r} is not a difference; pass 'mean' or 'previous'.")
+    out = table.copy()
+    rows = {int(per): position for position, per in enumerate(table["per"].astype(int))}
+    for label in table.columns[1:]:
+        measured = sorted({int(per) for per in periods.loc[
+            periods["obsname"].astype(str) == str(label), "per"]})
+        missing = [per for per in measured if per not in rows]
+        if missing:
+            raise ValueError(
+                f"Label {label!r} is measured in period(s) {missing}, which the simulated "
+                f"table holds no row for (it has {sorted(rows)})."
+            )
+        values = table[label].to_numpy(dtype=float)
+        result = np.full(len(table), np.nan)
+        positions = [rows[per] for per in measured]
+        if positions:
+            picked = values[positions]
+            if kind == "mean":
+                result[positions] = picked - np.mean(picked)
+            else:
+                result[positions[1:]] = np.diff(picked)
+        out[label] = result
+    return out

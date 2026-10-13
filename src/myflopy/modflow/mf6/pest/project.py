@@ -22,8 +22,10 @@ from myflopy._optional import require
 from myflopy._pythonpath import pythonpath_for_children
 from myflopy.modflow.mf6.lak_implicit import keep_implicit
 from myflopy.modflow.mf6.observations import (
+    ConcDifferences,
     ConcTargets,
     DrnFlowTargets,
+    HeadDifferences,
     HeadTargets,
     LakeStageTargets,
     RivFlowTargets,
@@ -52,6 +54,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
 from myflopy.modflow.mf6.pest.observations import (
     finalize_observations,
     prepare_conc_observations,
+    prepare_difference_observations,
     prepare_drn_flow_observations,
     prepare_head_target_observations,
     prepare_lake_stage_observations,
@@ -85,9 +88,11 @@ from myflopy.modflow.mf6.pest.runs import (
     pestpp_ies_outputs,
 )
 from myflopy.modflow.mf6.pest.specs import (
+    ConcDifferenceObservationSpec,
     ConcObservationSpec,
     DrnFlowObservationSpec,
     ExpGeoStruct,
+    HeadDifferenceObservationSpec,
     HeadTargetObservationSpec,
     LakeStageObservationSpec,
     RivFlowObservationSpec,
@@ -131,6 +136,8 @@ logger = get_logger(__name__)
 _OBSERVATION_SPEC_TYPES = (
     HeadTargetObservationSpec,
     ConcObservationSpec,
+    HeadDifferenceObservationSpec,
+    ConcDifferenceObservationSpec,
     LakeStageObservationSpec,
     SfrStageObservationSpec,
     SfrFlowObservationSpec,
@@ -147,6 +154,10 @@ _TARGET_SPEC_TYPES = (
     # ladder would otherwise wrap every concentration target as a head spec.
     (ConcTargets, ConcObservationSpec),
     (HeadTargets, HeadTargetObservationSpec),
+    # Differenced sets (ledger 565); ConcDifferences subclasses
+    # HeadDifferences, so it comes first for the same reason.
+    (ConcDifferences, ConcDifferenceObservationSpec),
+    (HeadDifferences, HeadDifferenceObservationSpec),
     (LakeStageTargets, LakeStageObservationSpec),
     (SfrStageTargets, SfrStageObservationSpec),
     (SfrFlowTargets, SfrFlowObservationSpec),
@@ -1952,6 +1963,8 @@ class PestProject:
     def _prepare_one_observation_spec(self, spec):
         """Create simulated files and register one observation spec with pyEMU."""
 
+        if isinstance(spec, (HeadDifferenceObservationSpec, ConcDifferenceObservationSpec)):
+            return prepare_difference_observations(self, spec)
         if isinstance(spec, ConcObservationSpec):
             return prepare_conc_observations(self, spec)
         if isinstance(spec, HeadTargetObservationSpec):
@@ -1995,7 +2008,10 @@ class PestProject:
         """Whether any observed or forecast head set carries well screens (ledger 556)."""
 
         return any(
-            isinstance(spec, HeadTargetObservationSpec) and getattr(spec.targets, "screened", False)
+            (isinstance(spec, HeadTargetObservationSpec) and getattr(spec.targets, "screened", False))
+            # A difference set of a screened source reads the same T-weighted heads
+            # (ledger 565).
+            or (isinstance(spec, HeadDifferenceObservationSpec) and spec.targets.source.screened)
             for spec in [*self._observation_specs, *self._forecast_specs]
         )
 
@@ -2368,6 +2384,28 @@ class PestProject:
                     f"output_csv='{conc_config['output_csv']}', "
                     f"perlen={perlen!r}, "
                     f"conc_file={conc_config.get('conc_file')!r})",
+                    is_pre_cmd=False,
+                )
+                continue
+            difference_config = item.get("difference_forward_run_config")
+            if difference_config is not None:
+                # One writer for the base run and every realization (ledger
+                # 565), on the one period-end reader.
+                file_keyword = "head_file" if difference_config["field"] == "head" else "conc_file"
+                self.pf.add_py_function(
+                    str(helper_path),
+                    "_write_target_difference_csv("
+                    f"model_name={difference_config['model_name']!r}, "
+                    f"mapping_csv={difference_config['mapping_csv']!r}, "
+                    f"output_csv={difference_config['output_csv']!r}, "
+                    f"periods_csv={difference_config['periods_csv']!r}, "
+                    f"kind={difference_config['kind']!r}, "
+                    f"field={difference_config['field']!r}, "
+                    f"perlen={perlen!r}, "
+                    f"{file_keyword}={difference_config.get(file_keyword)!r}"
+                    + (f", k_sources={difference_config['k_sources']!r}"
+                       if difference_config.get("k_sources") else "")
+                    + ")",
                     is_pre_cmd=False,
                 )
                 continue

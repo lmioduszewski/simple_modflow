@@ -38,6 +38,7 @@ head in every realization when names were not already in sorted order.
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
@@ -53,6 +54,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _shown,
 )
 from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
+from myflopy.modflow.mf6.observations.heads import _difference_weights
 from myflopy.modflow.mf6.observations.hydrographs import refuse_another_clock
 from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.period_calendar import period_calendar
@@ -60,6 +62,7 @@ from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
     _write_conc_target_csv,
     _write_head_target_csv,
+    _write_target_difference_csv,
 )
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
 from myflopy.modflow.mf6.pest.naming import (
@@ -72,15 +75,17 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     staged_model,
 )
 from myflopy.modflow.mf6.pest.specs import (
+    ConcDifferenceObservationSpec,
     ConcObservationSpec,
     DrnFlowObservationSpec,
+    HeadDifferenceObservationSpec,
     HeadTargetObservationSpec,
     LakeStageObservationSpec,
     RivFlowObservationSpec,
     SfrFlowObservationSpec,
     SfrStageObservationSpec,
 )
-from myflopy.modflow.mf6.target_values import SCREEN_COLUMNS
+from myflopy.modflow.mf6.target_values import SCREEN_COLUMNS, target_differences
 
 #: The columns of a prepared set's ``target_frame``: who the target is, the column
 #: of the simulated table it reads, its key as given and as a period, its value
@@ -1064,6 +1069,149 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
         "conc_file": item.pop("field_file").get("conc_file"),
     }
     item.pop("k_sources", None)
+    return item
+
+
+def prepare_difference_observations(
+    project, spec: HeadDifferenceObservationSpec | ConcDifferenceObservationSpec
+):
+    """A head or concentration DIFFERENCE set's map, periods, base table and targets (ledger 565).
+
+    Built from the SOURCE set's labels (:meth:`HeadTargets.observation_labels`, so a
+    screened well is one label, ledger 556) of the names the set keeps, and from
+    its values joined to them as an absolute set's are (``_point_target_frame``,
+    whose refusals apply); each label's measured periods are written to
+    ``<prefix>_difference_periods.csv`` and the targets differenced over them by the
+    one rule (``target_values.target_differences``). The base table is written by
+    the forward run's own writer (``forward_run._write_target_difference_csv``),
+    which reads the file the OC declares through the one period-end reader. Every
+    measured difference is in the set's prefix group -- a group label of the source
+    is not read -- and a row with none is unmeasured, weight 0, its cell 0.0 in the
+    table. The calendar recorded is the source's (``_dating_record``), so a dated
+    set's review draws dates.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built.
+    spec : HeadDifferenceObservationSpec or ConcDifferenceObservationSpec
+        The differenced set and its prefix.
+
+    Returns
+    -------
+    dict
+        The prepared set :func:`finalize_observations` completes.
+
+    Raises
+    ------
+    ValueError
+        As :func:`prepare_head_target_observations` for the source's targets; when
+        the table's header is not the forward run's (a ``simulated_values`` table in
+        another order).
+    """
+
+    diffs = spec.targets
+    source = diffs.source
+    concentration = isinstance(spec, ConcDifferenceObservationSpec)
+    owner = type(diffs).__name__
+    dating = _dating_record(project, source, caller=_caller(owner, spec.prefix))
+    model_name = (
+        (spec.transport_model_name or resolve_transport_model_name(project))
+        if concentration else project.model.name
+    )
+    field, keyword = ("concentration", "conc_file") if concentration else ("head", "head_file")
+    field_file = {keyword: _declared_field_file(project, model_name=model_name, kind=field)}
+    all_labels = source.observation_labels(project.model)
+    # Every source target is placed (a target on no active cell is refused, ledger
+    # 341), then the names left out for want of a second reading are dropped.
+    frame = _point_target_frame(source, all_labels, prefix=spec.prefix)
+    kept = set(diffs._kept_keys)
+    labels = all_labels.loc[all_labels["name_key"].isin(kept)]
+    frame = frame.loc[frame["column"].isin(set(labels["obsname"].astype(str)))].reset_index(drop=True)
+    screened = "open_top" in labels.columns and bool(labels["open_top"].notna().any())
+    mapping = labels.loc[:, ["obsname", "name", "layer", "cell", *(SCREEN_COLUMNS if screened else ())]]
+    mapping_path = project.template_workspace / f"{spec.prefix}_difference_map.csv"
+    _write_frame(mapping, mapping_path)
+    measured = frame.loc[frame["value"].notna(), ["column", "per"]].drop_duplicates()
+    periods = (
+        measured.rename(columns={"column": "obsname"})
+        .assign(_order=lambda table: table["obsname"].map(
+            {label: position for position, label in enumerate(dict.fromkeys(mapping["obsname"].astype(str)))}))
+        .sort_values(["_order", "per"]).drop(columns="_order").reset_index(drop=True)
+    )
+    periods_path = project.template_workspace / f"{spec.prefix}_difference_periods.csv"
+    _write_frame(periods, periods_path)
+
+    # The targets differenced by the one rule, and their weights by the set's.
+    wide = frame.pivot_table(index="per", columns="column", values="value", aggfunc="first", dropna=False)
+    wide.columns.name = None
+    differenced = target_differences(wide.reset_index(), periods, kind=diffs.kind).melt(
+        id_vars="per", var_name="column", value_name="difference")
+    frame = frame.merge(differenced, on=["column", "per"], how="left")
+    weights_frame = frame.rename(columns={"value": "head_target", "difference": "target_difference",
+                                          "column": "_label"})
+    frame["weight"] = _difference_weights(weights_frame, kind=diffs.kind, weight=diffs.weight).to_numpy()
+    frame["value"] = frame["difference"]
+    frame["group"] = pd.Series(pd.NA, index=frame.index, dtype=object)  # one group per set
+    frame = frame.drop(columns=["difference"])
+
+    k_sources = screen_k_sources(project) if screened else None
+    simulated_path = project.template_workspace / f"{spec.prefix}_simulated_differences.csv"
+    writer = functools.partial(
+        _write_target_difference_csv, periods_csv=periods_path, kind=diffs.kind, field=field
+    )
+    simulated = _one_writer_table(
+        project, spec, writer=writer, model_name=model_name, mapping=mapping,
+        mapping_path=mapping_path, simulated_path=simulated_path, field_file=field_file,
+        k_sources=screen_k_sources(project, absolute=True) if screened else None,
+    )
+    _register_table(project, simulated, simulated_path, prefix=spec.prefix)
+
+    snapshot = _point_locations_snapshot(project, source)
+    snapshot = snapshot.loc[snapshot["name"].astype(str).isin(set(diffs.names))]
+    locations_path = project.template_workspace / f"{spec.prefix}_target_locations.gpkg"
+    _write_locations_snapshot(snapshot, locations_path)
+
+    located = _locate_targets(
+        frame, simulated, owner=owner, prefix=spec.prefix, table=simulated_path.name,
+        perlen=period_lengths(project.model),
+    )
+    value_label = f"{'conc' if concentration else 'head'}_difference"
+    values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
+    _write_values_snapshot(located, values_path, value_label=value_label)
+    item = _prepared_item(
+        prefix=spec.prefix, owner=owner, located=located, valueless=False, simulated=simulated,
+        simulated_path=simulated_path, values_path=values_path, value_label=value_label,
+    )
+    item["metadata"] = {
+        "kind": "conc_differences" if concentration else "head_differences",
+        "difference_kind": diffs.kind,
+        "prefix": spec.prefix,
+        "geometry": "points",
+        "locations_file": locations_path.name,
+        "mapping_file": mapping_path.name,
+        "periods_file": periods_path.name,
+        "values_file": values_path.name,
+        "name_column": "name",
+        "layer_column": "layer",
+        "time_column": "time",
+        "value_column": value_label,
+        "n_locations": int(mapping["name"].nunique()),
+        "n_rows": int(len(located)),
+        "screened": screened,
+        **({"transport_model": model_name} if concentration else {}),
+        **dating,
+    }
+    item["difference_forward_run_config"] = {
+        "model_name": model_name,
+        "mapping_csv": mapping_path.name,
+        "periods_csv": periods_path.name,
+        "output_csv": simulated_path.name,
+        "kind": diffs.kind,
+        "field": field,
+        **{keyword: field_file[keyword]},
+        "k_sources": k_sources,
+    }
     return item
 
 

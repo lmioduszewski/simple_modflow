@@ -2053,7 +2053,13 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   above stays and names it, a flow bound is in MF6's sign (`-2.0` + `"at_most"` = at
   least 2 leaving), `compare()` gives PEST++'s residual plus `raw_residual`, and the IES
   review scores one-sided through ONE helper on pyEMU's tag rule (`phi_contributions`
-  reads PESTPP-IES's `phi.group.csv`).
+  reads PESTPP-IES's `phi.group.csv`). **Difference observations are an OBJECT,
+  `targets.differences(kind="mean"|"previous")`** (ledger 565): each
+  label minus its mean over ITS measured periods (source weight) or its previous
+  measured period (`w/sqrt(2)`), built in myflopy's forward run from the ONE period-end
+  reader (`target_values.target_differences` is the one rule), ONE group per set
+  (`hdiff`/`cdiff`), undefined rows 0.0 at weight 0 -- never pyEMU's
+  `setup_temporal_diff_obs`, which differences by group.
   No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
   version-2 file. Lake/SFR targets have no label column -- split them by prefix. **No
   default prefix is inside another's groups** (a phi-factor tag matches anywhere in a

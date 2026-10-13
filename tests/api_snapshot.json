@@ -627,6 +627,17 @@
       "lower:KEYWORD_ONLY=None",
       "upper:KEYWORD_ONLY=None"
     ],
+    "ConcDifferenceObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "simulated_values:POSITIONAL_OR_KEYWORD=None",
+      "prefix:POSITIONAL_OR_KEYWORD='cdiff'",
+      "transport_model_name:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ConcDifferences": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "kind:POSITIONAL_OR_KEYWORD='mean'",
+      "weight:KEYWORD_ONLY=None"
+    ],
     "ConcObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
       "simulated_values:POSITIONAL_OR_KEYWORD=None",
@@ -1347,6 +1358,28 @@
       "layer:KEYWORD_ONLY=None",
       "cells:KEYWORD_ONLY=None"
     ],
+    "HeadDifferenceObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "simulated_values:POSITIONAL_OR_KEYWORD=None",
+      "prefix:POSITIONAL_OR_KEYWORD='hdiff'"
+    ],
+    "HeadDifferences": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "kind:POSITIONAL_OR_KEYWORD='mean'",
+      "weight:KEYWORD_ONLY=None"
+    ],
+    "HeadDifferences.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadDifferences.get": [],
+    "HeadDifferences.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadDifferences.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadDifferences.summary": [],
+    "HeadDifferences.to_wide": [],
     "HeadTargetObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
       "simulated_values:POSITIONAL_OR_KEYWORD=None",
@@ -1380,6 +1413,10 @@
     ],
     "HeadTargets.compare": [
       "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.differences": [
+      "kind:POSITIONAL_OR_KEYWORD='mean'",
+      "weight:KEYWORD_ONLY=None"
     ],
     "HeadTargets.from_cells": [
       "cells:KEYWORD_ONLY=<required>",
@@ -7344,6 +7381,8 @@
       "CanonicalModelContract",
       "CellSurfaceOffset",
       "Clamp",
+      "ConcDifferenceObservationSpec",
+      "ConcDifferences",
       "ConcObservationSpec",
       "ConcTargets",
       "Contours",
@@ -7363,6 +7402,8 @@
       "GweModel",
       "GwfModel",
       "GwtModel",
+      "HeadDifferenceObservationSpec",
+      "HeadDifferences",
       "HeadTargetObservationSpec",
       "HeadTargets",
       "HoverSpec",

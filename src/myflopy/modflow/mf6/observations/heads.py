@@ -29,6 +29,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _coerce_label_list,
     _coerce_scalar_or_list,
     _copy_frame,
+    _default_compare_stats,
     _default_obs_csv_name,
     _ensure_unique_observation_names,
     _in_grid_crs,
@@ -56,7 +57,12 @@ from myflopy.modflow.mf6.observations.hydrographs import (
 from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.period_end import period_lengths
-from myflopy.modflow.mf6.target_values import read_target_values, target_value_table
+from myflopy.modflow.mf6.target_values import (
+    DIFFERENCE_KINDS,
+    read_target_values,
+    target_differences,
+    target_value_table,
+)
 from myflopy.viz import mpl_axes
 
 logger = get_logger(__name__)
@@ -343,6 +349,9 @@ class HeadTargets:
     #: flux-weighted concentration needs the flow model's heads and K beside the
     #: transport file, so ``ConcTargets`` refuses screens.
     _SCREENS: ClassVar[bool] = True
+    #: The class :meth:`differences` returns (``ConcDifferences`` on ``ConcTargets``;
+    #: ledger 565), set where each is defined.
+    _DIFFERENCES: ClassVar[Any] = None
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple
@@ -1877,6 +1886,327 @@ class HeadTargets:
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 
         return CalibrationPlot.from_targets(self, model=model, type=type)
+
+    def differences(self, kind: str = "mean", *, weight: float | None = None):
+        """The set's hydrograph SHAPES: each label's values differenced over its own measured periods.
+
+        A derived target set (ledger 565) for what a head's level
+        cannot be trusted for -- a well's datum, a screen's elevation, a vertical
+        offset the model will never resolve -- while its rises and falls can: a
+        constant added to every reading of a well leaves its differences unchanged.
+        Register it with ``cal.observe(...)`` beside or instead of this set (two
+        calls; both read the same head file, once each per run); it answers
+        :meth:`HeadDifferences.compare` and :meth:`HeadDifferences.stats` off-PEST.
+
+        Parameters
+        ----------
+        kind : str, default "mean"
+            ``"mean"``: each reading minus its label's MEAN over the periods it was
+            measured in -- the same periods for the simulated value -- keeping every
+            reading as an observation. ``"previous"``: each measured period minus the
+            label's previous measured one; its first measured period has none.
+            Anything else raises ``ValueError``.
+        weight : float or None, optional
+            Every difference's PEST weight, replacing the default rule. Default
+            ``None``: under ``"mean"`` each difference keeps its reading's weight (the
+            reading's own, else its location's, else 1.0 -- what this set's build
+            would give it); under ``"previous"`` it is the two readings' combined,
+            ``1 / sqrt(1/w1**2 + 1/w2**2)`` -- ``w / sqrt(2)`` for two of weight
+            ``w`` -- since a difference of two readings carries both their errors. A
+            number must be finite and from 0 (``ValueError`` otherwise).
+
+        Returns
+        -------
+        HeadDifferences
+            ``ConcDifferences`` on ``ConcTargets``. A label (a name, or a name in one
+            of its layers) measured in fewer than 2 periods is LEFT OUT -- its
+            mean-removed residual is 0 identically, and it has no previous -- with a
+            ``UserWarning`` naming it.
+
+        Raises
+        ------
+        ValueError
+            For another ``kind`` or a bad ``weight``; when this set is a BOUND
+            (``inequality``): a bound has no mean; and when no label is measured in 2
+            periods. A ``time`` that is no stress period raises as :meth:`compare`.
+        """
+
+        return type(self)._DIFFERENCES(self, kind=kind, weight=weight)
+
+
+class HeadDifferences:
+    """A head set's readings differenced over each label's own measured periods (ledger 565).
+
+    Made by :meth:`HeadTargets.differences` (``ConcDifferences`` by
+    ``ConcTargets.differences``): the SHAPE of each hydrograph, which a datum or
+    screen-elevation error cannot move. ``kind="mean"`` subtracts each label's mean
+    over the periods it was measured in -- the same periods on the simulated side --
+    and ``kind="previous"`` each measured period's previous measured value. A LABEL is
+    what the source's observation is: a name, or a name in one of its layers for a
+    well given in two (ledger 234); a screened well is one label, its head the
+    transmissivity-weighted one (ledger 556).
+
+    ``cal.observe(diffs)`` registers it as ``HeadDifferenceObservationSpec`` under the
+    prefix ``hdiff`` (``cdiff`` for a concentration): every measured difference in ONE
+    group, ``hdiff`` -- a group label of the source is not read, because a phi-factor
+    tag matches anywhere in a group's name, so ``hdiff_north`` would be matched by a
+    ``north`` tag too (ledger 359) -- and every other row ``hdiff_unmeasured`` at
+    weight 0. PEST's forward run differences the heads it reads through the same
+    period-end reader as the source's set, by the same rule
+    (``target_values.target_differences``) this class compares with.
+
+    Parameters
+    ----------
+    source : HeadTargets
+        The measured set (``ConcTargets`` for ``ConcDifferences``). Not a bound
+        (``inequality``): ``ValueError``, a bound has no mean.
+    kind : str, default "mean"
+        ``"mean"`` or ``"previous"``, as :meth:`HeadTargets.differences` says;
+        anything else raises ``ValueError``.
+    weight : float or None, optional
+        Every difference's PEST weight, replacing the default rule
+        (:meth:`HeadTargets.differences`); finite and from 0. Default ``None``.
+
+    Attributes
+    ----------
+    source : HeadTargets
+        The measured set.
+    kind : str
+        ``"mean"`` or ``"previous"``.
+    weight : float or None
+        The weight override, or ``None``.
+    names : list of str
+        The names kept: measured in 2 periods or more.
+    left_out : list of str
+        The names left out (fewer than 2 measured periods), warned about.
+    """
+
+    #: The source class it differences.
+    _SOURCE: ClassVar[type] = HeadTargets
+
+    def __init__(self, source, kind: str = "mean", *, weight: float | None = None):
+        owner = type(self).__name__
+        if not isinstance(source, self._SOURCE):
+            raise TypeError(f"{owner} differences a {self._SOURCE.__name__}; got {type(source).__name__}.")
+        if kind not in DIFFERENCE_KINDS:
+            raise ValueError(
+                f"{owner}: kind={kind!r} is not a difference; pass 'mean' (each reading minus "
+                "its label's mean) or 'previous' (each measured period minus the previous one)."
+            )
+        if weight is not None:
+            try:
+                number = float(weight)
+            except (TypeError, ValueError):
+                number = float("nan")
+            if not np.isfinite(number) or number < 0 or isinstance(weight, bool):
+                raise ValueError(f"{owner}: weight={weight!r} is a PEST weight: a finite number from 0.")
+            weight = number
+        if source.inequality is not None:
+            raise ValueError(
+                f"{owner}: the source set is a BOUND (inequality={source.inequality!r}), and a "
+                "bound has no mean and no previous value to difference -- difference the "
+                "measured set, and observe the bound as it is (ledger 564)."
+            )
+        self.source = source
+        self.kind = kind
+        self.weight = weight
+        values = source._values
+        caller = f"{type(source).__name__}.differences()"
+        per = _measured_periods(values, value_column="head_target", name_column="name_key", caller=caller)
+        measured = values.assign(per=per.to_numpy()).loc[values["head_target"].notna()]
+        counts = measured.groupby("name_key")["per"].nunique()
+        names = dict(zip(source._locations["name_key"], source._locations["name"].astype(str), strict=False))
+        self._kept_keys = [key for key in names if counts.get(key, 0) >= 2]
+        self.names = [names[key] for key in self._kept_keys]
+        self.left_out = [names[key] for key in names if counts.get(key, 0) < 2]
+        if not self._kept_keys:
+            raise ValueError(
+                f"{caller}: no label has 2 measured periods, so there is no difference to "
+                "take -- a label read once has a mean-removed residual of 0 whatever the model "
+                "does, and no previous value."
+            )
+        if self.left_out:
+            message = (
+                f"{caller}: {len(self.left_out)} label(s) have fewer than 2 measured periods "
+                f"and are left out of the differences: {_listing(self.left_out)}."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+
+    @property
+    def inequality(self) -> None:
+        """Always ``None``: a difference set is never a bound (the source cannot be one)."""
+
+        return None
+
+    def _rows(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """``frame``'s rows of the kept names, with ``per`` and a ``_label`` key per (name, layer)."""
+
+        kept = frame.loc[frame["name_key"].isin(self._kept_keys)].copy()
+        caller = f"{type(self).__name__}"
+        kept["per"] = _numeric_periods(kept, caller=caller).to_numpy()
+        kept["_label"] = [
+            f"{key}\x00{layer}" for key, layer in zip(kept["name_key"], _layer_key(kept["layer"]), strict=True)
+        ]
+        return kept
+
+    def _differenced(self, kept: pd.DataFrame, columns: dict[str, str]) -> pd.DataFrame:
+        """``kept`` plus each of ``columns`` (source column -> new column) differenced, and ``weight``."""
+
+        measured = kept.loc[kept["head_target"].notna(), ["_label", "per"]].drop_duplicates()
+        periods = measured.rename(columns={"_label": "obsname"})
+        out = kept.copy()
+        for source_column, new_column in columns.items():
+            wide = kept.pivot_table(index="per", columns="_label", values=source_column,
+                                    aggfunc="first", dropna=False)
+            wide.columns.name = None
+            wide = wide.reset_index()
+            table = target_differences(wide, periods, kind=self.kind).melt(
+                id_vars="per", var_name="_label", value_name=new_column)
+            out = out.merge(table, on=["per", "_label"], how="left")
+        out["weight"] = _difference_weights(out, kind=self.kind, weight=self.weight)
+        return out
+
+    def get(self) -> pd.DataFrame:
+        """The target differences, one row per source row of a kept name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`HeadTargets.get`'s columns for the kept names, plus ``per`` and
+            ``target_difference`` -- ``NaN`` where a label has no difference (an
+            unmeasured period; its first measured one under ``"previous"``) -- and
+            ``weight`` replaced by the difference's weight (``NaN`` there, and ``NaN``
+            meaning 1.0 elsewhere, as on the source).
+        """
+
+        frame = self._differenced(self._rows(self.source.get()), {"head_target": "target_difference"})
+        return _copy_frame(frame.drop(columns=["_label"]))
+
+    def to_wide(self) -> pd.DataFrame:
+        """The target differences with one row per stress period and one column per kept name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` (``int64``, the period) plus one float column per kept name,
+            sorted; ``NaN`` where the name has no difference.
+        """
+
+        return _wide_by_period(
+            self.get(), value_column="target_difference",
+            caller=f"{type(self).__name__}.to_wide()", names=self.names,
+        )
+
+    def summary(self) -> pd.DataFrame:
+        """One row: ``kind``, ``n_locations`` (kept names), ``n_left_out`` and ``n_rows`` (defined differences)."""
+
+        frame = self.get()
+        return pd.DataFrame([{
+            "kind": self.kind,
+            "n_locations": len(self.names),
+            "n_left_out": len(self.left_out),
+            "n_rows": int(frame["target_difference"].notna().sum()),
+        }])
+
+    def compare(self, model) -> pd.DataFrame:
+        """Target differences against simulated differences, taken on the SAME periods.
+
+        The source's :meth:`HeadTargets.compare` -- every one of its refusals applies
+        -- differenced per label over the label's measured periods, target and
+        simulated alike, by the rule PEST's forward run writes
+        (``target_values.target_differences``).
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or concentration) file.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The source's compare rows of the kept names plus ``target_difference``,
+            ``sim_difference``, ``residual`` (simulated minus target difference) and
+            ``abs_residual`` -- ``NaN`` where a label has no difference -- and
+            ``weight`` the difference's weight.
+        """
+
+        frame = self._differenced(
+            self._rows(self.source.compare(model)),
+            {"head_target": "target_difference", "sim_head": "sim_difference"},
+        )
+        frame = frame.drop(columns=["residual", "abs_residual", "_label"], errors="ignore")
+        frame["residual"] = frame["sim_difference"] - frame["target_difference"]
+        frame["abs_residual"] = frame["residual"].abs()
+        return _copy_frame(frame)
+
+    def residuals(self, model) -> pd.DataFrame:
+        """A compact residual table of the differences.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            Passed to :meth:`compare`, whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``name``, ``group``, ``time``, ``per``, ``layer``, ``cell``,
+            ``target_difference``, ``sim_difference``, ``residual``, ``abs_residual``
+            and ``weight``.
+        """
+
+        return self.compare(model).loc[:, [
+            "name", "group", "time", "per", "layer", "cell", "target_difference",
+            "sim_difference", "residual", "abs_residual", "weight",
+        ]]
+
+    def stats(self, model) -> pd.DataFrame:
+        """Aggregate residual statistics of the differences.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            Passed to :meth:`compare`, whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a difference), ``mean_error``, ``mae`` and
+            ``rmse`` of simulated minus target difference; ``n`` 0 and the rest
+            ``NaN`` when none.
+        """
+
+        return _default_compare_stats(self.compare(model))
+
+
+def _difference_weights(frame: pd.DataFrame, *, kind: str, weight: float | None) -> pd.Series:
+    """Each difference's PEST weight (ledger 565); ``NaN`` where it has none.
+
+    ``weight`` given: it, on every defined difference. Else ``"mean"``: the reading's
+    weight (``NaN`` meaning 1.0, as on the source); ``"previous"``: the two readings'
+    combined, ``1 / sqrt(1/w1**2 + 1/w2**2)`` (``NaN`` read as 1.0, a 0 making it 0).
+    """
+
+    column = "target_difference"
+    defined = frame[column].notna()
+    if weight is not None:
+        return pd.Series(np.where(defined, weight, np.nan), index=frame.index)
+    readings = pd.to_numeric(frame["weight"], errors="coerce")
+    if kind == "mean":
+        return readings.where(defined)
+    result = pd.Series(np.nan, index=frame.index)
+    measured = frame["head_target"].notna()
+    for _label, rows in frame.loc[measured].sort_values("per").groupby("_label", sort=False):
+        w = readings.loc[rows.index].fillna(1.0).to_numpy(dtype=float)
+        for position in range(1, len(w)):
+            pair = w[position - 1:position + 1]
+            combined = 0.0 if (pair == 0).any() else 1.0 / np.sqrt(np.sum(1.0 / pair**2))
+            result.loc[rows.index[position]] = combined
+    return result.where(defined)
+
+
+HeadTargets._DIFFERENCES = HeadDifferences
 
 
 class BoundHeadTargets:

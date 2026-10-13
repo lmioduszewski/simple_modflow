@@ -193,7 +193,10 @@ def test_no_default_prefix_is_inside_another_sets_group():
     defaults = _default_prefixes()
     assert defaults["LakeStageObservationSpec"] == "lak_stage"
     assert defaults["RivFlowObservationSpec"] == "riv_flow"
-    assert len(defaults) == 7 and len(set(defaults.values())) == 7, defaults
+    # The difference sets (ledger 565) are one group each, checked too.
+    assert defaults["HeadDifferenceObservationSpec"] == "hdiff"
+    assert defaults["ConcDifferenceObservationSpec"] == "cdiff"
+    assert len(defaults) == 9 and len(set(defaults.values())) == 9, defaults
     for owner, prefix in defaults.items():
         for other, theirs in defaults.items():
             if other == owner:

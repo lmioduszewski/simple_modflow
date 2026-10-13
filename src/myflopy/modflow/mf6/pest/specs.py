@@ -9,8 +9,10 @@ import pandas as pd
 
 from myflopy._defaults import DEFAULT_EPSG
 from myflopy.modflow.mf6.observations import (
+    ConcDifferences,
     ConcTargets,
     DrnFlowTargets,
+    HeadDifferences,
     HeadTargets,
     LakeStageTargets,
     RivFlowTargets,
@@ -402,3 +404,74 @@ class RivFlowObservationSpec:
 
     targets: RivFlowTargets
     prefix: str = "riv_flow"
+
+
+@dataclass
+class HeadDifferenceObservationSpec:
+    """Pre-built head-DIFFERENCE observations, wrapping :class:`HeadDifferences` (ledger 565).
+
+    ``cal.observe(head_targets.differences())`` wraps the set for you; build this spec
+    to pin a prefix or supply simulated values. Every measured difference is in ONE
+    PEST group, the prefix; every other row in ``<prefix>_unmeasured`` at weight 0.
+
+    Parameters
+    ----------
+    targets : HeadDifferences
+        The differenced set (``HeadTargets.differences(...)``).
+    simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
+        The base-run table of simulated DIFFERENCES the build writes as
+        ``<prefix>_simulated_differences.csv``. Default ``None`` has the forward run's
+        own writer (``forward_run._write_target_difference_csv``) write it from the
+        model's head file, so the base run and every forward run are one table in
+        one order (ledger 340). A path is read with ``pandas.read_csv``; a DataFrame
+        is copied -- either must hold ``per`` then each kept label in the target-map
+        order, or the build raises ``ValueError``.
+    prefix : str, optional
+        pyEMU observation-name prefix and the set's PEST group, default ``"hdiff"``.
+        It names the files the build writes (``<prefix>_simulated_differences.csv``,
+        ``<prefix>_difference_map.csv``, ``<prefix>_difference_periods.csv``,
+        ``<prefix>_target_locations.gpkg``, ``<prefix>_target_values.csv``), so two
+        sets need two prefixes.
+
+    See Also
+    --------
+    myflopy.modflow.mf6.observations.HeadDifferences
+    """
+
+    targets: HeadDifferences
+    simulated_values: str | Path | pd.DataFrame | None = None
+    prefix: str = "hdiff"
+
+
+@dataclass
+class ConcDifferenceObservationSpec:
+    """Pre-built concentration-DIFFERENCE observations, wrapping :class:`ConcDifferences` (ledger 565).
+
+    The transport twin of :class:`HeadDifferenceObservationSpec`;
+    ``cal.observe(conc_targets.differences())`` wraps the set for you.
+
+    Parameters
+    ----------
+    targets : ConcDifferences
+        The differenced concentration set (``ConcTargets.differences(...)``).
+    simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
+        The base-run table of simulated differences, as
+        :class:`HeadDifferenceObservationSpec` reads it, from the transport model's
+        concentration file. Default ``None``: the forward run's writer writes it.
+    prefix : str, optional
+        pyEMU observation-name prefix and the set's PEST group, default ``"cdiff"``;
+        it names the set's files, as :class:`HeadDifferenceObservationSpec`'s does.
+    transport_model_name : str or None, optional
+        The GWT model whose concentration file is read; ``None`` (default) finds the
+        simulation's one GWT model, raising ``ValueError`` at build when it holds none
+        or several.
+
+    See Also
+    --------
+    myflopy.modflow.mf6.observations.ConcDifferences
+    """
+
+    targets: ConcDifferences
+    simulated_values: str | Path | pd.DataFrame | None = None
+    prefix: str = "cdiff"
+    transport_model_name: str | None = None
