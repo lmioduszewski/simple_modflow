@@ -21896,6 +21896,16 @@ same day, which is the useful part of the result.
       build's list, not by recognising outputs: what a run writes is model- and
       PEST++-version-specific, and a list of outputs would miss the next one.
       **Consequence, stated:** a file put in the template BY HAND after `build()` reaches
-      neither the master nor a worker (logged at INFO), where a serial run would see
-      it -- rebuild instead. A template built before this records no list and is copied
+      neither the master nor a worker, where a serial run would see it, and the launch
+      NAMES it in a `UserWarning` through `warnings.warn` and the logger (ledger 288) --
+      not a refusal, since a note kept beside the template is legitimate (settled in
+      review; it was an INFO line). A run's own files are told from it by RECORD, not by
+      recognising outputs, for the reason above: every launch, `resume_ies` included,
+      records in the metadata (`run_files`) what it and its run added to the template,
+      and those, the PESTPP-IES outputs and the resume archives are left
+      out with an INFO line. A run killed outright (a kernel restart) records nothing,
+      so its forward run's model outputs are then named as if put by hand. For the
+      model to read a file, make it part of the run and rebuild with `cal.build()`,
+      which includes it; a rebuild makes the template afresh, without what was put in
+      it by hand. A template built before this records no list and is copied
       as before, less the PESTPP-IES outputs and resume archives.

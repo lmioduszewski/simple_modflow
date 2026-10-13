@@ -133,6 +133,15 @@ def _results(directory: Path, case: str, iterations=(0, 1), noptmax: int | None 
         (directory / f"{case}.pst").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _serial_run_leaving_model_outputs(command, cwd=None):
+    """PESTPP-IES stubbed for a serial run: what it leaves in the template besides its
+    results -- its record, its last forward run's cell budget and a scratch folder."""
+
+    (Path(cwd) / "cal.rec").write_text("record\n", encoding="utf-8")
+    (Path(cwd) / "toy.cbc").write_bytes(b"\0" * 4096)
+    (Path(cwd) / "scratch").mkdir(exist_ok=True)
+
+
 def _copy_of_template(cal, directory: Path) -> Path:
     """What a launch makes of the template: a copy, build marker and all."""
 
@@ -480,16 +489,21 @@ def test_workers_are_made_without_the_templates_serial_results(cal, monkeypatch,
     cal.run_ies(workers=2, exe="true")
     assert seen[-1] == template, "nothing to clear: no copy"
 
+    with monkeypatch.context() as patch:
+        # A serial run's record, and its last forward run's model output, which no
+        # list of PEST++ outputs names: the launch records them as a run's.
+        patch.setattr(cal.pyemu.os_utils, "run", _serial_run_leaving_model_outputs)
+        cal.run_ies(exe="true")
     _results(template, "cal", iterations=(0, 1, 2))
     archive = archive_for_resume(template, "cal", 2)   # a serial resume's archive
     _results(template, "cal", iterations=(0, 1, 2))
-    # What else a serial run leaves: its record, and its last forward run's model output.
-    (template / "cal.rec").write_text("record\n", encoding="utf-8")
-    (template / "toy.cbc").write_bytes(b"\0" * 4096)
-    (template / "scratch").mkdir()
     built = set(json.loads((template / "myflopy_pest_metadata.json").read_text())["template_files"])
     assert "forward_run.py" in built and "toy.cbc" not in built
-    master = cal.run_ies(workers=2, exe="true", overwrite=True, keep_workers=True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        master = cal.run_ies(workers=2, exe="true", overwrite=True, keep_workers=True)
+    assert not [str(w.message) for w in caught if "by hand" in str(w.message)], \
+        "what a run wrote is left out in silence"
     for directory in (worker_root(master) / "worker_0", worker_root(master) / "worker_1", master):
         held = sorted(path.name for path in directory.iterdir())
         assert "cal.pst" in held and "forward_run.py" in held, held
@@ -507,6 +521,36 @@ def test_workers_are_made_without_the_templates_serial_results(cal, monkeypatch,
 
 
 @needs_true
+def test_a_file_put_in_the_template_by_hand_is_named_in_a_warning(cal, monkeypatch, tmp_path, caplog,
+                                                                  _no_results_reader):
+    """A parallel launch copies what the BUILD left in the template, so a file put there
+    by hand after ``build()`` reaches neither the master nor a worker, where a serial run
+    would see it. It is named in a ``UserWarning`` through ``warnings.warn`` and the
+    logger (ledger 288), once per launch, saying that a rebuild includes it; what a run
+    launched there wrote is left out in silence (ledger 588; it was an INFO line
+    naming both)."""
+
+    template = cal.template_workspace
+    with monkeypatch.context() as patch:
+        patch.setattr(cal.pyemu.os_utils, "run", _serial_run_leaving_model_outputs)
+        cal.run_ies(exe="true")
+    (template / "notes.txt").write_text("why this calibration\n", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="myflopy"), \
+            pytest.warns(UserWarning, match=r"notes\.txt.*cal\.build\(\)") as caught:
+        master = cal.run_ies(workers=2, exe="true", keep_workers=True)
+    (said,) = [str(w.message) for w in caught if "by hand" in str(w.message)]
+    assert "toy.cbc" not in said and "cal.rec" not in said and "scratch/" not in said, said
+    assert "notes.txt" in caplog.text
+    for directory in (master, worker_root(master) / "worker_0"):
+        assert not (directory / "notes.txt").exists()
+        assert not (directory / "toy.cbc").exists()
+    assert (template / "notes.txt").exists(), "the template keeps it"
+    # A parallel resume makes no master copy: its workers' copy says it.
+    with pytest.warns(UserWarning, match=r"resume_ies\(\).*notes\.txt"):
+        cal._worker_source(tmp_path / "workers", method="resume_ies")
+
+
+@needs_true
 def test_an_empty_folder_the_build_left_reaches_the_workers(cal, monkeypatch, _no_results_reader):
     """A folder the forward run writes into may be EMPTY at build: the build's list names
     it, so the workers get it even when the copy leaves a run's other files out."""
@@ -515,7 +559,8 @@ def test_an_empty_folder_the_build_left_reaches_the_workers(cal, monkeypatch, _n
     (template / "outputs").mkdir()
     cal._record_template_files()   # as the build records it
     (template / "toy.cbc").write_bytes(b"\0" * 64)   # something to leave out
-    master = cal.run_ies(workers=2, exe="true", keep_workers=True)
+    with pytest.warns(UserWarning, match=r"toy\.cbc"):   # put there by hand
+        master = cal.run_ies(workers=2, exe="true", keep_workers=True)
     assert (worker_root(master) / "worker_0" / "outputs").is_dir()
     assert not (worker_root(master) / "worker_0" / "toy.cbc").exists()
 
@@ -540,7 +585,8 @@ def test_a_folder_where_the_workers_copy_goes_is_deleted_only_when_it_is_a_copy(
 
     (foreign / "notes.txt").unlink()
     shutil.copytree(cal.template_workspace, foreign, dirs_exist_ok=True)   # a copy: replaced
-    cal.run_ies(workers=2, exe="true", master_dir=master)
+    with pytest.warns(UserWarning, match=r"toy\.cbc"):   # put there by hand
+        cal.run_ies(workers=2, exe="true", master_dir=master)
     assert not foreign.exists()
 
 

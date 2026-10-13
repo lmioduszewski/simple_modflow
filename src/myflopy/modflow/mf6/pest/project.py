@@ -3044,9 +3044,10 @@ class PestProject:
         posterior; it says so with a ``UserWarning`` (ledger 532). A
         parallel run's master, and the copy each worker is made from, hold only what
         the BUILD left in the template -- an earlier run's outputs, its record and the
-        model outputs of its last forward run left out (ledgers 532, 588;
-        so a file put in the template by hand after the build reaches neither) -- and
-        the template keeps them.
+        model outputs of its last forward run left out (ledgers 532, 588) -- and
+        the template keeps them. A file put in the template by hand after the build
+        reaches neither, and the launch names it in a ``UserWarning``: make it part of
+        the run and rebuild, which includes it.
 
         **A run in progress is never touched** (ledger 532). Every launch
         writes a ``myflopy_pest_run.lock`` into the directories it runs in -- the
@@ -3581,19 +3582,23 @@ class PestProject:
         exe_name, exe_dir = self._resolve_pestpp(exe)
         self._record_execution(method="resume_ies", directory=directory,
                                workers=int(workers) if parallel else None)
-        try:
-            with self._quiet_pyemu_context():
-                run_pst.write(str(directory / f"{case}.pst"), version=2)
-            if parallel:
-                self._run_parallel(
-                    pyemu, exe_name, exe_dir, f"{case}.pst", directory, int(workers),
-                    method="resume_ies", keep_workers=keep_workers,
-                )
-            else:
-                self._run_serial(pyemu, exe_name, exe_dir, f"{case}.pst", method="resume_ies")
-        finally:
-            splice_resumed_run(directory, case, archive)
-            self._restore_resumed_control_file(directory, archive)
+        # A serial resume runs in the template: what it adds there is recorded, as a
+        # launch's is (ledger 588).
+        with self._recording_run_files():
+            try:
+                with self._quiet_pyemu_context():
+                    run_pst.write(str(directory / f"{case}.pst"), version=2)
+                if parallel:
+                    self._run_parallel(
+                        pyemu, exe_name, exe_dir, f"{case}.pst", directory, int(workers),
+                        method="resume_ies", keep_workers=keep_workers,
+                    )
+                else:
+                    self._run_serial(pyemu, exe_name, exe_dir, f"{case}.pst",
+                                     method="resume_ies")
+            finally:
+                splice_resumed_run(directory, case, archive)
+                self._restore_resumed_control_file(directory, archive)
         return self._review(directory)
 
     def _restore_resumed_control_file(self, directory: Path, archive: Path) -> None:
@@ -4110,65 +4115,69 @@ class PestProject:
                 default=not master_dir,
                 overwrite=overwrite,
             )
-        case = f"{self.name}.pst"
-        self.pst.pestpp_options["ies_num_reals"] = int(reals)
-        # Set or removed by every call, as overdue_giveup_fac is: an earlier
-        # `noise=False` persisted under a later `noise=True` (ledger 572).
-        if noise:
-            self.pst.pestpp_options.pop("ies_no_noise", None)
-        else:
-            self.pst.pestpp_options["ies_no_noise"] = True
-        if bad_phi_sigma is not None:
-            self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
-        if overdue_giveup_fac is None:
-            self.pst.pestpp_options.pop("overdue_giveup_fac", None)
-        else:
-            self.pst.pestpp_options["overdue_giveup_fac"] = float(overdue_giveup_fac)
-        for key, value in caller_options.items():
-            self.pst.pestpp_options[key] = value
-        self._refuse_regularization_mode()
-        # A caller's own `ies_par_en` is used as given; the correlated prior is drawn
-        # only when the call names none (ledger 509).
-        drawn_seed = None
-        if "ies_par_en" not in caller_options:
-            self._refuse_a_restart_from_other_parameters(method)
-            drawn_seed = self._inject_geostatistical_prior(int(reals), seed)
-        self.pst.control_data.noptmax = int(noptmax)
-        # Before the master is copied from the template, so the master's copy holds it.
-        self._record_execution(
-            method=method,
-            directory=master if parallel else self.template_workspace,
-            workers=int(workers) if parallel else None,
-            seed=drawn_seed,
-            prior_ensemble=self.pst.pestpp_options.get("ies_par_en") if drawn_seed is not None else None,
-        )
-
-        if not parallel:
-            # The run writes into the template, where an earlier run of this case left
-            # its outputs; one it does not overwrite -- an iteration past this run's
-            # last, a noise ensemble a `noise=False` run never writes -- would be
-            # reviewed as this run's (ledger 507).
-            self._clear_earlier_run_outputs(self.template_workspace, announce=not overwrite, method=method)
-        with self._quiet_pyemu_context():
-            self.pst.write(str(self.template_workspace / case), version=2)
-
-        exe_name, exe_dir = self._resolve_pestpp(exe)
-        pyemu = self.pyemu or _import_pyemu()
-        if parallel:
-            # The master is made HERE, not by pyEMU: a copy of the template without an
-            # earlier serial run's outputs, which pyEMU's own copy carried into it
-            # (ledger 532; ledger 507 removed them after the run instead).
-            if master.exists():
-                shutil.rmtree(master)
-            self._launch_copy(master, method=method)
-            self._run_parallel(
-                pyemu, exe_name, exe_dir, case, master, int(workers),
-                method=method, keep_workers=keep_workers,
+        # What this launch and its run add to the template is recorded, so a later
+        # parallel launch leaves it out in silence and names what it did not write
+        # (ledger 588).
+        with self._recording_run_files():
+            case = f"{self.name}.pst"
+            self.pst.pestpp_options["ies_num_reals"] = int(reals)
+            # Set or removed by every call, as overdue_giveup_fac is: an earlier
+            # `noise=False` persisted under a later `noise=True` (ledger 572).
+            if noise:
+                self.pst.pestpp_options.pop("ies_no_noise", None)
+            else:
+                self.pst.pestpp_options["ies_no_noise"] = True
+            if bad_phi_sigma is not None:
+                self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
+            if overdue_giveup_fac is None:
+                self.pst.pestpp_options.pop("overdue_giveup_fac", None)
+            else:
+                self.pst.pestpp_options["overdue_giveup_fac"] = float(overdue_giveup_fac)
+            for key, value in caller_options.items():
+                self.pst.pestpp_options[key] = value
+            self._refuse_regularization_mode()
+            # A caller's own `ies_par_en` is used as given; the correlated prior is drawn
+            # only when the call names none (ledger 509).
+            drawn_seed = None
+            if "ies_par_en" not in caller_options:
+                self._refuse_a_restart_from_other_parameters(method)
+                drawn_seed = self._inject_geostatistical_prior(int(reals), seed)
+            self.pst.control_data.noptmax = int(noptmax)
+            # Before the master is copied from the template, so the master's copy holds it.
+            self._record_execution(
+                method=method,
+                directory=master if parallel else self.template_workspace,
+                workers=int(workers) if parallel else None,
+                seed=drawn_seed,
+                prior_ensemble=self.pst.pestpp_options.get("ies_par_en") if drawn_seed is not None else None,
             )
-            return master
 
-        self._run_serial(pyemu, exe_name, exe_dir, case, method=method)
-        return self.template_workspace
+            if not parallel:
+                # The run writes into the template, where an earlier run of this case left
+                # its outputs; one it does not overwrite -- an iteration past this run's
+                # last, a noise ensemble a `noise=False` run never writes -- would be
+                # reviewed as this run's (ledger 507).
+                self._clear_earlier_run_outputs(self.template_workspace, announce=not overwrite, method=method)
+            with self._quiet_pyemu_context():
+                self.pst.write(str(self.template_workspace / case), version=2)
+
+            exe_name, exe_dir = self._resolve_pestpp(exe)
+            pyemu = self.pyemu or _import_pyemu()
+            if parallel:
+                # The master is made HERE, not by pyEMU: a copy of the template without an
+                # earlier serial run's outputs, which pyEMU's own copy carried into it
+                # (ledger 532; ledger 507 removed them after the run instead).
+                if master.exists():
+                    shutil.rmtree(master)
+                self._launch_copy(master, method=method)
+                self._run_parallel(
+                    pyemu, exe_name, exe_dir, case, master, int(workers),
+                    method=method, keep_workers=keep_workers, announce=False,
+                )
+                return master
+
+            self._run_serial(pyemu, exe_name, exe_dir, case, method=method)
+            return self.template_workspace
 
     def _record_execution(self, *, method: str, directory: Path, workers: int | None,
                           seed: int | None = None, prior_ensemble: str | None = None) -> None:
@@ -4216,7 +4225,7 @@ class PestProject:
 
     def _run_parallel(
         self, pyemu, exe_name: str, exe_dir, case: str, master: Path, workers: int,
-        *, method: str, keep_workers: bool,
+        *, method: str, keep_workers: bool, announce: bool = True,
     ) -> None:
         """Run PESTPP-IES in ``master`` with ``workers`` workers in ``<master>.workers``.
 
@@ -4224,6 +4233,8 @@ class PestProject:
         run finishes cleanly, unless ``keep_workers``; a run that fails or is interrupted
         keeps them, for diagnosis (ledger 532). pyEMU's own clean-up
         (``cleanup=True``) deleted them whenever the master exited, failed or not.
+        ``announce`` is :meth:`_worker_source`'s: false when the launch made the master
+        with :meth:`_launch_copy` and that copy named what it left out.
         """
 
         root = worker_root(master)
@@ -4233,7 +4244,7 @@ class PestProject:
         finished = False
         source = self.template_workspace
         try:
-            source = self._worker_source(root)
+            source = self._worker_source(root, method=method, announce=announce)
             with self._pestpp_environment(exe_dir):
                 pyemu.os_utils.start_workers(
                     str(source),
@@ -4266,6 +4277,24 @@ class PestProject:
     #: The build metadata's list of the files a build left in the template.
     _TEMPLATE_FILES = "template_files"
 
+    #: The build metadata's list of the entries a launch, and the run it started, added
+    #: to the template since the build (:meth:`_recording_run_files`).
+    _RUN_FILES = "run_files"
+
+    def _template_entries(self) -> set[str]:
+        """Every entry in the template, as relative POSIX paths; a directory ends in ``/``.
+
+        The build metadata and the run lock are not entries: one is rewritten by every
+        launch, the other is never copied.
+        """
+
+        template = self.template_workspace
+        return {
+            entry.relative_to(template).as_posix() + ("/" if entry.is_dir() else "")
+            for entry in template.rglob("*")
+            if entry.name not in (METADATA_FILENAME, RUN_LOCK)
+        }
+
     def _record_template_files(self) -> None:
         """Record in the build metadata every file the build left in the template (ledger 588).
 
@@ -4274,15 +4303,71 @@ class PestProject:
         file it writes with its external tables -- and nothing a run wrote there since.
         """
 
-        template = self.template_workspace
-        path = template / METADATA_FILENAME
+        path = self.template_workspace / METADATA_FILENAME
         metadata = json.loads(path.read_text(encoding="utf-8"))
-        metadata[self._TEMPLATE_FILES] = sorted(
-            entry.relative_to(template).as_posix() + ("/" if entry.is_dir() else "")
-            for entry in template.rglob("*")
-            if entry.name not in (METADATA_FILENAME, RUN_LOCK)
-        )
+        metadata[self._TEMPLATE_FILES] = sorted(self._template_entries())
         path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    @contextlib.contextmanager
+    def _recording_run_files(self):
+        """Record in the build metadata what a launch and its run add to the template (ledger 588).
+
+        Everything in the template when the launch returns -- or fails, or is
+        interrupted -- that was not there when it began and that the build did not
+        leave: the control file's new tables, a drawn prior, and a serial run's
+        PESTPP-IES outputs, record and the model outputs of its forward runs, which no
+        list of PEST++ outputs names. :meth:`_launch_copy` leaves those out in silence
+        and names anything else left out -- a file put there by hand -- in a warning. A
+        run killed outright (a kernel restart) records nothing. A template built
+        without the build's list records nothing either: its launches copy it whole.
+        """
+
+        before = self._template_entries()
+        try:
+            yield
+        finally:
+            path = self.template_workspace / METADATA_FILENAME
+            try:
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                built = metadata.get(self._TEMPLATE_FILES)
+                if isinstance(built, list):
+                    added = self._template_entries() - before - set(built)
+                    if added:
+                        metadata[self._RUN_FILES] = sorted(
+                            added | set(metadata.get(self._RUN_FILES) or ())
+                        )
+                        path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            except (OSError, ValueError, AttributeError, TypeError) as error:
+                # Never in place of the launch's own error: what goes unrecorded is
+                # named in a warning when a parallel launch leaves it out.
+                logger.debug("No run files recorded in %s (%s).", path, error)
+
+    def _written_by_a_run(self, entries) -> set[str]:
+        """The template ``entries`` (relative POSIX paths) a launch or its run wrote.
+
+        Those :meth:`_recording_run_files` recorded, the PESTPP-IES outputs of this
+        case (:func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs`) and anything
+        in a :meth:`resume_ies` archive -- the last two named even when the run that
+        wrote them was killed before it could record them.
+        """
+
+        template = self.template_workspace
+        try:
+            metadata = json.loads((template / METADATA_FILENAME).read_text(encoding="utf-8"))
+            recorded = set(metadata.get(self._RUN_FILES) or ())
+        except (OSError, ValueError, AttributeError, TypeError) as error:
+            logger.debug("No run files read from %s (%s).", template, error)
+            recorded = set()
+        recorded |= {path.name for path in pestpp_ies_outputs(template, self.name)}
+        written = set()
+        for entry in entries:
+            top = entry.split("/", 1)[0]
+            if entry in recorded or (
+                top.startswith(f"{self.name}.resumed_from_")
+                and (template / top / RESUME_RECORD).is_file()
+            ):
+                written.add(entry)
+        return written
 
     def _launch_files(self, named=()) -> set[str] | None:
         """The template files a launch copies, or ``None`` for a template built without a list.
@@ -4312,7 +4397,8 @@ class PestProject:
         keep.update(Path(str(value)).as_posix() for value in named)
         return keep
 
-    def _launch_copy(self, destination: Path, *, method: str = "run_ies") -> None:
+    def _launch_copy(self, destination: Path, *, method: str = "run_ies",
+                     announce: bool = True, stacklevel: int = 4) -> None:
         """Copy the template to ``destination`` as a launch hands it on: without what a run left there.
 
         The one rule behind a parallel run's master and its workers' source (ledger
@@ -4323,8 +4409,11 @@ class PestProject:
         after (``docs/reproducers/ies_worker_copy_size.py``), a full cell budget file
         on a large model. Only :meth:`_launch_files` is copied (the run lock never is); a
         template built before that list existed is copied whole less the PESTPP-IES
-        outputs and resume archives (:meth:`_clear_earlier_run_outputs`). What was
-        left out is logged.
+        outputs and resume archives (:meth:`_clear_earlier_run_outputs`). What a launch
+        or its run wrote (:meth:`_written_by_a_run`) is left out with a log line;
+        anything else left out -- put in the template by hand since the build -- is
+        named, with ``announce``, through ``warnings.warn`` at ``stacklevel`` as well
+        as the logger (ledger 288): a launch makes one announcing copy.
         """
 
         template = self.template_workspace
@@ -4355,15 +4444,34 @@ class PestProject:
 
         shutil.copytree(template, destination, symlinks=True, ignore=ignore)
         self._clear_earlier_run_outputs(destination, announce=False, method=method)
-        if left_out:
-            shown = ", ".join(sorted(left_out)[:8]) + (" ..." if len(left_out) > 8 else "")
+        if not left_out:
+            return
+        written = self._written_by_a_run(left_out)
+        if written:
+            shown = ", ".join(sorted(written)[:8]) + (" ..." if len(written) > 8 else "")
             logger.info(
                 "%s(): copied the template to %s without %d entr%s a run left there since "
-                "the build: %s", method, destination, len(left_out),
-                "y" if len(left_out) == 1 else "ies", shown,
+                "the build: %s", method, destination, len(written),
+                "y" if len(written) == 1 else "ies", shown,
             )
+        by_hand = sorted(set(left_out) - written)
+        if by_hand and announce:
+            shown = ", ".join(by_hand[:8]) + (" ..." if len(by_hand) > 8 else "")
+            one = len(by_hand) == 1
+            message = (
+                f"{method}(): {len(by_hand)} entr{'y' if one else 'ies'} in the template "
+                f"{template} that build() did not leave there and no launch recorded "
+                f"writing -- put there by hand? -- reach{'es' if one else ''} neither the "
+                f"master nor the workers: {shown}. A parallel launch copies what the build "
+                f"left (ledger 588). For the model to read a file, make it part of the run "
+                f"and rebuild with cal.build(), which includes it; a rebuild makes the "
+                f"template afresh, without what was put in it by hand."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=stacklevel)
 
-    def _worker_source(self, root: Path) -> Path:
+    def _worker_source(self, root: Path, *, method: str = "run_ies",
+                       announce: bool = True) -> Path:
         """What pyEMU copies into each worker: the template, or a copy without what a run left there.
 
         pyEMU's ``start_workers`` copies the directory it is given WHOLE into each
@@ -4371,7 +4479,8 @@ class PestProject:
         every worker (ledger 588). When the template holds anything
         :meth:`_launch_copy` would leave out, that copy is made in ``root`` and handed
         to pyEMU; :meth:`_run_parallel` deletes it after. A template holding nothing to
-        leave out is handed on as it is -- no copy.
+        leave out is handed on as it is -- no copy. ``announce`` is the copy's
+        (:meth:`_launch_copy`): false when the launch's master copy has said it.
         """
 
         template = self.template_workspace
@@ -4394,7 +4503,8 @@ class PestProject:
         source = root / self._WORKER_SOURCE
         if source.exists():
             shutil.rmtree(source)
-        self._launch_copy(source)
+        # user -> resume_ies -> _run_parallel -> here -> _launch_copy
+        self._launch_copy(source, method=method, announce=announce, stacklevel=5)
         return source
 
     def _remove_workers(self, root: Path) -> None:

@@ -977,7 +977,11 @@ the template as the BUILD left it, disposable, and a resume makes them again;
 in the template since the build -- an earlier serial run's ensembles, record and the
 model outputs of its last forward run (0.74 MB per worker against 3.36 MB on the
 canonical testing model; ledger 588) -- so a file put in the template by hand
-after `build()` does not reach them either: rebuild instead. A run that fails or is interrupted keeps them for diagnosis. The master and its
+after `build()` does not reach them either, and the launch names it in a `UserWarning`
+(a note kept there is fine). A launch records what it and its run add to the template,
+so a run's own files are left out in silence. For the model to read a file, make it part
+of the run and rebuild with `cal.build()`, which includes it; a rebuild makes the
+template afresh, without what was put in it by hand. A run that fails or is interrupted keeps them for diagnosis. The master and its
 results are always kept.
 
 **Resuming an interrupted history match** (ledger 533). A multi-day run stopped
