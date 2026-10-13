@@ -902,6 +902,42 @@ def test_a_feature_that_paints_no_cell_under_a_default_is_warned_by_name(meshes,
             array_from_polygons(bare, small, nlay=1, parameter="k")
 
 
+@pytest.mark.parametrize("rule", ["majority", "centroid", "mean"])
+def test_a_feature_that_paints_no_cell_is_warned_by_name_without_a_default(meshes, tmp_path, rule):
+    """Without ``default=`` a unit outvoted in every cell it touches vanished in silence
+    (ledger 551 warned only with one); it is warned by name under every rule now, with
+    why (ledger 585). A unit lying outside the grid and meeting it along an
+    edge covers no cell's area under ANY rule, ``mean`` included."""
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    first = cells.geometry.iloc[14]
+    cx, cy = first.centroid.x, first.centroid.y
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    frame = gpd.GeoDataFrame(
+        {"name": ["speck", "all", "outside"], "k": [0.1, 0.2, 0.3]},
+        geometry=[box(cx + 2, cy + 2, cx + 6, cy + 6),
+                  box(xmin, ymin, xmax, ymax),
+                  box(xmax, ymin, xmax + 50.0, ymax)],
+        crs=small.crs,
+    )
+    path = tmp_path / "speck.gpkg"
+    frame.to_file(path, layer="geology", driver="GPKG")
+
+    recipe = Polygons(path=path, column="k", layer="geology", rule=rule)
+    with pytest.warns(UserWarning, match=r"set no cell of k under rule=") as caught:
+        array_from_polygons(recipe, small, nlay=1, parameter="k")
+    message = next(str(w.message) for w in caught if "set no cell" in str(w.message))
+    assert "'outside' (it only touches the grid's cells along an edge or at a point)" in message
+    assert "'all'" not in message
+    if rule == "mean":
+        assert "'speck'" not in message and message.startswith("1 of 3 features")
+    else:
+        why = ("it holds no cell's centre" if rule == "centroid"
+               else "its value is outcovered by another value in every cell it touches")
+        assert f"'speck' ({why})" in message and message.startswith("2 of 3 features")
+
+
 def test_a_layered_map_competes_per_layer(meshes, tmp_path):
     """Each layer's features compete with what THAT layer's features leave uncovered."""
 

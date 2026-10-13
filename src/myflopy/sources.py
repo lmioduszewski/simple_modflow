@@ -978,8 +978,11 @@ class Polygons(DataSourceSpec):
         ``mean`` the uncovered part is averaged in AT the default, by area.
         ``centroid`` is unchanged: a cell whose centre is in no polygon reads the
         default. A map that tiles the grid, none of whose values equals ``default``,
-        paints exactly what it painted without ``default``, and a feature that
-        reaches the grid but so takes no cell is WARNED by name at build.
+        paints exactly what it painted without ``default``. Under every rule, with
+        or without ``default``, a feature that reaches the grid but sets no cell --
+        outvoted in every cell it touches, holding no centre under ``centroid``, or
+        meeting the cells only along an edge -- is WARNED by name, with why, at build
+        (ledger 585).
     layer_field : str, optional
         Column naming the MODEL layer a feature paints, ``layer_base``-based. ``None``
         (the default) makes the map areal, broadcast to EVERY layer -- which is what a

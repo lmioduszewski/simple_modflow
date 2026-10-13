@@ -745,6 +745,30 @@ def _period_index(value: Any, *, base: int, nper: int) -> tuple[int | None, str]
     )
 
 
+def _why_it_paints_nothing(geometry, cells, recipe: Polygons) -> str:
+    """Why a polygon that reaches the grid sets no cell of the array, in a few words.
+
+    For :func:`array_from_polygons`' warning. A polygon meeting the cells only along an
+    edge or at a point covers none of any cell's area, whatever the rule; otherwise the
+    rule says it: ``centroid`` -- it holds no cell's centre; ``majority`` -- its value is
+    outcovered in every cell it touches (by another value, or with ``default=`` by the
+    part no polygon covers); ``mean`` -- only a zero-area touch is possible.
+    """
+
+    near = cells.geometry.iloc[cells.sindex.query(geometry, predicate="intersects")]
+    if not near.intersection(geometry).area.gt(0.0).any():
+        return "it only touches the grid's cells along an edge or at a point"
+    if recipe.rule == "centroid":
+        return "it holds no cell's centre"
+    if recipe.default is None:
+        return "its value is outcovered by another value in every cell it touches"
+    return (
+        "its value is outcovered in every cell it touches, by another value or by the "
+        "default's vote -- the part no polygon covers, with any polygon carrying the "
+        "default's value"
+    )
+
+
 def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) -> np.ndarray:
     """Resolve a :class:`~myflopy.sources.Polygons` recipe to an ``(nlay, ncpl)`` array.
 
@@ -756,8 +780,9 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
     With ``default`` the part of a cell no polygon covers COMPETES as the default
     (``majority``: a value takes a cell only when it covers more of it than that
     remainder plus any polygon carrying the default's own value; ``mean``: the
-    remainder is averaged in at the default), and a feature that reaches the grid but
-    so paints no cell is warned by name (ledger 551). Products and per-layer lists
+    remainder is averaged in at the default). A feature that reaches the grid but
+    paints no cell is warned by name, with why, under every rule and with or without
+    ``default`` (ledgers 551 and 585). Products and per-layer lists
     reach it through :func:`resolve_array_recipe`.
 
     **Refusing an unfilled cell is the point, not a convenience.** The array goes
@@ -896,27 +921,26 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
             UserWarning,
             stacklevel=stacklevel_outside_package(),
         )
-    if recipe.default is not None:
-        silent = np.flatnonzero(landed & ~painting)
-        if silent.size:
-            beaten = (
-                "holds no cell's centre"
-                if recipe.rule == "centroid"
-                else "loses every cell it touches -- its value outcovered by another "
-                "value, or not outcovering the default there (the part no polygon "
-                "covers, with any polygon carrying the default's value)"
-            )
-            listing = ", ".join(labels[position] for position in silent[:10])
-            if silent.size > 10:
-                listing += f", and {silent.size - 10} more"
-            message = (
-                f"{silent.size} of {len(gdf)} features in {source} reach the grid but "
-                f"set no cell of {parameter} under rule={recipe.rule!r} with "
-                f"default={float(recipe.default)!r}: each {beaten}: {listing}. "
-                "A finer mesh there, or rule='mean' to blend by area, keeps them."
-            )
-            logger.warning("%s", message)
-            warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
+    # A feature on the grid that sets no cell is warned by name under EVERY rule, with
+    # or without `default=` (ledger 585): a unit outvoted in every cell it
+    # touches by a larger neighbour vanished from the array in silence without one.
+    silent = np.flatnonzero(landed & ~painting)
+    if silent.size:
+        reasons = [
+            f"{labels[position]} ({_why_it_paints_nothing(gdf.geometry.iloc[position], cells, recipe)})"
+            for position in silent[:10]
+        ]
+        listing = ", ".join(reasons)
+        if silent.size > 10:
+            listing += f", and {silent.size - 10} more"
+        given = "" if recipe.default is None else f" with default={float(recipe.default)!r}"
+        message = (
+            f"{silent.size} of {len(gdf)} features in {source} reach the grid but "
+            f"set no cell of {parameter} under rule={recipe.rule!r}{given}: {listing}. "
+            "A finer mesh there, or rule='mean' to blend by area, keeps them."
+        )
+        logger.warning("%s", message)
+        warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
 
     unfilled = ~np.isfinite(painted)
     if unfilled.any():

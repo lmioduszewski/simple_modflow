@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 584 entries (589 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 585 entries (590 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 585 | A `mf.Polygons` feature that reaches the grid but sets no cell is warned by name under every rule, with or... | 2026-10-12 |
 | 584 | A map's hover footer dates its period from the TDIS clock when `model.per_dates` is unset, by the period's... | 2026-10-12 |
 | 583 | Each forward-run function is copied into `forward_run.py` once | 2026-10-12 |
 | 582 | The PEST forward run reads DRN and RIV zone sets from the run's outputs alone | 2026-10-12 |
@@ -21196,8 +21197,9 @@ same day, which is the useful part of the result.
       centroid / mean measurements therefore stand). The remainder is cell area minus
       the UNION of the cell's pieces, so overlapping polygons do not cover a cell twice.
       A feature that reaches the grid but so takes no cell is WARNED by name (logger +
-      `warnings.warn`, ledger 288); without `default=` a feature outvoted by a NEIGHBOUR
-      is still silent, as it always was.
+      `warnings.warn`, ledger 288); ~~without `default=` a feature outvoted by a NEIGHBOUR
+      is still silent, as it always was.~~ (**CHANGED by ledger 585**: it is
+      warned under every rule, with or without `default=`.)
       **Behaviour change:** an existing column or value map passing `default=` writes a
       different array at every partly covered cell (`majority`: the default where the
       polygons cover half or less; `mean`: a blend). Without `default=` nothing moves.
@@ -21816,3 +21818,14 @@ same day, which is the useful part of the result.
       rule): Ten Trails' first period starts 2017-09-30 and reads `Oct 2017`, where the
       start would label every monthly period with the month before it. Same `%b %Y`
       format as before. A TDIS with no start or no unit gives no date, as before.
+
+585. **A `mf.Polygons` feature that reaches the grid but sets no cell is warned by name under every rule, with or without `default=` (2026-10-12).**
+      Ledger 551 warned only with `default=`, so without one a unit outvoted in every
+      cell it touches by a larger neighbour vanished from the array in silence.
+      **Chosen:** one warning (logger + `warnings.warn`, ledger 288) for every rule,
+      naming each feature with WHY: it only touches the grid's cells along an edge or
+      at a point (no cell's area, under ANY rule, `mean` included), it holds no cell's
+      centre (`centroid`), or its value is outcovered in every cell it touches (by
+      another value; with `default=` also by the default's vote). The test is the
+      painting set `polygon_cell_values(painters=True)` already returns, so nothing
+      painted moves. A map whose units each win some cell is as quiet as before.
