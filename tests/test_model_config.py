@@ -299,15 +299,27 @@ def test_the_config_reads_its_period_rows_through_the_one_tdis_reader():
 
 def test_no_module_but_period_end_reads_the_tdis_period_block():
     """One reader of a model's TDIS ``PERIODDATA`` (ledgers 529-531): a second copy is
-    how a config and a period-end rule come to read two clocks."""
+    how a config and a period-end rule come to read two clocks.
 
-    import re
+    A READ is code: an attribute ``<...tdis>.perioddata``, found in the syntax tree. A
+    docstring naming it is not one -- ``pest/run_outputs.py`` documents the
+    ``sim.tdis.perioddata`` it ANSWERS for the forward run's model double, which the
+    text search this began as counted as a second reader."""
+
+    import ast
     from pathlib import Path
+
+    def reads_tdis_perioddata(path):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Attribute) and node.attr == "perioddata":
+                base = node.value
+                name = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "")
+                if name.endswith("tdis"):
+                    return True
+        return False
 
     src = Path(__file__).resolve().parents[1] / "src" / "myflopy"
     readers = sorted(
-        str(path.relative_to(src))
-        for path in src.rglob("*.py")
-        if re.search(r"tdis\.perioddata\b", path.read_text(encoding="utf-8"))
+        str(path.relative_to(src)) for path in src.rglob("*.py") if reads_tdis_perioddata(path)
     )
     assert readers == ["modflow/mf6/period_end.py"], readers
