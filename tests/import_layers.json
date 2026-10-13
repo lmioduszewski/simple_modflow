@@ -100,6 +100,7 @@
  "myflopy.modflow.mf6.pest.gis": 9,
  "myflopy.modflow.mf6.pest.ies": 6,
  "myflopy.modflow.mf6.pest.model_lookup": 0,
+ "myflopy.modflow.mf6.pest.naming": 0,
  "myflopy.modflow.mf6.pest.native_parameters": 3,
  "myflopy.modflow.mf6.pest.observations": 9,
  "myflopy.modflow.mf6.pest.pilot_points": 4,

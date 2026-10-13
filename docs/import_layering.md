@@ -47,6 +47,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest`
 - `myflopy.modflow.mf6.pest.forward_run` *(deferred imports: 6)*
 - `myflopy.modflow.mf6.pest.model_lookup`
+- `myflopy.modflow.mf6.pest.naming`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.simulation`
