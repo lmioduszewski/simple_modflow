@@ -119,7 +119,6 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
     """
 
     _TABLE_ATTRIBUTE: ClassVar[str] = "all_conc"
-    _STORE_COLUMN: ClassVar[str] = "conc"
     _FIELD_LABEL: ClassVar[str] = "concentration"
     _OBS_KIND: ClassVar[str] = "CONCENTRATION"
     #: Screens are refused (ledger 556).

@@ -56,7 +56,7 @@ from myflopy.modflow.mf6.observations._shared import (
 from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
 from myflopy.modflow.mf6.observations.heads import _difference_readings, _difference_weights
 from myflopy.modflow.mf6.observations.hydrographs import refuse_another_clock
-from myflopy.modflow.mf6.output_files import _declared_output_path
+from myflopy.modflow.mf6.output_files import _declared_field_output
 from myflopy.modflow.mf6.period_calendar import period_calendar
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
@@ -619,17 +619,22 @@ def _prepare_named_series_observations(
     }
 
 
-def _declared_field_file(project, *, model_name: str, kind: str) -> str:
+def _declared_field_file(project, *, model_name: str, kind: str, caller: str) -> str:
     """The head or concentration file the model's OC declares, relative to the run directory.
 
-    Read by the one rule the run's own readers use (``output_files._declared_output_path``,
-    ledger 301). The writers hard-coded ``<model>.hds``/``.ucn``: an OC naming its
+    Read by the one rule ``compare()`` uses (``output_files._declared_field_output``).
+    The writers hard-coded ``<model>.hds``/``.ucn``: an OC naming its
     file otherwise failed every realization, and the build read a STALE
-    ``<model>.hds`` a previous run had left in the run directory (ledger 505).
+    ``<model>.hds`` a previous run had left in the run directory (ledger 505) --
+    as it still did for an OC declaring no head file at all, which is refused now
+    (ledger 576).
     """
 
     workspace = Path(project.model.workspace)
-    return _declared_output_path(workspace, model_name, kind).relative_to(workspace).as_posix()
+    return (
+        _declared_field_output(workspace, model_name, kind, caller=caller)
+        .relative_to(workspace).as_posix()
+    )
 
 
 def _absent_field_file(error, *, owner: str, prefix: str, model_name: str, field_file: dict) -> ValueError:
@@ -891,7 +896,7 @@ def _prepare_point_observations(
     field_kind = {"head_targets": "head", "conc_targets": "concentration"}[kind]
     field_file = {
         {"head": "head_file", "concentration": "conc_file"}[field_kind]: _declared_field_file(
-            project, model_name=model_name, kind=field_kind
+            project, model_name=model_name, kind=field_kind, caller=_caller(owner, spec.prefix)
         )
     }
     labels = spec.targets.observation_labels(project.model)
@@ -1120,7 +1125,9 @@ def prepare_difference_observations(
         if concentration else project.model.name
     )
     field, keyword = ("concentration", "conc_file") if concentration else ("head", "head_file")
-    field_file = {keyword: _declared_field_file(project, model_name=model_name, kind=field)}
+    field_file = {keyword: _declared_field_file(
+        project, model_name=model_name, kind=field, caller=_caller(owner, spec.prefix)
+    )}
     all_labels = source.observation_labels(project.model)
     # Every source target is placed (a target on no active cell is refused, ledger
     # 341), then the names left out for want of a second reading are dropped.

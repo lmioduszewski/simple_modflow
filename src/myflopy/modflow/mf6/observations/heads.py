@@ -45,7 +45,6 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_reserved_target_names,
     _report_missed_features,
     _score_bounds,
-    _simulated_field_by_period,
     _wide_by_period,
 )
 from myflopy.modflow.mf6.observations.hydrographs import (
@@ -54,14 +53,13 @@ from myflopy.modflow.mf6.observations.hydrographs import (
     read_readings,
     refuse_another_clock,
 )
-from myflopy.modflow.mf6.output_files import _declared_output_path
+from myflopy.modflow.mf6.output_files import _declared_field_output
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.target_values import (
     DIFFERENCE_KINDS,
     read_target_values,
     target_differences,
-    target_value_table,
 )
 from myflopy.viz import mpl_axes
 
@@ -107,28 +105,6 @@ def _layer_key(layers: pd.Series) -> np.ndarray:
     """A location's layer as a join key: ``-1`` for a screened target with none."""
 
     return np.array([-1 if _is_blank(value) else int(value) for value in layers], dtype=int)
-
-
-def _records_of_table(frame: pd.DataFrame) -> list[tuple[int, np.ndarray]]:
-    """``(per, (nlay, ncells))`` records from a ``per``/``layer``/``cell``/``sim_head`` table.
-
-    How a test double holding only a value table reaches the one reader
-    (:func:`~myflopy.modflow.mf6.target_values.target_value_table`); a cell the
-    table lacks reads ``NaN``.
-    """
-
-    if frame.empty:
-        return []
-    nlay = int(frame["layer"].max()) + 1
-    ncells = int(frame["cell"].max()) + 1
-    records = []
-    for per, part in frame.groupby("per", sort=True):
-        values = np.full((nlay, ncells), np.nan)
-        values[part["layer"].astype(int).to_numpy(), part["cell"].astype(int).to_numpy()] = (
-            part["sim_head"].astype(float).to_numpy()
-        )
-        records.append((int(per), values))
-    return records
 
 
 def _layer_series(layers: pd.Series) -> pd.Series:
@@ -333,10 +309,9 @@ class HeadTargets:
     used to be read at the last step saved, wherever that fell.
     """
 
-    #: model attribute holding the full value table for this field
+    #: which dependent-variable family this is: ``"all_heads"`` or ``"all_conc"``
+    #: (the model attribute of its value table), keying the file the reader opens
     _TABLE_ATTRIBUTE: ClassVar[str] = "all_heads"
-    #: the value column inside that table
-    _STORE_COLUMN: ClassVar[str] = "elev"
     #: human-readable field name, used in errors and plot labels
     _FIELD_LABEL: ClassVar[str] = "head"
     #: The MF6 OBS type of the family's quantity -- the only one ``to_flopy_obs``
@@ -1541,9 +1516,9 @@ class HeadTargets:
         PEST's forward run uses, at each period's end on the file's own clock
         (ledger 336). It read ``<model>.hds`` through a ``HeadsPlus`` built twice
         per call, with the whole value table (7.0-9.5 s and 1.9 GB per
-        ``compare()`` on Ten Trails at 38 periods). A duck-typed double with no
-        workspace or TDIS is read from its value table, through the same
-        :func:`~myflopy.modflow.mf6.target_values.target_value_table`.
+        ``compare()`` on Ten Trails at 38 periods). A model with no workspace or
+        TDIS is refused: a double holding a value table was read through a second
+        derivation kept for it alone, until ledger 581.
         """
 
         k = None
@@ -1557,14 +1532,20 @@ class HeadTargets:
         workspace = getattr(model, "workspace", None)
         perlen = period_lengths(model)
         if workspace is None or perlen is None:
-            frame = _simulated_field_by_period(
-                model, table_attribute=self._TABLE_ATTRIBUTE, store_column=self._STORE_COLUMN,
+            # A model-like object with a value table and no run behind it read that
+            # table through a second derivation kept for test doubles alone; they
+            # carry a real head file now (ledger 581).
+            raise ValueError(
+                f"{type(self).__name__} reads its simulated values from the {kind} file a "
+                "RUN model's output control declares, at each period's end on the TDIS "
+                f"clock, and this model has no {'workspace' if workspace is None else 'TDIS'} "
+                "(ledger 581). Pass the run model -- run.model() or "
+                "mf.load_mf6_run(workspace)."
             )
-            return target_value_table(_records_of_table(frame), mapping, k=k)
         gate = getattr(model, "_require_model_kind", None)
         if callable(gate) and self._TABLE_ATTRIBUTE == "all_conc":
             gate("gwt6", "all_conc", "concentration")
-        path = _declared_output_path(Path(workspace), model.name, kind)
+        path = _declared_field_output(Path(workspace), model.name, kind, caller=type(self).__name__)
         try:
             shown = path.relative_to(Path(workspace)).as_posix()
         except ValueError:

@@ -20,6 +20,7 @@ from shapely.geometry import Point
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.observations.heads import HeadTargets
 from myflopy.modflow.mf6.pest.forward_run import _write_head_target_csv
+from tests.head_file_models import head_file_model
 
 
 def _grid(n: int = 4, length: float = 100.0) -> VoronoiGridPlus:
@@ -37,23 +38,27 @@ def _grid(n: int = 4, length: float = 100.0) -> VoronoiGridPlus:
 
 
 def _model(grid, nlay: int = 2):
-    """A model-like object with a DISV idomain and a head table (head = 1000*layer + cell)."""
+    """A model-like object with a DISV idomain, for matching and labelling."""
 
     ncpl = len(grid.gdf_vorPolys)
-    heads = pd.DataFrame(
-        [
-            {"kstpkper": (0, 0), "layer": layer, "cell": cell, "elev": 1000.0 * layer + cell}
-            for layer in range(nlay)
-            for cell in range(ncpl)
-        ]
-    )
     return SimpleNamespace(
         vor=grid,
         gwf=SimpleNamespace(
             disv=SimpleNamespace(idomain=SimpleNamespace(array=np.ones((nlay, ncpl), dtype=int)))
         ),
-        all_heads=heads,
     )
+
+
+def _run_model(grid, root, nlay: int = 2):
+    """The grid run by MF6 with head = 1000*layer + cell in every cell (a real head file).
+
+    It was a head TABLE on a double, read by a second derivation the library kept for
+    doubles alone (ledger 581).
+    """
+
+    ncpl = len(grid.gdf_vorPolys)
+    heads = 1000.0 * np.arange(nlay)[:, None] + np.arange(ncpl)[None, :]
+    return head_file_model(root, grid, [heads])
 
 
 def _targets(named):
@@ -103,13 +108,13 @@ def test_the_flopy_records_and_the_labels_are_one_definition(grid):
         targets.observation_labels(model)["obsname"].tolist()
 
 
-def test_each_layer_gets_its_own_simulated_column(grid):
+def test_each_layer_gets_its_own_simulated_column(grid, tmp_path):
     """The defect: one column, holding layer 0's head, against a forward run that
     wrote layer 1's into it."""
 
     targets = _targets([("W1", 0, Point(37.5, 37.5)), ("W1", 1, Point(37.5, 37.5))])
 
-    simulated = targets.simulated_heads(_model(grid))
+    simulated = targets.simulated_heads(_run_model(grid, tmp_path / "run"))
 
     assert list(simulated.columns) == ["per", "W1_lay0", "W1_lay1"]
     assert simulated.loc[0, "W1_lay0"] == 5.0

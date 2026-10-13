@@ -31,11 +31,41 @@ def _model_dir(workspace: Path, model_name: str) -> Path:
 _OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds", "concentration": "ucn"}
 
 
+def _oc_declaration(workspace: Path, model_name: str, kind: str) -> tuple[Path | None, str | None]:
+    """The model's OC file and the file it names for ``kind``, as ``(oc_file, declared)``.
+
+    ``oc_file`` is ``None`` when the name file or the OC file it names cannot be
+    read; ``declared`` is ``None`` when the OC file names no ``<KIND> FILEOUT``.
+    """
+
+    model_dir = _model_dir(workspace, model_name)
+    name_file = model_dir / f"{model_name}.nam"
+    oc_file = None
+    if name_file.is_file():
+        for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            fields = line.split("#", 1)[0].split()
+            if len(fields) >= 2 and fields[0].upper().startswith("OC"):
+                oc_file = model_dir / fields[1]
+                break
+    if oc_file is None or not oc_file.is_file():
+        return None, None
+    for line in oc_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        fields = line.split("#", 1)[0].split()
+        if (
+            len(fields) >= 3
+            and fields[0].upper() == kind.upper()
+            and fields[1].upper() == "FILEOUT"
+        ):
+            return oc_file, fields[2].strip("'\"")
+    return oc_file, None
+
+
 def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
     """The ``BUDGET``/``HEAD``/``CONCENTRATION`` output path the model's OC file actually declares.
 
     Falls back to ``<model_name>.cbc`` / ``.hds`` / ``.ucn`` when the OC file cannot
-    be read or names no such record.
+    be read or names no such record. A TARGET reads its head or concentration
+    through :func:`_declared_field_output` instead, which refuses the second case.
 
     A caller that ASSUMES the fallback is wrong whenever the modeller named the
     file themselves: an OC saying ``BUDGET FILEOUT tentrails.cbb`` left every
@@ -47,33 +77,17 @@ def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
     """
 
     suffix = _OC_FILEOUT_SUFFIXES[kind]
-    model_dir = _model_dir(workspace, model_name)
     fallback = workspace / f"{model_name}.{suffix}"
-
-    name_file = model_dir / f"{model_name}.nam"
-    oc_file = None
-    if name_file.is_file():
-        for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            fields = line.split("#", 1)[0].split()
-            if len(fields) >= 2 and fields[0].upper().startswith("OC"):
-                oc_file = model_dir / fields[1]
-                break
-    if oc_file is None or not oc_file.is_file():
-        return fallback
-
-    declared = None
-    for line in oc_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-        fields = line.split("#", 1)[0].split()
-        if (
-            len(fields) >= 3
-            and fields[0].upper() == kind.upper()
-            and fields[1].upper() == "FILEOUT"
-        ):
-            declared = fields[2].strip("'\"")
-            break
+    _oc_file, declared = _oc_declaration(workspace, model_name, kind)
     if declared is None:
         return fallback
+    return _resolved_fileout(workspace, model_name, declared)
 
+
+def _resolved_fileout(workspace: Path, model_name: str, declared: str) -> Path:
+    """Where a declared ``FILEOUT`` name lands: the model's directory, else the simulation's."""
+
+    model_dir = _model_dir(workspace, model_name)
     # MF6 resolves a package's FILEOUT relative to the simulation directory, but
     # a multi-model run keeps each model's files in its own subdirectory. Take
     # whichever of the two actually exists, and the model dir when neither does
@@ -83,3 +97,56 @@ def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
         if candidate.is_file():
             return candidate
     return candidates[0]
+
+
+#: The ``mf.oc`` keyword that declares each field file, named by the refusal below.
+_FILERECORD_KEYWORDS = {"head": "head_filerecord", "concentration": "concentration_filerecord"}
+
+
+def _declared_field_output(workspace: Path, model_name: str, kind: str, *, caller: str) -> Path:
+    """The head or concentration file a TARGET reads: the one the OC declares, and no other.
+
+    As :func:`_declared_output_path`, except that a READABLE OC declaring no
+    ``HEAD FILEOUT`` (``CONCENTRATION FILEOUT``) is REFUSED (ledger
+    576): MF6 refuses ``SAVE HEAD`` without one, so such a run saved no
+    head at all, and the ``<model>.hds`` the fallback opened was another run's,
+    left in a reused directory -- read in silence by ``compare()`` and by the
+    PEST build. An OC that cannot be read (no name file, a duck-typed model)
+    still falls back to ``<model>.<suffix>``.
+
+    Parameters
+    ----------
+    workspace : pathlib.Path
+        The run directory.
+    model_name : str
+        The flow (``"head"``) or transport (``"concentration"``) model's name.
+    kind : {"head", "concentration"}
+        Which file.
+    caller : str
+        What is reading it, named in the refusal.
+
+    Returns
+    -------
+    pathlib.Path
+        The declared file (which may not exist; the reader says so).
+
+    Raises
+    ------
+    ValueError
+        When the OC is readable and declares no ``<KIND> FILEOUT``.
+    """
+
+    oc_file, declared = _oc_declaration(workspace, model_name, kind)
+    if oc_file is None:
+        return workspace / f"{model_name}.{_OC_FILEOUT_SUFFIXES[kind]}"
+    if declared is None:
+        word = kind.upper()
+        raise ValueError(
+            f"{caller}: model {model_name!r}'s output control {oc_file.name!r} declares no "
+            f"{word} FILEOUT, so the run saved no {kind} -- MF6 refuses SAVE {word} without "
+            f"one -- and a {model_name}.{_OC_FILEOUT_SUFFIXES[kind]} in the run directory is "
+            f"not this run's (ledger 576). Declare the file "
+            f"(mf.oc({_FILERECORD_KEYWORDS[kind]}=\"{model_name}.{_OC_FILEOUT_SUFFIXES[kind]}\", "
+            f"saverecord=[(\"{word}\", \"LAST\"), ...])) and run the model again."
+        )
+    return _resolved_fileout(workspace, model_name, declared)

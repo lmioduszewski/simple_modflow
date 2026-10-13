@@ -2043,6 +2043,7 @@
       "records:POSITIONAL_OR_KEYWORD=<required>",
       "time_column:KEYWORD_ONLY='time'",
       "value_column:KEYWORD_ONLY='stage'",
+      "package:KEYWORD_ONLY=None",
       "inequality:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.from_series": [
@@ -2052,6 +2053,7 @@
       "times:KEYWORD_ONLY=None",
       "time_column:KEYWORD_ONLY='time'",
       "value_column:KEYWORD_ONLY='stage'",
+      "package:KEYWORD_ONLY=None",
       "inequality:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.get": [],

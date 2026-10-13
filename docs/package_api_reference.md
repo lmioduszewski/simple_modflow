@@ -781,11 +781,17 @@ Refused: a one-sided or inverted screen, a screened name on two rows, a layer th
 does not open into, a screen in no active layer, DISU, `ConcTargets` screens and
 `to_flopy_obs` of a screened set. `compare()`/`simulated_heads()` and the forward-run
 writers read through ONE period-end reader of the OC-declared head file,
-`myflopy.modflow.mf6.target_values.read_target_values` (ledger 557). A name used twice in ONE layer is refused, naming it (ledger
+`myflopy.modflow.mf6.target_values.read_target_values` (ledger 557) -- an OC declaring no
+`HEAD FILEOUT` is refused naming it, not read from a `<model>.hds` left by another run
+(ledger 576), and a model with no workspace or TDIS is refused (a double holding
+a value table was read through a second derivation, ledger 581). A values table
+`get()` returned reads back as given (its `head_target` column is the value, ledger
+577). A name used twice in ONE layer is refused, naming it (ledger
 502): it was two full-weight observations of one series. A `layer` column, when
-present, must give every row a whole number from 0 -- a blank, `"2,3"`, `0.7` or `-1`
-raises naming the rows, where it was read as layer 0 (ledger 501); no column at
-all still means layer 0.
+present, must give every row a whole number from 0 -- a blank, `"2,3"`, `0.7`, `-1` or
+`True` raises naming the rows, where it was read as layer 0 (ledger 501; `True` as 1); no
+column at all still means layer 0. A `cell` must be a whole number too (`1.5` was
+truncated to cell 1).
 
 A DRN seepage ZONE reaches the cells it COVERS -- a polygon by area, a trace by
 the cells it runs through, a point the one cell holding it -- active in the

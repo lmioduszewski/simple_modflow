@@ -426,7 +426,10 @@ run's last read `NaN`, and `stats()` left it out in silence). A blank value is
 unmeasured. The base run's heads and concentrations are read from the file the model's OC
 declares (`HEAD FILEOUT`/`CONCENTRATION FILEOUT`, ledger 505), as every forward
 run's are; a declared file missing from the run directory is refused rather than another
-read in its place. A base-run table with a cell holding no number is refused too,
+read in its place, and so is an OC that declares NO such file -- MF6 refuses `SAVE HEAD`
+without one, so that run saved no head and a `<model>.hds` in the directory is another
+run's (ledger 576; `compare()` and `simulated_heads()` refuse it too). A time key
+or a layer of `True`/`False` is refused rather than read as 1 and 0. A base-run table with a cell holding no number is refused too,
 whatever that observation's weight (ledger 506): PEST++ fails a run on reading an
 empty field at weight 0 as at weight 1, and every realization would hand it the same one. Every simulated row no target measures stays in the control file
 at weight 0, holding the base run's own value: reported in every ensemble, never

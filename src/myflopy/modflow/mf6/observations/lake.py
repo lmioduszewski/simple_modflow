@@ -355,6 +355,7 @@ class LakeStageTargets:
         times=None,
         time_column: str = "time",
         value_column: str = "stage",
+        package: str | None = None,
         inequality: str | None = None,
     ):
         """Create one named lake-stage target from a Series/list-like input.
@@ -380,6 +381,13 @@ class LakeStageTargets:
         value_column : str, optional
             Name of the stage column in the table built from a ``Series``,
             stored on the result. Default ``"stage"``.
+        package : str or None, optional
+            The NAME of the LAK package the lake belongs to, any case, when the
+            model carries several (the constructor's ``package``, ledger 344).
+            Default ``None``: the model's one LAK package. It was not accepted
+            here, so a set built by this method on a model of several LAK
+            packages could only be read by rebuilding it through the
+            constructor.
         inequality : str or None, optional
             ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
             (the constructor's ``inequality``, ledger 564). Default
@@ -402,12 +410,12 @@ class LakeStageTargets:
                 }
             )
             return cls(locations={lake: lake_id}, values=frame, time_column=time_column,
-                       value_column=value_column, inequality=inequality)
+                       value_column=value_column, package=package, inequality=inequality)
         if times is None:
             times = list(range(len(values)))
         frame = pd.DataFrame({time_column: list(times), lake: list(values)})
         return cls(locations={lake: lake_id}, values=frame, time_column=time_column,
-                   value_column=value_column, inequality=inequality)
+                   value_column=value_column, package=package, inequality=inequality)
 
     @classmethod
     def from_records(
@@ -416,6 +424,7 @@ class LakeStageTargets:
         *,
         time_column: str = "time",
         value_column: str = "stage",
+        package: str | None = None,
         inequality: str | None = None,
     ):
         """Create lake-stage targets from long-format records.
@@ -432,6 +441,13 @@ class LakeStageTargets:
             Column holding each record's time label. Default ``"time"``.
         value_column : str, optional
             Column holding each record's observed stage. Default ``"stage"``.
+        package : str or None, optional
+            The NAME of the LAK package the lakes belong to, any case, when the
+            model carries several (the constructor's ``package``, ledger 344).
+            Default ``None``: the model's one LAK package. It was not accepted
+            here, so a set built by this method on a model of several LAK
+            packages could only be read by rebuilding it through the
+            constructor.
         inequality : str or None, optional
             ``"at_most"`` or ``"at_least"`` makes every value a one-sided bound
             (the constructor's ``inequality``, ledger 564). Default
@@ -457,7 +473,7 @@ class LakeStageTargets:
         )
         values_frame = frame.loc[:, [time_column, "name", value_column]].copy()
         return cls(locations=locations, values=values_frame, time_column=time_column,
-                   value_column=value_column, inequality=inequality)
+                   value_column=value_column, package=package, inequality=inequality)
 
     @classmethod
     def from_hydrographs(

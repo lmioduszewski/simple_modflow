@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 575 entries (580 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 578 entries (583 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 581 | The head targets have one reader; the value-table route kept for test doubles is gone | 2026-10-12 |
+| 577 | A values table `get()` returned is read back; a WIDE table with a column named like the value column is ref... | 2026-10-12 |
+| 576 | A target reads the head or concentration file the OC declares, and an OC that declares none is refused | 2026-10-12 |
 | 575 | `sensitivity()` and `parameters_at_bounds()` say how many realizations they read, and warn below half | 2026-10-12 |
 | 574 | Every PESTPP-IES launch is recorded in the template's metadata, and run discovery finds a master wherever... | 2026-10-12 |
 | 573 | The correlated prior myflopy draws is seeded: `seed=` on `run_ies()`/`prior()`/`draw_prior()`, recorded wit... | 2026-10-12 |
@@ -21338,10 +21341,11 @@ same day, which is the useful part of the result.
       `hm_mounding_final_flow`, 200 targets x 38 periods: 3.2-4.2 s and 1.89 GB peak per
       call before (7.0-9.5 s at a load of ~14), 0.06 s (0.91 s on the first call, which
       loads the simulation for its TDIS) and 0.45 GB after, every value identical.
-      **Kept on purpose:** a duck-typed double with no workspace or TDIS is still read from
+      ~~**Kept on purpose:** a duck-typed double with no workspace or TDIS is still read from
       its `all_heads`/`all_conc` table (`_simulated_field_by_period`), through the same
       `target_value_table` -- the record SOURCE differs, the selection and the screen
-      weighting do not. `simulated_heads()` now lists its columns in the map's order (the
+      weighting do not.~~ **Restated by ledger 581:** that route is gone; such a
+      model is refused, and the doubles carry a real head file. `simulated_heads()` now lists its columns in the map's order (the
       forward run's), not sorted; a period-end refusal names the file (`m.hds`) instead
       of "the head file". **Not done:** `get_hds` still builds a new `HeadsPlus` on every
       access (its docstring, which said "Build and cache", now says so); the views still pay
@@ -21696,3 +21700,35 @@ same day, which is the useful part of the result.
       log line when `n_reals < n_reals_drawn / 2` (`ies.SURVIVING_SHARE_WARNING`); the
       half is the task's threshold, not a measurement. The statistics themselves are
       unchanged: `learned` still compares the whole prior with what survived.
+
+576. **A target reads the head or concentration file the OC declares, and an OC that declares none is refused (2026-10-12).**
+      MF6 refuses `SAVE HEAD` without `HEAD FILEOUT` (measured: "REQUESTING TO SAVE HEAD
+      BUT HEAD SAVE FILE NOT SPECIFIED"), so a run whose readable OC names no head file
+      saved no head, and the `<model>.hds` the fallback opened was another run's -- read
+      in silence by `compare()`/`simulated_heads()`/`stats()` and by the PEST build.
+      **Chosen:** ONE resolver for targets, `output_files._declared_field_output`, which
+      refuses that case naming the OC file and the `mf.oc(head_filerecord=...)`
+      (`concentration_filerecord=`) spelling; an OC that cannot be READ (no name file)
+      still falls back to `<model>.<suffix>`, as before. **Not changed:** the
+      cell-budget surfaces keep `_declared_output_path`'s fallback for an OC naming no
+      `BUDGET FILEOUT`, which is the same trap one file over.
+
+577. **A values table `get()` returned is read back; a WIDE table with a column named like the value column is refused (2026-10-12).**
+      A LONG table whose value column was `head_target` (what `get()`/`compare()` write)
+      crashed inside pandas' `melt`. **Chosen:** accept it -- `_long_values` takes the
+      family's OUTPUT column name (`head_target`, `stage`, `stage_target`, ...) as the
+      value column when the caller's `value_column` is absent, so
+      `mf.HeadTargets(locations=t.locations, values=t.get())` round-trips (its `weight`
+      column, the location's, is read as each reading's own: the same weight). A WIDE
+      table carrying such a column beside target columns is refused naming it, since it
+      would otherwise melt into a target of that name.
+
+581. **The head targets have one reader; the value-table route kept for test doubles is gone (2026-10-12).**
+      Ledger 557 kept `_simulated_field_by_period` so a duck-typed double with an
+      `all_heads` table could be compared. **Chosen:** delete it. The seven tests that
+      used such doubles carry a real head file instead (`tests/head_file_models.py`: MF6
+      run with every cell a CHD at the asked head, so the file holds those numbers
+      exactly), and a model with no workspace or TDIS is now REFUSED naming the run
+      model spelling. `docs/reproducers/screened_head_targets.py`, whose part 3 times the
+      old route against the new, keeps its own copy of the old derivation as its
+      baseline. `_STORE_COLUMN` went with it (nothing read it).

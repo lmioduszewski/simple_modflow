@@ -33,14 +33,8 @@ def test_conc_targets_reads_concentration_not_heads():
     """The one thing that must differ from HeadTargets, asserted directly."""
 
     assert issubclass(ConcTargets, HeadTargets)
-    assert (ConcTargets._TABLE_ATTRIBUTE, ConcTargets._STORE_COLUMN) == (
-        "all_conc",
-        "conc",
-    )
-    assert (HeadTargets._TABLE_ATTRIBUTE, HeadTargets._STORE_COLUMN) == (
-        "all_heads",
-        "elev",
-    )
+    assert ConcTargets._TABLE_ATTRIBUTE == "all_conc"
+    assert HeadTargets._TABLE_ATTRIBUTE == "all_heads"
     # inherited wholesale -- a copy would show these in ConcTargets' own body
     for shared in ("match_to_model", "compare", "residuals", "stats", "to_long"):
         assert shared not in vars(ConcTargets), f"ConcTargets re-implements {shared}"

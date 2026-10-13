@@ -60,10 +60,26 @@ import pandas as pd
 
 import myflopy as mf
 from myflopy.modflow.mf6.hydraulics import model_flow_properties, saturated_thickness
-from myflopy.modflow.mf6.observations._shared import _simulated_field_by_period
 from myflopy.modflow.mf6.output_files import _declared_output_path
-from myflopy.modflow.mf6.period_end import period_lengths
+from myflopy.modflow.mf6.period_end import at_period_end, period_ends, period_lengths
 from myflopy.modflow.mf6.target_values import read_target_values
+
+
+def _old_compare_route(model) -> pd.DataFrame:
+    """The derivation ``compare()`` used before ledger 557, kept HERE as part 3's baseline.
+
+    It was ``observations._shared._simulated_field_by_period``, which the library
+    kept for test doubles alone until ledger 581 deleted it: the
+    ``HeadsPlus`` value table, each period's END row on the file's own clock.
+    """
+
+    frame = model.all_heads.reset_index().copy()
+    ends = period_ends(model, reader=lambda: model.hds, file="the head file", saves="HEAD",
+                       fallback=frame["kstpkper"])
+    frame = at_period_end(frame, ends).copy()
+    frame["per"] = frame["kstpkper"].map(lambda item: int(item[1]))
+    frame = frame.sort_values("per", kind="stable").rename(columns={"elev": "sim_head"})
+    return frame.loc[:, ["per", "layer", "cell", "sim_head"]].reset_index(drop=True)
 
 
 def main():
@@ -129,7 +145,7 @@ def main():
                             "name": [f"W{i}" for i in range(count)],
                             "layer": 0, "cell": cells})
     started = time.perf_counter()
-    old = _simulated_field_by_period(model)
+    old = _old_compare_route(model)
     old = old.loc[old["layer"] == 0].set_index(["per", "cell"])["sim_head"]
     old_s = time.perf_counter() - started
     started = time.perf_counter()

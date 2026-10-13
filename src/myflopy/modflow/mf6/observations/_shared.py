@@ -1313,16 +1313,16 @@ def _load_locations(
         frame["weight"] = np.nan
 
     frame["name_key"] = _normalize_identifier_series(frame["name"])
+    if "cell" in frame.columns:
+        # Before the repeated-name checks, whose messages print each cell as a
+        # number: a repeated name with an unreadable cell raised a bare
+        # ``int()`` error, and a fraction was truncated there and here alike.
+        frame["cell"] = _location_cells(frame["cell"], frame["name"])
     if screened is not None:
         # Before the per-layer check, whose message reads a layer a screened row
         # may not have.
         _refuse_screened_names_repeated(frame, screened)
     _refuse_names_repeated_in_a_layer(frame)
-    if "cell" in frame.columns:
-        frame["cell"] = pd.to_numeric(frame["cell"], errors="coerce")
-        if frame["cell"].isna().any():
-            raise ValueError("Head target cell/node values must be numeric.")
-        frame["cell"] = frame["cell"].astype(int)
     if isinstance(frame, gpd.GeoDataFrame):
         frame["x"] = frame.geometry.centroid.x
         frame["y"] = frame.geometry.centroid.y
@@ -1330,6 +1330,47 @@ def _load_locations(
         frame["x"] = pd.to_numeric(frame.get("x", np.nan), errors="coerce")
         frame["y"] = pd.to_numeric(frame.get("y", np.nan), errors="coerce")
     return frame
+
+
+def _location_cells(cells: pd.Series, names: pd.Series) -> pd.Series:
+    """Each target's cell id as ``int``; a blank, a non-number, a fraction or a boolean raises.
+
+    A fraction used to be truncated (``1.5`` read cell 1) and ``True`` read as
+    cell 1, in silence; a non-number raised only once every repeated-name check
+    had run, so one under a repeated name died on a bare ``int()`` error.
+
+    Parameters
+    ----------
+    cells : pandas.Series
+        The cell column as given.
+    names : pandas.Series
+        Each row's target name, aligned with ``cells``, for the message.
+
+    Returns
+    -------
+    pandas.Series
+        The cells as ``int``.
+
+    Raises
+    ------
+    ValueError
+        Naming up to five rows whose cell is not a whole number.
+    """
+
+    numbers = pd.to_numeric(cells.mask(pd.Series(_boolean_rows(cells), index=cells.index)),
+                            errors="coerce").astype(float)
+    values = numbers.to_numpy()
+    bad = ~np.isfinite(values) | (values != np.floor(values))
+    if bad.any():
+        listing = [
+            f"{_shown(name)} ({'blank' if _is_blank(raw) else _shown(raw)})"
+            for name, raw in zip(names[bad], cells[bad], strict=True)
+        ]
+        raise ValueError(
+            "Head target cell/node values must be numeric: each row names its cell by a "
+            f"whole number, and {len(listing)} row(s) do not: {_listing(listing)}."
+        )
+    return numbers.astype(int)
 
 
 def _location_layers(
@@ -1368,6 +1409,19 @@ def _location_layers(
         fraction or is negative, naming up to five such rows.
     """
 
+    boolean = _boolean_rows(layers)
+    if boolean.any():
+        listing = [
+            f"{_shown(name)} ({_shown(raw)})"
+            for name, raw in zip(names[boolean], layers[boolean], strict=True)
+        ]
+        raise ValueError(
+            f"Head target locations: the layer column {column!r} must give every target a "
+            f"zero-based model layer, and {len(listing)} row(s) hold True/False instead: "
+            f"{_listing(listing)}. pandas reads True as 1 and False as 0, so a flag column "
+            "named as the layers would put its targets in layers 1 and 0 in silence. Give "
+            "each row its layer number."
+        )
     numbers = pd.to_numeric(layers, errors="coerce").astype(float)
     values = numbers.to_numpy()
     allowed = (
@@ -1552,7 +1606,10 @@ def _long_values(
     The ONE reading of a target set's values table, for every family. LONG: a
     ``name`` and a ``value_column`` column (headers matched ignoring case), one row
     per target per time; ONE SERIES: ``time_column`` and ``value_column`` only;
-    WIDE: every other column one target. A LONG or one-series table may carry a
+    WIDE: every other column one target. The value column may be called
+    ``output_column`` -- what ``get()``/``compare()`` call it -- in place of
+    ``value_column``, so a table ``get()`` returned reads back (ledger
+    577). A LONG or one-series table may carry a
     ``weight`` column, each reading's own PEST weight (ledger 504): it was
     dropped without a word, so one suspect reading could not be down-weighted. A
     WIDE table cannot -- its ``weight`` column would be read as a target named
@@ -1587,7 +1644,12 @@ def _long_values(
 
     lower_columns = {str(column).strip().lower(): column for column in frame.columns}
     name_column = lower_columns.get("name")
+    # ``output_column`` is what ``get()`` and ``compare()`` call the value, so a
+    # table they returned is read back as the LONG (or one-series) table it is
+    # (ledger 577); the caller's ``value_column`` wins when both are there.
     explicit_value_column = lower_columns.get(value_column.strip().lower())
+    if explicit_value_column is None:
+        explicit_value_column = lower_columns.get(output_column.strip().lower())
     weight_column = lower_columns.get(ROW_WEIGHT_COLUMN)
     if weight_column == time_column or weight_column == explicit_value_column:
         weight_column = None
@@ -1617,6 +1679,17 @@ def _long_values(
                 "or a weight per location (the locations' weight column)."
             )
         value_columns = [column for column in frame.columns if column != time_column]
+        clashing = [column for column in value_columns
+                    if str(column).strip().lower() == output_column.strip().lower()]
+        if clashing:
+            raise ValueError(
+                f"{owner} values: a WIDE table (one column per target) cannot carry a column "
+                f"named {clashing[0]!r} -- the name this family's tables (get(), compare()) "
+                "give the measured value -- beside other targets. A table get() returned is "
+                f"read back whole (its {output_column!r} and 'name' columns, one row per "
+                "reading); in a wide table, give that column a target's name (ledger "
+                "577)."
+            )
         long = frame.melt(
             id_vars=[time_column],
             value_vars=value_columns,
@@ -1713,77 +1786,12 @@ def _normalize_values_frame(
     return _copy_frame(long)
 
 
-#: The reader behind each dependent-variable table, what to call its file, and the
+#: Each dependent-variable family's table attribute, what to call its file, and the
 #: output-control word that schedules it -- for the period-end rule's refusal.
 _FIELD_FILES = {
     "all_heads": ("hds", "the head file", "HEAD"),
     "all_conc": ("conc", "the concentration file", "CONCENTRATION"),
 }
-
-
-def _simulated_field_by_period(
-    model: Any,
-    *,
-    table_attribute: str = "all_heads",
-    store_column: str = "elev",
-) -> pd.DataFrame:
-    """One simulated value per period/layer/cell: each period's END (ledger 336).
-
-    The record read for a period is the one that ENDS it, by the one rule every
-    target uses (:func:`~myflopy.modflow.mf6.period_end.period_ends`), on the
-    dependent-variable file's own clock. A period whose end the file does not
-    hold -- output control saved ``FIRST`` or ``STEPS`` short of it -- is refused
-    rather than read at an earlier step, which it used to be: the last saved step
-    was taken, wherever it fell.
-
-    ``table_attribute``/``store_column`` select the field: heads
-    (``all_heads``/``elev``) or concentration (``all_conc``/``conc``). The output
-    column is ``sim_head`` for BOTH -- it is a frame-internal name meaning "the
-    simulated value", and keeping it shared is what lets the calibration-plot and
-    PEST machinery in ``calcs/calibration.py`` serve concentration unchanged
-    (ledger 102).
-
-    Parameters
-    ----------
-    model : SimulationBase
-        A run model holding the dependent-variable file.
-    table_attribute : {"all_heads", "all_conc"}, default "all_heads"
-        The model's ``kstpkper``/``layer``/``cell`` table to read.
-    store_column : str, default "elev"
-        That table's value column (``"elev"`` for heads, ``"conc"``).
-
-    Returns
-    -------
-    pandas.DataFrame
-        ``per``, ``layer``, ``cell``, ``sim_head``: one row per cell per period
-        the file saved, the value at that period's end.
-
-    Raises
-    ------
-    ValueError
-        When a period the file saved lacks its final step, naming the period,
-        the steps saved and the ``SAVE HEAD LAST`` setting that fixes it.
-    """
-
-    frame = getattr(model, table_attribute).reset_index().copy()
-    reader_attribute, file, saves = _FIELD_FILES[table_attribute]
-    ends = period_ends(
-        model,
-        reader=lambda: getattr(model, reader_attribute),
-        file=file,
-        saves=saves,
-        fallback=frame["kstpkper"],
-    )
-    frame = at_period_end(frame, ends).copy()
-    frame["per"] = frame["kstpkper"].map(lambda item: int(item[1]))
-    frame = frame.sort_values("per", kind="stable").rename(columns={store_column: "sim_head"})
-    return frame.loc[:, ["per", "layer", "cell", "sim_head"]].reset_index(drop=True)
-
-
-def _simulated_heads_by_period(model: Any) -> pd.DataFrame:
-    """Simulated heads per period/layer/cell (the heads instance of the above)."""
-
-    return _simulated_field_by_period(model)
 
 
 def _default_obs_csv_name(filename: str | Path, default_name: str) -> str:
@@ -2226,6 +2234,15 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
         raise ValueError(f"{caller} requires a 'per' or 'time' column.")
     raw = frame[column]
     _refuse_dated_keys(raw, column=column, caller=caller)
+    boolean = _boolean_rows(raw)
+    if boolean.any():
+        labels = ", ".join(_shown(value) for value in pd.unique(raw[boolean])[:5])
+        raise ValueError(
+            f"{caller} reads `{column}` as a zero-based stress period NUMBER, and {labels} "
+            f"{'is' if int(boolean.sum()) == 1 else 'are'} True/False: pandas reads True as "
+            "period 1 and False as period 0, so a flag column keyed the targets by periods "
+            "nobody chose. Key each target by its period, 0, 1, 2, ..."
+        )
     per = pd.to_numeric(raw, errors="coerce").astype(float)
     finite = np.isfinite(per.to_numpy())
     if not finite.all():
@@ -2252,6 +2269,23 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
             "is 0. Key each target by its stress period, 0, 1, 2, ..."
         )
     return per.astype(int)
+
+
+def _boolean_rows(raw: pd.Series) -> np.ndarray:
+    """Which rows of a key or layer column hold a boolean, in any form pandas holds one.
+
+    ``pd.to_numeric`` reads ``True`` as 1 and ``False`` as 0 -- finite, whole and
+    not negative -- so a boolean slips through every check a period or a layer is
+    given; both readers refuse it by this test. Covers a ``bool`` column, pandas'
+    nullable ``boolean`` dtype and ``True``/``False`` (Python or numpy) inside an
+    ``object`` column.
+    """
+
+    if pd.api.types.is_bool_dtype(raw.dtype):
+        return raw.notna().to_numpy(dtype=bool)
+    if pd.api.types.is_object_dtype(raw.dtype):
+        return np.array([isinstance(value, (bool, np.bool_)) for value in raw], dtype=bool)
+    return np.zeros(len(raw), dtype=bool)
 
 
 def _is_dated(value) -> bool:

@@ -68,6 +68,7 @@ from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     Recharge,
     Storage,
 )
+from tests.head_file_models import head_file_model  # noqa: E402
 from tests.test_drn_zones_on_faces import attach_budget  # noqa: E402
 
 
@@ -178,14 +179,15 @@ def _answering_by_type(packages):
     return package
 
 
-def _fake_model_with_heads():
-    vor = _two_cell_vor_clockwise()
-    index = pd.MultiIndex.from_tuples(
-        [((0, 0), 0, 0), ((0, 0), 0, 1), ((0, 1), 0, 0), ((0, 1), 0, 1)],
-        names=["kstpkper", "layer", "cell"],
-    )
-    heads = pd.DataFrame({"elev": [10.0, 9.5, 10.25, 9.25]}, index=index)
-    return SimpleNamespace(vor=vor, all_heads=heads)
+def _fake_model_with_heads(root: Path, heads=((10.0, 9.5), (10.25, 9.25))):
+    """The two-cell grid with these heads per period, in a REAL head file MF6 wrote.
+
+    It carried an ``all_heads`` table, read by a second derivation the library kept
+    for doubles alone (ledger 581); the targets now read the file, as they
+    read a run's.
+    """
+
+    return head_file_model(root, _two_cell_vor_clockwise(), [np.asarray(h) for h in heads])
 
 
 def _fake_surface_water_model():
@@ -265,7 +267,7 @@ def _fake_surface_water_model():
     return model
 
 
-def test_head_targets_normalize_match_and_compare():
+def test_head_targets_normalize_match_and_compare(tmp_path):
     locations = gpd.GeoDataFrame(
         {
             "name": ["OBS_A", "OBS_B"],
@@ -289,7 +291,7 @@ def test_head_targets_normalize_match_and_compare():
     assert {"name", "time", "head_target", "weight", "group", "layer"}.issubset(long.columns)
     assert len(long) == 4
 
-    fake_model = _fake_model_with_heads()
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     matches = targets.match_to_model(fake_model)
     assert matches.sort_values("name")["cell"].tolist() == [0, 1]
 
@@ -300,7 +302,7 @@ def test_head_targets_normalize_match_and_compare():
     assert stats.loc[0, "n"] == 4
 
 
-def test_model_bound_targets_registry_and_calibration_plot():
+def test_model_bound_targets_registry_and_calibration_plot(tmp_path):
     locations = gpd.GeoDataFrame(
         {
             "name": ["OBS_A", "OBS_B"],
@@ -313,7 +315,7 @@ def test_model_bound_targets_registry_and_calibration_plot():
     )
     values = pd.DataFrame({"per": [0, 1], "OBS_A": [9.75, 10.0], "OBS_B": [9.0, 9.5]})
     targets = HeadTargets(locations=locations, values=values, time_column="per")
-    fake_model = _fake_model_with_heads()
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     fake_model.targets = TargetRegistry(fake_model)
     fake_model.targets.heads = targets
 
@@ -358,9 +360,7 @@ def test_model_bound_targets_registry_and_calibration_plot():
     assert isinstance(bound.plot.timeseries("OBS_A", backend="matplotlib"), MplFigure)
     assert isinstance(bound.plot.residuals_by_period(backend="matplotlib"), MplFigure)
 
-    baseline_model = _fake_model_with_heads()
-    baseline_model.all_heads = baseline_model.all_heads.copy()
-    baseline_model.all_heads.loc[:, "elev"] = [9.8, 9.3, 10.0, 9.0]
+    baseline_model = _fake_model_with_heads(tmp_path / "baseline", heads=((9.8, 9.3), (10.0, 9.0)))
     obs_fig_with_baseline = bound.plot.obs_vs_sim(baseline=baseline_model)
     assert len(obs_fig_with_baseline.data) == 3
     ts_fig_with_baseline = bound.plot.timeseries("OBS_A", baseline=baseline_model)
@@ -443,8 +443,8 @@ def test_head_targets_can_build_and_attach_flopy_obs(monkeypatch):
     assert calls["continuous"] == obs_dict
 
 
-def test_head_targets_from_cells_supports_dict_and_compare():
-    fake_model = _fake_model_with_heads()
+def test_head_targets_from_cells_supports_dict_and_compare(tmp_path):
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     targets = HeadTargets.from_cells(
         cells=[0, 1],
         names=["OBS_A", "OBS_B"],
@@ -474,8 +474,8 @@ def test_head_targets_from_cells_supports_dict_and_compare():
     ]
 
 
-def test_head_targets_from_cells_supports_array_and_series():
-    fake_model = _fake_model_with_heads()
+def test_head_targets_from_cells_supports_array_and_series(tmp_path):
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     single = HeadTargets.from_cells(
         cells=[0],
         names=["OBS_A"],
@@ -496,8 +496,8 @@ def test_head_targets_from_cells_supports_array_and_series():
     assert sorted(multi.to_wide().columns.tolist()) == ["OBS_A", "OBS_B", "time"]
 
 
-def test_head_targets_from_records_supports_cell_records():
-    fake_model = _fake_model_with_heads()
+def test_head_targets_from_records_supports_cell_records(tmp_path):
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     targets = HeadTargets.from_records(
         [
             {"name": "OBS_A", "cell": 0, "layer": 0, "time": 0, "head": 9.75},
@@ -512,8 +512,8 @@ def test_head_targets_from_records_supports_cell_records():
     assert comparison["cell"].tolist()[:2] == [0, 0]
 
 
-def test_head_targets_plain_constructor_accepts_cell_dict_and_series_inputs():
-    fake_model = _fake_model_with_heads()
+def test_head_targets_plain_constructor_accepts_cell_dict_and_series_inputs(tmp_path):
+    fake_model = _fake_model_with_heads(tmp_path / "heads")
     locations = {"OBS_A": 0, "OBS_B": 1}
     targets = HeadTargets(
         locations=locations,
