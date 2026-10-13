@@ -60,6 +60,9 @@ from myflopy.modflow.mf6.pest.forward_run import (
     _write_head_target_csv,
 )
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
+from myflopy.modflow.mf6.pest.naming import (
+    pest_group_name,  # one slug rule (ledger 558)
+)
 from myflopy.modflow.mf6.pest.native_parameters import (
     _dataset_files,
     resolve_target,
@@ -86,13 +89,6 @@ _TARGET_COLUMNS = ["name", "column", "time", "per", "value", "weight", "group"]
 #: An observation name in a PEST instruction line: ``!name!``.
 _INSTRUCTION_NAME = re.compile(r"!([^!]+)!")
 
-#: Every run of characters a PEST group name does not keep -- anything but a
-#: lower-case letter, a digit, ``_``, ``.``, ``:`` and ``-`` -- becomes one ``_``.
-#: PEST++ 5.2.16 refuses the version-2 control file over a comma or a double
-#: quote in a group name, and whitespace splits a classic (version-1) one
-#: (``docs/reproducers/pest_observation_groups.py``).
-_GROUP_NAME_DROPS = re.compile(r"[^a-z0-9_.:\-]+")
-
 #: A group whose name starts with one of these is an INEQUALITY to PESTPP-IES --
 #: ``l_``/``less`` "simulated at most", ``g_``/``greater`` "at least" -- matched on
 #: the bare start (``lessard`` and ``greaterville`` too): a measured group read so
@@ -107,31 +103,6 @@ UNMEASURED_GROUP_SUFFIX = "_unmeasured"
 #: ``pd.NA`` -- compared lower-cased. Read as a label, it made a group named
 #: ``nan`` of every target left unlabelled (ledger 359), so it is refused.
 _STRINGIFIED_MISSING = frozenset({"nan", "none", "<na>"})
-
-
-def pest_group_name(label: str) -> str:
-    """The PEST observation group a group label or a set prefix names.
-
-    Lower-cased (pyEMU lower-cases every name it reads), stripped, and every run
-    of characters other than letters, digits, ``_``, ``.``, ``:`` and ``-``
-    turned into one ``_`` -- so ``"North Wells"`` is ``north_wells``. No length
-    limit is applied: PEST++ 5.2.16 read a 5000-character group name from the
-    version-2 control file myflopy writes, and pyEMU's own per-column groups
-    (``oname:hds_otype:lst_usecol:w1``) are already past classic PEST's 12.
-
-    Parameters
-    ----------
-    label : str
-        The text: a target's ``group`` label, or an observation set's prefix.
-
-    Returns
-    -------
-    str
-        The group name. Two labels may give one name (``"North"``, ``"north"``);
-        :func:`assign_observation_groups` refuses that.
-    """
-
-    return _GROUP_NAME_DROPS.sub("_", str(label).strip().lower())
 
 
 def _label_text(label) -> str | None:

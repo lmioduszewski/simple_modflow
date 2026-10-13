@@ -17,6 +17,7 @@ from myflopy.modflow.mf6.grid.geometry import model_cell_polygons, where_they_ar
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.package_registry import (
     agg_for_kind,
+    feature_boundnames,
     model_packages_of_type,
     package_named,
 )
@@ -427,14 +428,8 @@ def _declared_features(package, ident, *, cellid: bool) -> tuple:
         pass
     packagedata = getattr(package, "packagedata", None)
     data = packagedata.get_data() if packagedata is not None else None
-    if data is None or "boundname" not in (data.dtype.names or ()):
-        return ()
-    key = text.lower()
-    return tuple(
-        int(row[0])
-        for row in data
-        if row["boundname"] is not None and str(row["boundname"]).strip().lower() == key
-    )
+    # The one boundname rule (ledger 558), shared with the PEST parameters.
+    return tuple(feature_boundnames(data).get(text.lower(), ()))
 
 
 def _declared_observations(packages, *, cellid: bool) -> list[_DeclaredObservation]:
@@ -1979,11 +1974,7 @@ def _resolve_feature_ids(
     table = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data
     numbers = [int(value) for value in table.iloc[:, 0]]
     held = set(numbers)
-    boundnames: dict[str, list[int]] = {}
-    if "boundname" in table.columns:
-        for number, bound in zip(numbers, table["boundname"], strict=True):
-            if bound is not None and str(bound).strip():
-                boundnames.setdefault(str(bound).strip().lower(), []).append(number)
+    boundnames = feature_boundnames(table)
     where = f"the {quantity.package_type.upper()} package {getattr(owners[0], 'package_name', '')!r}"
     plural = f"{quantity.feature}es" if quantity.feature.endswith("h") else f"{quantity.feature}s"
     resolved: dict[str, int] = {}

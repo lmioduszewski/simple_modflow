@@ -1059,3 +1059,44 @@ def package_outputs(model, package_type: str, package: str | None = None):
 
 #: What a one-package view's rows are, per type, for :func:`one_package`'s refusal.
 _NUMBERED_FEATURES = {"LAK": "lakes", "SFR": "reaches", "UZF": "UZF cells"}
+
+
+def feature_boundnames(packagedata) -> dict[str, list[int]]:
+    """Which features of a LAK, SFR or UZF package each boundname names, from its ``packagedata``.
+
+    The ONE reading of a boundname (ledger 558): stripped and lower-cased,
+    as MF6 compares one, a blank or missing one naming nothing. An observation's
+    boundname (``observations._shared``) and a ``style="feature"`` parameter's
+    (``pest.native_parameters``) are both resolved through it.
+
+    Parameters
+    ----------
+    packagedata : numpy.recarray or pandas.DataFrame or None
+        The package's ``packagedata`` as FloPy's ``get_data()`` returns it (a record
+        array) or as a table; its FIRST field is the feature's ZERO-based number (a
+        lake's ``ifno``/``lakeno``, a reach's ``ifno``), and a ``boundname`` field, when
+        present, its name. ``None`` names nothing.
+
+    Returns
+    -------
+    dict of str to list of int
+        Each lower-cased, stripped boundname to the zero-based numbers of the
+        features carrying it, in ``packagedata`` order; empty when there is no
+        ``boundname`` field.
+    """
+
+    if packagedata is None:
+        return {}
+    import pandas as pd
+
+    table = packagedata if isinstance(packagedata, pd.DataFrame) else pd.DataFrame(packagedata)
+    if table.empty or "boundname" not in table.columns:
+        return {}
+    named: dict[str, list[int]] = {}
+    for number, bound in zip(table.iloc[:, 0], table["boundname"], strict=True):
+        if bound is None or (isinstance(bound, float) and bound != bound):
+            continue
+        text = str(bound).strip().lower()
+        if text:
+            named.setdefault(text, []).append(int(number))
+    return named
