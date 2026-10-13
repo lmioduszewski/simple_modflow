@@ -2838,6 +2838,7 @@ class PestProject:
             self.pst.control_data.noptmax = int(noptmax)
             with self._quiet_pyemu_context():
                 self.pst.write(self.template_workspace / target_name, version=2)
+            self._record_template_files()
         finally:
             # The template holds everything the staging copy was made for. Removed only
             # as the copy THIS build made and marked: a build that failed before making
@@ -3041,8 +3042,11 @@ class PestProject:
         archive -- except a file a PEST++ option names), so a rerun with fewer iterations, or a :meth:`prior`
         after a run, is not reviewed with the earlier run's last iteration as its
         posterior; it says so with a ``UserWarning`` (ledger 532). A
-        parallel run's master is copied from the template with those outputs left
-        out (ledger 532), and the template keeps them.
+        parallel run's master, and the copy each worker is made from, hold only what
+        the BUILD left in the template -- an earlier run's outputs, its record and the
+        model outputs of its last forward run left out (ledgers 532, 588;
+        so a file put in the template by hand after the build reaches neither) -- and
+        the template keeps them.
 
         **A run in progress is never touched** (ledger 532). Every launch
         writes a ``myflopy_pest_run.lock`` into the directories it runs in -- the
@@ -4061,8 +4065,9 @@ class PestProject:
         serial run first deletes the earlier run's outputs from the template
         (:func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs`, bar a file a
         PEST++ option names), saying so (ledger 532); a parallel run makes its
-        master itself, a copy of the template with those outputs removed, and hands it
-        to pyEMU's ``start_workers(reuse_master=True)`` (ledger 532).
+        master itself, a copy of what the BUILD left in the template
+        (:meth:`_launch_copy`, ledger 588), and hands it to pyEMU's
+        ``start_workers(reuse_master=True)`` (ledger 532), its workers made from the same.
         """
 
         if self.pst is None:
@@ -4150,11 +4155,7 @@ class PestProject:
             # (ledger 532; ledger 507 removed them after the run instead).
             if master.exists():
                 shutil.rmtree(master)
-            shutil.copytree(
-                self.template_workspace, master, symlinks=True,
-                ignore=shutil.ignore_patterns(RUN_LOCK),
-            )
-            self._clear_earlier_run_outputs(master, announce=False, method=method)
+            self._launch_copy(master, method=method)
             self._run_parallel(
                 pyemu, exe_name, exe_dir, case, master, int(workers),
                 method=method, keep_workers=keep_workers,
@@ -4225,10 +4226,12 @@ class PestProject:
         write_run_lock(master, method=method, calibration=self.name)
         write_run_lock(root, method=method, calibration=self.name)
         finished = False
+        source = self.template_workspace
         try:
+            source = self._worker_source(root)
             with self._pestpp_environment(exe_dir):
                 pyemu.os_utils.start_workers(
-                    str(self.template_workspace),
+                    str(source),
                     exe_name,
                     case,
                     num_workers=workers,
@@ -4239,6 +4242,8 @@ class PestProject:
                 )
             finished = True
         finally:
+            if source != self.template_workspace:
+                shutil.rmtree(source, ignore_errors=True)
             release_run_lock(master)
             release_run_lock(root)
             if finished and not keep_workers:
@@ -4248,6 +4253,144 @@ class PestProject:
                     "kept the worker directories of %s() in %s%s", method, root,
                     "" if finished else " (the run did not finish cleanly)",
                 )
+
+    #: The clean copy of the template each worker is made from, inside the worker root,
+    #: when the template holds what a launch does not copy (ledger 588).
+    _WORKER_SOURCE = "template_copy"
+
+    #: The build metadata's list of the files a build left in the template.
+    _TEMPLATE_FILES = "template_files"
+
+    def _record_template_files(self) -> None:
+        """Record in the build metadata every file the build left in the template (ledger 588).
+
+        Relative POSIX paths, sorted; a directory ends in ``/``, so an EMPTY one the
+        forward run writes into is made too. A launch copies these -- and the control
+        file it writes with its external tables -- and nothing a run wrote there since.
+        """
+
+        template = self.template_workspace
+        path = template / METADATA_FILENAME
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+        metadata[self._TEMPLATE_FILES] = sorted(
+            entry.relative_to(template).as_posix() + ("/" if entry.is_dir() else "")
+            for entry in template.rglob("*")
+            if entry.name not in (METADATA_FILENAME, RUN_LOCK)
+        )
+        path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    def _launch_files(self, named=()) -> set[str] | None:
+        """The template files a launch copies, or ``None`` for a template built without a list.
+
+        What the build left (:meth:`_record_template_files`), the build marker and
+        metadata, ``<name>.pst`` and the external tables it names (a version-2 control
+        file's ``* ... external`` sections), and ``named`` -- files a PEST++ option of
+        this launch names, which the master reads.
+        """
+
+        template = self.template_workspace
+        try:
+            metadata = json.loads((template / METADATA_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        files = metadata.get(self._TEMPLATE_FILES) if isinstance(metadata, dict) else None
+        if not isinstance(files, list):
+            return None
+        keep = set(files) | {METADATA_FILENAME, BUILD_MARKER, f"{self.name}.pst"}
+        try:
+            lines = (template / f"{self.name}.pst").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        for heading, following in zip(lines, lines[1:], strict=False):
+            if heading.startswith("*") and "external" in heading and following.split():
+                keep.add(following.split()[0])
+        keep.update(Path(str(value)).as_posix() for value in named)
+        return keep
+
+    def _launch_copy(self, destination: Path, *, method: str = "run_ies") -> None:
+        """Copy the template to ``destination`` as a launch hands it on: without what a run left there.
+
+        The one rule behind a parallel run's master and its workers' source (ledger
+        588; ledger 532 for the master). pyEMU's ``start_workers`` copies the
+        directory it is given WHOLE, and a serial run leaves in the template its
+        PESTPP-IES outputs and record AND the model outputs of its last forward run --
+        2.63 of the 3.36 MB each worker held on the canonical testing model, 0.74 MB
+        after (``docs/reproducers/ies_worker_copy_size.py``), a full cell budget file
+        on a large model. Only :meth:`_launch_files` is copied (the run lock never is); a
+        template built before that list existed is copied whole less the PESTPP-IES
+        outputs and resume archives (:meth:`_clear_earlier_run_outputs`). What was
+        left out is logged.
+        """
+
+        template = self.template_workspace
+        named = [
+            value for value in (self.pst.pestpp_options.values() if self.pst is not None else ())
+            if isinstance(value, (str, os.PathLike))
+        ]
+        keep = self._launch_files(named)
+        left_out: list[str] = []
+
+        def ignore(directory, names):
+            dropped = {RUN_LOCK} & set(names)
+            if keep is None:
+                return dropped
+            here = Path(directory).relative_to(template)
+            for name in names:
+                relative = (here / name).as_posix()
+                if (Path(directory) / name).is_dir():
+                    if relative + "/" not in keep and not any(
+                        kept.startswith(relative + "/") for kept in keep
+                    ):
+                        dropped.add(name)
+                        left_out.append(relative + "/")
+                elif relative not in keep and name != RUN_LOCK:
+                    dropped.add(name)
+                    left_out.append(relative)
+            return dropped
+
+        shutil.copytree(template, destination, symlinks=True, ignore=ignore)
+        self._clear_earlier_run_outputs(destination, announce=False, method=method)
+        if left_out:
+            shown = ", ".join(sorted(left_out)[:8]) + (" ..." if len(left_out) > 8 else "")
+            logger.info(
+                "%s(): copied the template to %s without %d entr%s a run left there since "
+                "the build: %s", method, destination, len(left_out),
+                "y" if len(left_out) == 1 else "ies", shown,
+            )
+
+    def _worker_source(self, root: Path) -> Path:
+        """What pyEMU copies into each worker: the template, or a copy without what a run left there.
+
+        pyEMU's ``start_workers`` copies the directory it is given WHOLE into each
+        worker and takes no ignore list, so an earlier serial run's outputs went into
+        every worker (ledger 588). When the template holds anything
+        :meth:`_launch_copy` would leave out, that copy is made in ``root`` and handed
+        to pyEMU; :meth:`_run_parallel` deletes it after. A template holding nothing to
+        leave out is handed on as it is -- no copy.
+        """
+
+        template = self.template_workspace
+        keep = self._launch_files()
+        if keep is None:
+            holds = (
+                pestpp_ies_outputs(template, self.name)
+                or any((path / RESUME_RECORD).is_file()
+                       for path in template.glob(f"{self.name}.resumed_from_*"))
+                or (template / RUN_LOCK).exists()
+            )
+        else:
+            holds = any(
+                entry.relative_to(template).as_posix() + ("/" if entry.is_dir() else "")
+                not in keep
+                for entry in template.rglob("*")
+            )
+        if not holds:
+            return template
+        source = root / self._WORKER_SOURCE
+        if source.exists():
+            shutil.rmtree(source)
+        self._launch_copy(source)
+        return source
 
     def _remove_workers(self, root: Path) -> None:
         """Delete each ``worker_<n>`` in ``root`` that is a copy of this template, then ``root`` if empty."""

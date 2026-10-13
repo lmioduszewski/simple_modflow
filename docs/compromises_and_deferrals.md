@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 587 entries (592 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 588 entries (593 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 588 | A parallel run's master and workers are copies of the template as the BUILD left it | 2026-10-12 |
 | 587 | No `NaN` layer elevation reaches a DISV at a cell with `idomain != 0` | 2026-10-12 |
 | 586 | A run lock proven stale is removed when a launch meets it, and said once | 2026-10-12 |
 | 585 | A `mf.Polygons` feature that reaches the grid but sets no cell is warned by name under every rule, with or... | 2026-10-12 |
@@ -20789,7 +20790,8 @@ same day, which is the useful part of the result.
       Windows (where `os.kill(pid, 0)` TERMINATES the process), cannot be checked and
       counts as live** -- the refusal names the file to delete. `build()` refuses a
       template a serial run is going in. **The launch makes the master itself**
-      (`copytree` without the lock, then the template's serial outputs removed) and hands
+      (`copytree` without the lock, then the template's serial outputs removed;
+      since ledger 588, only what the build left) and hands
       pyEMU `reuse_master=True, cleanup=False`; pyEMU's `cleanup=True` deleted the workers
       whenever the master exited, failed or not, so now a CLEAN finish deletes them
       (`keep_workers=True` keeps them) and a failure or interrupt keeps them for diagnosis.
@@ -20799,7 +20801,8 @@ same day, which is the useful part of the result.
       them piecemeal (ledger 507). **Behaviour change:** a relaunch into a master holding
       results now raises where it deleted them. **Not done:** pyEMU still copies the whole
       template, a serial run's outputs included, into each worker (its `start_workers`
-      takes no ignore list); the lock is not a mutex against two launches in the same
+      takes no ignore list) (**CHANGED by ledger 588**: it is handed a copy of
+      what the build left); the lock is not a mutex against two launches in the same
       instant. Tests: `tests/test_pest_parallel_runs_policy.py`;
       `tests/test_pest_workspace_deleted_only_when_built.py` moved to the new layout.
 
@@ -21871,3 +21874,24 @@ same day, which is the useful part of the result.
       by hand or through `dataclasses.replace` names labels only (the surfaces ride on
       `LayerStack.build`'s result, not as a field). Hand-written `mf.disv(top=, botm=)`
       is not checked: no stack, no source to name.
+
+588. **A parallel run's master and workers are copies of the template as the BUILD left it (2026-10-12).**
+      pyEMU's `start_workers` copies the directory it is handed whole, and it was handed
+      the template, so an earlier serial run's outputs went into every worker. Measured
+      on the canonical testing model after a serial `run_ies(reals=50, iterations=2)`
+      (`docs/reproducers/ies_worker_copy_size.py`): 3.36 MB / 210 files per worker, 2.63
+      MB / 53 files of them not in the template as built -- the PESTPP-IES ensembles,
+      phi files and record AND the model outputs of its last forward run (a full `.cbc`
+      per worker on a large model); 0.74 MB / 157 files after. **Chosen:** the build
+      records every file it left (`template_files` in `myflopy_pest_metadata.json`), and
+      ONE copy, `PestProject._launch_copy`, makes the master and the workers' source
+      from those files, the control file and the external tables it names, and any file
+      a PEST++ option of the launch names (the master reads it); the run lock never.
+      Only when the template holds anything else is a source copied (into the worker
+      root, deleted after); otherwise pyEMU gets the template itself. Excluding by the
+      build's list, not by recognising outputs: what a run writes is model- and
+      PEST++-version-specific, and a list of outputs would miss the next one.
+      **Consequence, stated:** a file put in the template BY HAND after `build()` reaches
+      neither the master nor a worker (logged at INFO), where a serial run would see
+      it -- rebuild instead. A template built before this records no list and is copied
+      as before, less the PESTPP-IES outputs and resume archives.

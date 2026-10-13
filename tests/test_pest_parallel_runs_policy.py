@@ -460,6 +460,66 @@ def test_a_parallel_master_is_made_without_the_templates_serial_results(cal, mon
     assert not (master / "cal.2.obs.csv").exists()
 
 
+@needs_true
+def test_workers_are_made_without_the_templates_serial_results(cal, monkeypatch, _no_results_reader):
+    """pyEMU's ``start_workers`` copies the directory it is handed WHOLE into each worker,
+    so an earlier serial run's ensembles, phi files and resume archive were copied once
+    per worker. It is handed a copy of the template cleared as the master is, deleted
+    after (ledger 588); a template holding nothing to clear is handed on as it
+    is."""
+
+    seen = []
+    real = cal.pyemu.os_utils.start_workers
+
+    def start_workers(worker_dir, *args, **kwargs):
+        seen.append(Path(worker_dir))
+        return real(worker_dir, *args, **kwargs)
+
+    monkeypatch.setattr(cal.pyemu.os_utils, "start_workers", start_workers)
+    template = cal.template_workspace
+    cal.run_ies(workers=2, exe="true")
+    assert seen[-1] == template, "nothing to clear: no copy"
+
+    _results(template, "cal", iterations=(0, 1, 2))
+    archive = archive_for_resume(template, "cal", 2)   # a serial resume's archive
+    _results(template, "cal", iterations=(0, 1, 2))
+    # What else a serial run leaves: its record, and its last forward run's model output.
+    (template / "cal.rec").write_text("record\n", encoding="utf-8")
+    (template / "toy.cbc").write_bytes(b"\0" * 4096)
+    (template / "scratch").mkdir()
+    built = set(json.loads((template / "myflopy_pest_metadata.json").read_text())["template_files"])
+    assert "forward_run.py" in built and "toy.cbc" not in built
+    master = cal.run_ies(workers=2, exe="true", overwrite=True, keep_workers=True)
+    for directory in (worker_root(master) / "worker_0", worker_root(master) / "worker_1", master):
+        held = sorted(path.name for path in directory.iterdir())
+        assert "cal.pst" in held and "forward_run.py" in held, held
+        assert not [name for name in held if name.startswith("cal.") and
+                    (".obs." in name or ".par." in name or ".phi." in name
+                     or "resumed_from" in name or name == "cal.rec")], held
+        assert "toy.cbc" not in held and "scratch" not in held, held
+        # Every file the build left is there, and the control file's own tables.
+        assert {name for name in built if "/" not in name} <= set(held), directory
+        assert "cal.par_data.csv" in held and "cal.obs_data.csv" in held
+    assert seen[-1] == worker_root(master) / "template_copy"
+    assert not seen[-1].exists(), "the clean copy is deleted after the run"
+    assert (template / "cal.2.obs.csv").exists() and archive.is_dir(), "the template keeps them"
+    assert (template / "toy.cbc").exists()
+
+
+@needs_true
+def test_an_empty_folder_the_build_left_reaches_the_workers(cal, monkeypatch, _no_results_reader):
+    """A folder the forward run writes into may be EMPTY at build: the build's list names
+    it, so the workers get it even when the copy leaves a run's other files out."""
+
+    template = cal.template_workspace
+    (template / "outputs").mkdir()
+    cal._record_template_files()   # as the build records it
+    (template / "toy.cbc").write_bytes(b"\0" * 64)   # something to leave out
+    master = cal.run_ies(workers=2, exe="true", keep_workers=True)
+    assert (worker_root(master) / "worker_0" / "outputs").is_dir()
+    assert not (worker_root(master) / "worker_0" / "toy.cbc").exists()
+
+
 # -- resume: the splice --------------------------------------------------------------
 
 
@@ -778,3 +838,22 @@ def test_a_parallel_run_extended_by_resume_is_one_run_found_by_discovery(cal):
     (handle,) = find_pest_runs(cal.template_workspace.parent)
     assert handle.executions == {"ies": master}
     assert handle.review("ies").iterations == [0, 1, 2]
+
+
+@needs_pestpp
+@pytest.mark.slow
+def test_workers_copied_from_what_the_build_left_run_after_a_serial_run(cal):
+    """PESTPP-IES for real: a serial run leaves its outputs and the model outputs of its
+    last forward run in the template; the parallel run after it gets workers without
+    them, and they run every realization (ledger 588)."""
+
+    cal.run_ies(reals=3, iterations=1, **FAST)
+    template = cal.template_workspace
+    assert (template / "cal.1.obs.csv").exists() and (template / "cal.rec").exists()
+    review = cal.run_ies(reals=3, iterations=1, workers=2, keep_workers=True, **FAST)
+    assert review.iterations == [0, 1]
+    held = {path.name for path in (worker_root(review.workspace) / "worker_0").iterdir()}
+    assert "cal.1.obs.csv" not in held and "cal.rec" not in held
+    phi = pd.read_csv(review.workspace / "cal.phi.actual.csv")
+    assert phi.drop(columns=["iteration", "total_runs", "mean", "standard_deviation",
+                             "min", "max"]).notna().all().all()

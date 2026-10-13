@@ -969,9 +969,13 @@ uses, then copies the template into them, so myflopy checks them first:
   launch removes it and says so once with a `UserWarning`. `build()` refuses a template
   a serial run is going in.
 
-When the run finishes cleanly its worker directories are deleted -- each is a full copy
-of the template, disposable, and a resume makes them again; `keep_workers=True` keeps
-them. A run that fails or is interrupted keeps them for diagnosis. The master and its
+When the run finishes cleanly its worker directories are deleted -- each is a copy of
+the template as the BUILD left it, disposable, and a resume makes them again;
+`keep_workers=True` keeps them. Neither a worker nor the master is given what a run left
+in the template since the build -- an earlier serial run's ensembles, record and the
+model outputs of its last forward run (0.74 MB per worker against 3.36 MB on the
+canonical testing model; ledger 588) -- so a file put in the template by hand
+after `build()` does not reach them either: rebuild instead. A run that fails or is interrupted keeps them for diagnosis. The master and its
 results are always kept.
 
 **Resuming an interrupted history match** (ledger 533). A multi-day run stopped
