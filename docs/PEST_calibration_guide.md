@@ -97,7 +97,9 @@ pyEMU reads one set's files as one table and stopped on the mismatch (ledger 559
 because a multiplier on a head scales with the datum (x1.1 moves a 400 ft head 40 ft and
 a 40 ft one 4). `additive=False` there is refused, and so are bounds that EXCLUDE the
 value a parameter starts at: 0 for an offset, 1.0 for a multiplier and every pilot point
-(`bounds=(2, 5)` would start each one outside its own range, ledger 518).
+(`bounds=(2, 5)` would start each one outside its own range, ledger 518), as is an
+`initial_value=` keyword (pyEMU's start, passed through `**extra`) outside the bounds
+(ledger 571).
 To raise K by 2-5x, change the model and calibrate around it. **`riv.stage` moves each
 record's river bottom by the same offset**, so its depth -- what sets the river's flux
 -- survives every realization (ledgers 290/291); a record already below its bottom is

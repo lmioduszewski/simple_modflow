@@ -60,6 +60,40 @@ def read_target_table(path):
     return pd.read_csv(path, converters=converters)
 
 
+def read_csv_exactly(path, **options):
+    """Read a CSV the build or PEST wrote with every number as the float its text names.
+
+    The ONE reader of a number a forward-run step reads back from a CSV: a pilot-point
+    set's values (``<set>_pp.csv``, which PEST fills) and points
+    (``<set>_pp.points.csv``), and a river file's starting stage and bottom
+    (``<file>.riv_pair.csv``, which the build writes for
+    :func:`carry_river_bottom`). ``pandas.read_csv``'s default parser misses the float
+    many a 17-digit ``repr`` names by one unit in the last place
+    (``0.12076665792328141`` reads ``0.1207666579232814``), so a value written to be
+    read back exactly was not; ``float_precision="round_trip"`` reads every one.
+    ``pandas.to_numeric`` on text misses the same values; a column read as text is
+    converted with ``astype(float)``, which is exact.
+
+    The forward-run steps call this through an import inside their own bodies,
+    because pyEMU copies only a step's source into the generated forward run.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The CSV, relative to the working directory or absolute.
+    **options
+        Further keyword arguments for ``pandas.read_csv`` (``float_precision`` is
+        this function's own, and passing it raises ``TypeError``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table, its floating-point columns parsed exactly.
+    """
+
+    return pd.read_csv(path, float_precision="round_trip", **options)
+
+
 def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
     """Multiply every pilot-point set on some array files into them (a forward-run pre-command).
 
@@ -118,6 +152,8 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
     import numpy as np
     import pandas as pd
 
+    from myflopy.modflow.mf6.pest.forward_run import read_csv_exactly
+
     if isinstance(array_files, str):
         array_files = [array_files]
     with open(manifest, encoding="utf-8") as handle:
@@ -153,14 +189,14 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
     for record in info["sets"]:
         if record["name"] not in wanted:
             continue
-        # `round_trip`: pandas' default C parser can miss the float the text names by
-        # an ulp, and PEST wrote each value to be read back exactly.
-        frame = pd.read_csv(record["parameter_csv"], float_precision="round_trip")
+        # Exactly: pandas' default parser can miss the float the text names by an
+        # ulp, and PEST wrote each value to be read back exactly.
+        frame = read_csv_exactly(record["parameter_csv"])
         given = pd.Series(
             pd.to_numeric(frame["value"], errors="coerce").to_numpy(),
             index=frame["parnme"].astype(str).str.lower(),
         )
-        points = pd.read_csv(record["points_csv"])
+        points = read_csv_exactly(record["points_csv"])
         pv = points["parnme"].astype(str).str.lower().map(given).to_numpy(dtype=float)
         if not np.isfinite(pv).all():
             raise ValueError(
@@ -658,7 +694,7 @@ def carry_river_bottom(model_file, pair_csv, stage_col, rbot_col):
     519). Idempotent: run twice, it writes the same file.
 
     Self-contained: pyEMU copies only this function's source into the generated
-    forward run, so it must not depend on other module-level helpers.
+    forward run, so its imports live inside it.
 
     Parameters
     ----------
@@ -667,7 +703,7 @@ def carry_river_bottom(model_file, pair_csv, stage_col, rbot_col):
         forward run's directory.
     pair_csv : str
         The build's record of the file's starting ``stage`` and ``rbot``, one row per
-        record in file order.
+        record in file order, read through :func:`read_csv_exactly`.
     stage_col : int
         Zero-based column of the stage in ``model_file``, on the model's grid (two
         further right of the cellid's first column on DISV, ledger 420).
@@ -682,14 +718,19 @@ def carry_river_bottom(model_file, pair_csv, stage_col, rbot_col):
 
     import pandas as pd
 
+    from myflopy.modflow.mf6.pest.forward_run import read_csv_exactly
+
     rows = pd.read_csv(model_file, sep=r"\s+", header=None, dtype=str, keep_default_na=False)
-    start = pd.read_csv(pair_csv)
+    # Both read exactly (`astype(float)` on the text; `pandas.to_numeric` misses a
+    # 17-digit value by an ulp): a stage pyEMU left alone then moves its bottom by
+    # exactly nothing.
+    start = read_csv_exactly(pair_csv)
     if len(rows) != len(start):
         raise ValueError(
             f"{model_file} holds {len(rows)} records and {pair_csv} {len(start)}: the "
             "river bottom cannot be carried with its stage record by record."
         )
-    stage = pd.to_numeric(rows[stage_col]).to_numpy()
+    stage = rows[stage_col].astype(float).to_numpy()
     rbot = start["rbot"].to_numpy(dtype=float) + (stage - start["stage"].to_numpy(dtype=float))
     rows[rbot_col] = [repr(float(value)) for value in rbot]
     with open(model_file, "w", encoding="utf-8") as handle:

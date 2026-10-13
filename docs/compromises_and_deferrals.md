@@ -21640,11 +21640,16 @@ same day, which is the useful part of the result.
       transition):** `par_type` (style=), `par_name_base`/`pargp` (name=),
       `lower_bound`/`upper_bound` (bounds=), `transform`, `ult_lbound`/`ult_ubound`
       (physical=), `par_style` (additive=), `zone_array` (zones=), `geostruct`
-      (correlation=), `index_cols`/`use_cols`/`use_rows` (the target, features=,
-      package=) raise `TypeError` at `parameterize()`. Keys the facade leaves alone
-      (`mfile_fmt`, `initial_value`, `apply_order`, ...) still pass. **Not refused:**
-      `initial_value`, which can start a parameter outside its bounds, past ledger 518's
-      check; it is no facade keyword, so it stays pyEMU's.
+      (correlation=), `index_cols`/`use_cols` (the target) and `use_rows` (`features=`
+      or `style="feature"` on `lak.bedleak`/`sfr.rhk`, the one route that sets it; the
+      first wording named `package=`, which picks files, not rows) raise `TypeError` at
+      `parameterize()`. Keys the facade leaves alone (`mfile_fmt`, `initial_value`,
+      `apply_order`, ...) still pass. ~~**Not refused:** `initial_value`, which can
+      start a parameter outside its bounds, past ledger 518's check; it is no facade
+      keyword, so it stays pyEMU's.~~ **Restated 2026-10-12 (integration):** an
+      `initial_value` outside `bounds` -- or not one finite number -- raises
+      `ValueError` at `parameterize()` under ledger 518's start-value rule; one inside
+      them is still pyEMU's to write.
 
 572. **`noise=` is set or cleared by every `run_ies()`/`prior()`, and `ies_no_noise` by hand is refused (2026-10-12).**
       `noise=True` set nothing, so an earlier `noise=False` persisted on `cal.pst` and a

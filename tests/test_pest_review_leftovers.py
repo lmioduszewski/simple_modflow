@@ -6,7 +6,8 @@ The leftovers of the PEST-preparation run lanes:
   dropped most realizations (ledger 575);
 * a write-back filled templates with a parameter's value whatever its ``scale`` and
   ``offset``;
-* the pilot-point forward-run step read its values with pandas' default float parser;
+* the pilot-point forward-run step read its values with pandas' default float parser,
+  and so did the river-bottom step and the build's record of a river's start;
 * DRN and RIV flow sets took no set ``weight=``.
 
 The model is the toy of ``tests/test_pest_handed_targets.py``; PESTPP-IES runs for real
@@ -201,6 +202,37 @@ def test_the_pilot_point_step_reads_each_value_as_written(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     forward_run.apply_pilotpoints_to_array(["a.txt"])
     assert (tmp_path / "a.txt").read_text().split()[0] == f"{base * exact:.10E}"
+
+
+def test_the_river_step_moves_a_bottom_by_exactly_its_stages_offset(tmp_path):
+    """The build records each river record's starting stage and bottom, and the forward
+    run moves the bottom by the stage's offset. pandas' default parser and
+    ``to_numeric`` read both values below an ulp off -- the build's record of the stage,
+    and the forward run's of the stage and the bottom -- so a stage no parameter moved
+    moved its bottom. All three read exactly now, through ``read_csv_exactly`` and
+    ``astype(float)``."""
+
+    from myflopy.modflow.mf6.pest import native_parameters as np_mod
+
+    stage, rbot = "435.07242378776823", "-471.68032885453704"
+    for text in (stage, rbot):
+        assert float(pd.read_csv(io.StringIO(f"v\n{text}"))["v"].iloc[0]) != float(text)
+        assert pd.to_numeric(pd.Series([text])).iloc[0] != float(text), "pick another value"
+    river = tmp_path / "m.riv.txt"
+    river.write_text(f"1 13 {stage} 10.0 {rbot}\n1 14 98.5 10.0 97.5\n")
+    commands = []
+    project = SimpleNamespace(template_workspace=tmp_path, pf=SimpleNamespace(
+        add_py_function=lambda helper, call, is_pre_cmd: commands.append(call)))
+    spec = SimpleNamespace(recipe=np_mod.resolve_target("riv.stage"),
+                           resolved_targets=[SimpleNamespace(filename=river.name)])
+    np_mod._carry_river_bottom(project, spec, "vertex")
+    (call,) = commands
+    assert "pair_csv='m.riv.txt.riv_pair.csv'" in call
+    pair = forward_run.read_csv_exactly(tmp_path / "m.riv.txt.riv_pair.csv")
+    assert pair.iloc[0].tolist() == [float(stage), float(rbot)]
+
+    forward_run.carry_river_bottom(str(river), str(tmp_path / "m.riv.txt.riv_pair.csv"), 2, 4)
+    assert [line.split()[4] for line in river.read_text().splitlines()] == [rbot, "97.5"]
 
 
 # -- a DRN or RIV set takes a set weight ---------------------------------------------------

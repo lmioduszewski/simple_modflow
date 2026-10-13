@@ -1270,14 +1270,17 @@ class PestProject:
             (``name=``), ``lower_bound``/``upper_bound`` (``bounds=``),
             ``transform`` (``transform=``), ``ult_lbound``/``ult_ubound``
             (``physical=``), ``par_style`` (``additive=``), ``zone_array``
-            (``zones=``), ``geostruct`` (``correlation=``), and ``index_cols``,
-            ``use_cols``, ``use_rows``, which the target, ``features=`` and
-            ``package=`` decide (ledger 571; they overrode the
-            facade's own, and an ``index_cols`` or ``use_rows`` failed only after
-            the staging). A keyword ``add_parameters`` does not take raises
-            ``TypeError`` too. Given for array-target pilot points, which never call
-            ``add_parameters``, they raise ``ValueError`` here. Stored on the
-            returned spec as ``extra``.
+            (``zones=``), ``geostruct`` (``correlation=``), ``index_cols`` and
+            ``use_cols``, which the target decides, and ``use_rows``, which
+            ``features=`` or ``style="feature"`` sets on ``lak.bedleak``/``sfr.rhk``
+            (ledger 571; they overrode the facade's own, and an ``index_cols`` or
+            ``use_rows`` failed only after the staging). A keyword
+            ``add_parameters`` does not take raises ``TypeError`` too. An
+            ``initial_value`` -- pyEMU's start for every parameter of the call --
+            outside ``bounds``, or not one finite number, raises ``ValueError`` here,
+            as bounds excluding the facade's own start do (ledger 518). Given for
+            array-target pilot points, which never call ``add_parameters``, they
+            raise ``ValueError`` here. Stored on the returned spec as ``extra``.
 
         Returns
         -------

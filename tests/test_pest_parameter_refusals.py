@@ -7,7 +7,7 @@ The leftovers of the PEST-preparation parameter lanes:
   bottom, which MF6 refuses at ``icelltype != 0`` and over-drains at ``0`` (ledger 290)
   -- nothing looked (ledger 568);
 * ``zones=`` was resolved on the CALLER's model object, not the copy of the run the
-  build stages (ledger 356);
+  build stages (ledger 356), and explicit ``pp_points=`` were located in its cells;
 * ``zones=`` with ``style="constant"`` on a list target was accepted and did nothing:
   pyEMU reads it only for a ``"zone"`` or ``"grid"`` list parameter (ledger
   569);
@@ -15,7 +15,8 @@ The leftovers of the PEST-preparation parameter lanes:
   prior draw fail late (``Matrix is not positive definite``) or drew it uncorrelated
   -- refused for ``sfr.rhk`` alone (ledger 558; ledger 570);
 * an ``**extra`` key the facade sets itself silently overrode it (ledger
-  571).
+  571), and an ``initial_value`` there could start a parameter outside its bounds
+  (ledger 518's rule).
 
 The models are FloPy-written and opened with ``mf.load_mf6_run``: the two-RIV DISV/DIS/
 DISU model of ``tests/test_pest_several_packages.py`` (cell bottoms 50 and 0 ft), and
@@ -140,6 +141,38 @@ def test_zones_are_resolved_on_the_model_the_build_staged(runs, tmp_path, monkey
     for model in seen:
         assert isinstance(model, flopy.mf6.MFModel), type(model)
         assert any(model is copy for copy in staged), "zones= shaped on the caller's model"
+
+
+@pytest.mark.parametrize("grid", ["disv", "disu"])
+def test_explicit_pilot_points_are_located_on_the_model_the_build_staged(
+        runs, tmp_path, monkeypatch, grid):
+    """``pp_points=`` were located in the cell polygons of the CALLER's model object --
+    the last grid the pilot-point build still read there -- while the net, the
+    interpolation and ``zones=`` read the copy of the run it staged (ledger 356)."""
+
+    from myflopy.modflow.mf6.pest import pilot_points as pp_mod
+
+    located = []
+    real = pp_mod.model_cell_polygons
+    monkeypatch.setattr(pp_mod, "model_cell_polygons",
+                        lambda model: located.append(model) or real(model))
+    staged = []
+    real_staged = pp_mod.staged_model
+    monkeypatch.setattr(pp_mod, "staged_model",
+                        lambda project, name: staged.append(real_staged(project, name))
+                        or staged[-1])
+    cal = _cal(runs[grid], tmp_path, f"pp{grid}")
+    modelgrid = cal.model.gwf.modelgrid
+    cells = [0, 7]
+    points = np.c_[np.asarray(modelgrid.xcellcenters).reshape(-1)[cells],
+                   np.asarray(modelgrid.ycellcenters).reshape(-1)[cells]]
+    spec = cal.parameterize("k", style="pilotpoints", pp_points=points, bounds=(0.5, 2.0))
+    _build(cal, f"pp{grid}")
+    assert located, "the explicit points were never located"
+    for model in located:
+        assert isinstance(model, flopy.mf6.MFModel), type(model)
+        assert any(model is copy for copy in staged), "pp_points= located on the caller's model"
+    assert [item["points"] for item in spec.pilot_point_sets] == [2] * len(spec.pilot_point_sets)
 
 
 # -- zones= with style='constant' on a list target ----------------------------------------
@@ -314,7 +347,8 @@ def test_records_apart_still_build_and_draw_correlated(tmp_path):
 
 
 @pytest.mark.parametrize("key, through", [
-    ("use_rows", "features= on lak.bedleak/sfr.rhk, package= on any list target"),
+    # Set by features=/style='feature' alone: package= picks FILES, every row of them.
+    ("use_rows", "features= or style='feature' on lak.bedleak/sfr.rhk"),
     ("index_cols", "the target"),
     ("use_cols", "the target"),
     ("par_type", "style="),
@@ -337,3 +371,40 @@ def test_an_extra_keyword_the_facade_leaves_alone_still_passes(runs, tmp_path):
     assert spec.extra == {"mfile_fmt": "free"}
     with pytest.raises(TypeError, match=r"sets pargp= through name="):
         cal.parameterize("riv.cond", package="riv", pargp="mine")
+
+
+@pytest.mark.parametrize("target, bounds, value", [
+    ("riv.cond", None, 3.0),          # a multiplier, default (0.5, 2.0)
+    ("riv.cond", (0.5, 2.0), 0.25),
+    ("riv.stage", None, -2.5),        # an offset, default (-2.0, 2.0)
+    ("k", (0.5, 2.0), 2.000001),
+])
+def test_an_extra_initial_value_outside_the_bounds_is_refused(target, bounds, value):
+    """pyEMU writes ``initial_value`` as every parameter's start, so one outside the
+    bounds began PEST outside them -- the start ledger 518 refuses when the bounds
+    exclude the facade's own -- and it passed as a keyword the facade leaves alone
+    (ledger 571)."""
+
+    with pytest.raises(ValueError, match=r"initial_value=.* outside its bounds=.*ledger 518"):
+        np_mod.NativeParameterSpec(target=target, bounds=bounds,
+                                   extra={"initial_value": value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), "high", True, [1.0]])
+def test_an_extra_initial_value_that_is_not_one_number_is_refused(value):
+    with pytest.raises(ValueError, match=r"initial_value=.*give one finite number"):
+        np_mod.NativeParameterSpec(target="riv.cond", extra={"initial_value": value})
+
+
+def test_an_extra_initial_value_inside_the_bounds_still_reaches_pyemu(runs, tmp_path):
+    cal = _cal(runs["disv"], tmp_path, "start")
+    for value in (None, 0.5, 1.5, 2.0):
+        spec = np_mod.NativeParameterSpec(target="riv.cond", bounds=(0.5, 2.0),
+                                          extra={"initial_value": value})
+        assert spec.extra == {"initial_value": value}
+    spec = cal.parameterize("riv.cond", package="crisp", bounds=(0.5, 2.0),
+                            initial_value=1.5)
+    pst = _build(cal, "start")
+    names = [name for name in pst.parameter_data.index if name.startswith("pname:rivcond")]
+    assert names and (pst.parameter_data.loc[names, "parval1"] == 1.5).all()
+    assert spec.extra == {"initial_value": 1.5}

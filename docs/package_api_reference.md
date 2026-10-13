@@ -348,7 +348,7 @@ or AUXILIARY on one only; ledger 559), and a call naming none raises
 `mf.SeveralPackagesError` naming each (ledger 352). An ELEVATION (`chd`, `ghb.bhead`, `drn.elev`, `riv.stage`) is an additive
 offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bounds
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
-refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
+refused, and so is an `**extra` `initial_value` outside them (ledger 571); `riv.stage` moves each record's `rbot` with its stage (ledgers
 518, 519), and a lower bound carrying any `rbot` below its cell's bottom is refused at
 build, naming the safe one (ledger 568). An argument that cannot act --
 `layers=` on a list target or on recharge, `zones=` with `style="constant"` on a list

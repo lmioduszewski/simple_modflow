@@ -308,9 +308,13 @@ def model_cell_polygons(model) -> gpd.GeoDataFrame:
 
     Parameters
     ----------
-    model : SimulationBase or LoadedMf6Run
+    model : SimulationBase or LoadedMf6Run or flopy.mf6.MFModel
         The model whose cells are wanted. Read: its ``vor`` (may be ``None``),
-        else the FloPy ``modelgrid`` of its ``gwf``, else its own ``modelgrid``.
+        else the FloPy ``modelgrid`` of its ``gwf``, else its own ``modelgrid``. A
+        FloPy model -- the copy of a run a PEST build stages (ledger 356) -- is
+        asked for its own ``modelgrid`` alone: FloPy answers an attribute it does not
+        have with a package whose name or file it matches, so ``vor`` and ``gwf``
+        are not asked of it.
 
     Returns
     -------
@@ -325,13 +329,18 @@ def model_cell_polygons(model) -> gpd.GeoDataFrame:
         When the model has neither a grid view nor a FloPy ``modelgrid``.
     """
 
-    vor = getattr(model, "vor", None)
-    if vor is not None:
-        return vor.gdf_vorPolys
-    gwf = getattr(model, "gwf", None)
-    grid = getattr(gwf, "modelgrid", None) if gwf is not None else None
-    if grid is None:
-        grid = getattr(model, "modelgrid", None)
+    import flopy
+
+    if isinstance(model, flopy.mf6.MFModel):
+        grid = model.modelgrid
+    else:
+        vor = getattr(model, "vor", None)
+        if vor is not None:
+            return vor.gdf_vorPolys
+        gwf = getattr(model, "gwf", None)
+        grid = getattr(gwf, "modelgrid", None) if gwf is not None else None
+        if grid is None:
+            grid = getattr(model, "modelgrid", None)
     if grid is None:
         raise ValueError(
             f"Model {getattr(model, 'name', model)!r} has no grid to locate cells on: "

@@ -76,7 +76,7 @@ def main(path: pathlib.Path):
     print(f"{xc.size} cells, {np.ptp(xc):,.0f} x {np.ptp(yc):,.0f}")
 
     for spacing in (500.0, 1000.0, 1500.0, 2500.0):
-        pp = place_pilot_points(None, gwf, pp_spacing=spacing)
+        pp = place_pilot_points(gwf, pp_spacing=spacing)
         px, py = pp["x"].to_numpy(), pp["y"].to_numpy()
         index, weight = idw_factors(xc, yc, px, py, 8)
         pv = 10 ** np.random.default_rng(0).normal(0, 0.33, len(pp))
@@ -91,7 +91,7 @@ def main(path: pathlib.Path):
         print(f"(1) pp_spacing={spacing:g}: {len(pp)} points; apply {after * 1e3:.1f} ms, "
               f"old loop {before * 1e3:.0f} ms")
 
-    pp = place_pilot_points(None, gwf, pp_spacing=500.0)
+    pp = place_pilot_points(gwf, pp_spacing=500.0)
     px, py = pp["x"].to_numpy(), pp["y"].to_numpy()
     index, weight = idw_factors(xc, yc, px, py, 8)
     centre = np.array([np.median(px), np.median(py)])

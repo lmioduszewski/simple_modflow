@@ -78,17 +78,18 @@ def _point_array(pp_points) -> np.ndarray:
     return np.asarray(pp_points, dtype=float).reshape(-1, 2)
 
 
-def _locate_points(model, points: np.ndarray, ncells: int) -> np.ndarray:
+def _locate_points(gwf, points: np.ndarray, ncells: int) -> np.ndarray:
     """The cell each explicit pilot point lies in, by the shared point-in-cell rule.
 
-    :func:`~myflopy.modflow.mf6.grid.geometry.cell_shares` -- a point on a face or
-    vertex goes to the lowest-numbered cell it touches. A point in no cell is
-    refused, naming it, with both extents.
+    :func:`~myflopy.modflow.mf6.grid.geometry.cell_shares` on the cell polygons of
+    ``gwf``'s ``modelgrid`` -- the build's STAGED model, never the caller's object
+    (ledger 356) -- so a point on a face or vertex goes to the lowest-numbered cell it
+    touches. A point in no cell is refused, naming it, with both extents.
     """
 
     import shapely
 
-    polys = model_cell_polygons(model)
+    polys = model_cell_polygons(gwf)
     if len(polys) != ncells:
         raise ValueError(
             f"Explicit pilot points are located on the model's {len(polys)} cell "
@@ -115,7 +116,7 @@ def _locate_points(model, points: np.ndarray, ncells: int) -> np.ndarray:
     return cells
 
 
-def place_pilot_points(model, gwf, *, pp_spacing=None, pp_points=None, zones=None) -> pd.DataFrame:
+def place_pilot_points(gwf, *, pp_spacing=None, pp_points=None, zones=None) -> pd.DataFrame:
     """Return a pilot-point table (``ppname, x, y, zone, cell``) for the model grid.
 
     Give exactly one of ``pp_spacing`` (a regular net) and ``pp_points`` (explicit
@@ -130,13 +131,17 @@ def place_pilot_points(model, gwf, *, pp_spacing=None, pp_points=None, zones=Non
 
     Parameters
     ----------
-    model : SimulationBase
-        The calibrated model; only its cell polygons are read
-        (:func:`~myflopy.modflow.mf6.grid.geometry.model_cell_polygons`), to find
-        the cell each explicit point lies in, and only when ``pp_points`` is given.
     gwf : flopy.mf6.ModflowGwf
-        The FloPy flow model whose ``modelgrid`` cell centres the net is snapped
-        to -- the build's staged copy, whose centres are the template's as written.
+        The FloPy flow model whose ``modelgrid`` is read -- the build's STAGED copy
+        (:func:`~myflopy.modflow.mf6.pest.native_parameters.staged_model`), whose
+        cells are the template's as written: its cell centres, which a net is
+        snapped to, and with ``pp_points`` its cell polygons
+        (:func:`~myflopy.modflow.mf6.grid.geometry.model_cell_polygons`), which
+        each explicit point is located in. The polygons were read off the CALLER's
+        model object until every grid the build reads came from the staged copy
+        (ledger 356). Their CRS is FloPy's ``modelgrid.crs`` -- ``None`` when the
+        run's files declare none -- and is read only to word the refusal of a point
+        off the grid; the points are never reprojected.
     pp_spacing : float or None, optional
         Net spacing in model length units (the grid's own, e.g. feet), finite and
         greater than zero. ``None`` (default) requires ``pp_points``.
@@ -195,7 +200,7 @@ def place_pilot_points(model, gwf, *, pp_spacing=None, pp_points=None, zones=Non
                 f"{points[twice, 1]:g}) is given more than once; two parameters at one "
                 "location are one parameter twice (their prior correlation is 1)."
             )
-        cells = _locate_points(model, points, xc.size)
+        cells = _locate_points(gwf, points, xc.size)
         zone = labels[cells]
         if zones is not None:
             outside = np.flatnonzero(zone <= 0)
@@ -365,8 +370,8 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
                 f"(name {spec.name!r}), so it parameterizes nothing: a label <= 0 is "
                 "left alone. Give the cells to calibrate a positive label."
             )
-    pp = place_pilot_points(project.model, gwf, pp_spacing=spec.pp_spacing,
-                            pp_points=spec.pp_points, zones=labels)
+    pp = place_pilot_points(gwf, pp_spacing=spec.pp_spacing, pp_points=spec.pp_points,
+                            zones=labels)
     xc, yc = _cell_centers(gwf)
     for name in files:
         n_values = len((template / name).read_text().split())

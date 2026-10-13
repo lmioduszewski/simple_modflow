@@ -1118,7 +1118,9 @@ class NativeParameterSpec:
         ``ult_lbound``/``ult_ubound``, ``par_style``, ``zone_array``, ``geostruct``,
         ``index_cols``, ``use_cols``, ``use_rows``) raises ``TypeError`` naming the
         argument that sets it (ledger 571), and so does a key
-        ``add_parameters`` does not take.
+        ``add_parameters`` does not take. An ``initial_value`` outside ``bounds``,
+        or not one finite number, raises ``ValueError`` (ledger 518's start-value
+        rule).
     resolved_files : list of str, optional
         Filled by :meth:`PestProject.build`: the template-relative files the
         parameter scales. Default empty.
@@ -1274,6 +1276,7 @@ class NativeParameterSpec:
         self._check_pilot_point_arguments()
         self._refuse_an_idle_variogram()
         self.bounds = self._checked_bounds()
+        self._refuse_an_initial_value_outside_the_bounds()
         if self.name is None:
             slug = _package_slug(self.package)
             base = recipe.canonical.replace(".", "")
@@ -1415,6 +1418,38 @@ class NativeParameterSpec:
             )
         return (lower, upper)
 
+    def _refuse_an_initial_value_outside_the_bounds(self) -> None:
+        """Refuse an ``**extra`` ``initial_value`` that starts the parameter outside ``bounds``.
+
+        pyEMU writes it as every parameter's ``parval1``, so a value outside the bounds
+        began PEST outside them, past the start-value rule :meth:`_checked_bounds`
+        holds the facade's own start to (ledger 518); ``None`` is pyEMU's default
+        start, the facade's, and passes.
+        """
+
+        value = self.extra.get("initial_value")
+        if value is None:
+            return
+        try:
+            start = float(value)
+        except (TypeError, ValueError):
+            start = None
+        if isinstance(value, bool) or start is None or not np.isfinite(start):
+            raise ValueError(
+                f"initial_value={value!r} (an extra keyword pyEMU writes as every "
+                f"{self.recipe.canonical!r} parameter's starting value): give one finite "
+                "number."
+            )
+        lower, upper = self.bounds
+        if not lower <= start <= upper:
+            raise ValueError(
+                f"initial_value={value!r} starts every {self.recipe.canonical!r} parameter "
+                f"outside its bounds={self.bounds!r}, so PEST would begin outside its own "
+                "bounds -- PESTPP-IES warns and holds the draw to them, so that start is "
+                "never tried. Give an initial_value inside the bounds, or bounds that hold "
+                "it (ledger 518)."
+            )
+
     def _check_pilot_point_arguments(self) -> None:
         """Refuse pilot-point placement arguments that cannot act, naming the spelling.
 
@@ -1528,7 +1563,7 @@ _FACADE_KEYWORDS = {
     "geostruct": "correlation= (with anisotropy=, bearing=, nugget=)",
     "index_cols": "the target: its recipe names the cellid columns on the model's grid",
     "use_cols": "the target: one per column, e.g. 'riv.cond' or 'riv.stage'",
-    "use_rows": "features= on lak.bedleak/sfr.rhk, package= on any list target",
+    "use_rows": "features= or style='feature' on lak.bedleak/sfr.rhk",
 }
 
 
@@ -2833,9 +2868,11 @@ def _carry_river_bottom(project, spec: NativeParameterSpec, grid_type: str) -> N
             continue
         rows = _read_list_file(Path(project.template_workspace) / target.filename)
         pair_csv = f"{target.filename}.riv_pair.csv"
+        # Exactly as the text names them (`astype(float)`; `pandas.to_numeric` misses a
+        # 17-digit value by an ulp), as the forward run reads both the file and this.
         pd.DataFrame({
-            "stage": pd.to_numeric(rows[stage_col]).to_numpy(),
-            "rbot": pd.to_numeric(rows[rbot_col]).to_numpy(),
+            "stage": rows[stage_col].astype(float).to_numpy(),
+            "rbot": rows[rbot_col].astype(float).to_numpy(),
         }).to_csv(Path(project.template_workspace) / pair_csv, index=False)
         project.pf.add_py_function(
             helper,
