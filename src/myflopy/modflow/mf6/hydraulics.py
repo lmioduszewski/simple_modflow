@@ -154,8 +154,10 @@ def screened_head(heads, k, open_bottom, open_top, *, icelltype=None, fixed_thic
     ``sum(K_i * b_i * h_i) / sum(K_i * b_i)``. When every weight is zero -- every
     open interval dry -- it is the head of the DEEPEST open layer (the last), which
     under NEWTON is a finite head below the screen that still moves with the
-    parameters (on Ten Trails 12,290 of 90,446 active cells hold such a head), so
-    a calibration still sees a gradient.
+    parameters (Ten Trails ``ss``: 16,900 of 101,615 active cells hold such a
+    head; ``hm_mounding_final_flow`` at its last period 12,185 of 90,446 --
+    ``docs/reproducers/screened_head_targets.py``), so a calibration still sees a
+    gradient.
 
     Pure numpy; the layers run along the LAST axis of every argument.
 
