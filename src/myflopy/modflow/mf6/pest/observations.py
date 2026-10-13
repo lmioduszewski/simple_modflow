@@ -1315,6 +1315,7 @@ def _prepare_zone_flow_observations(project, spec, *, kind: str):
         metadata_kind=kind,
         locations_snapshot=snapshot,
         geometry="zones",
+        weight=spec.weight,
     )
 
 

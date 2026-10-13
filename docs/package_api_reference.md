@@ -864,7 +864,8 @@ pulls a calibration toward drying the reach or shutting the drain. A residual
 measured (`docs/reproducers/flow_target_sign.py`).
 
 **`mf.RivFlowTargets` -- a creek's baseflow** (ledger 534; bound as
-`model.targets.riv_flow`, wrapped by `mf.RivFlowObservationSpec(targets, prefix="riv_flow")`).
+`model.targets.riv_flow`, wrapped by `mf.RivFlowObservationSpec(targets, prefix="riv_flow",
+weight=None)` -- `DrnFlowObservationSpec` takes the same set `weight=`, below a zone's own).
 `DrnFlowTargets`' river twin, sharing its one zone implementation (`observations/_zones.py`):
 a zone is a set of cells, the flow is MF6's `RIV` exchange summed over them at each
 period's end. MF6's sign, and BOTH signs are targets: NEGATIVE is water the aquifer gives
@@ -1242,8 +1243,8 @@ PESTPP-IES dropped (ledger 515):
 | --- | --- | --- |
 | `phi`, `phi_contributions()` | `plot_phi()`, `plot_phi_distribution()`, `plot_phi_contributions()` | did misfit drop, and which group owns it (your `group` labels since ledger 358) |
 | `conflict()` | `plot_conflict()`, `plot_prior_vs_obs()`, `plot_vs_obs()` | is the prior wide enough; does the posterior bracket the data -- the two `*_vs_obs` draw one panel per target LOCATION (`groups=` keeps the locations measured in those groups, `max_locations=` caps them), `plot_conflict` one bar per group |
-| `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight |
-| `sensitivity(forecast=…)` | `plot_sensitivity(forecast=…)` | what the data informed, and what drives a forecast — ensemble-based, **not** CSS |
+| `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight -- with `n_reals`/`n_reals_drawn`, warning below half (ledger 575) |
+| `sensitivity(forecast=…)` | `plot_sensitivity(forecast=…)` | what the data informed, and what drives a forecast — ensemble-based, **not** CSS; `n_reals` of `n_reals_drawn` survived |
 | `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |
 | `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction`, in log10 (geometric mean, std in decades) for a log-transformed field, as `sensitivity()` (ledger 514) |
 | — | `plot_field_mosaic(target, stat=…)` | prior vs posterior on one shared scale (`mean`/`std` only) |

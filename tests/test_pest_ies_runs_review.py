@@ -336,6 +336,7 @@ def test_a_log_parameter_at_its_bound_is_judged_by_its_geometric_mean():
             self.pst = SimpleNamespace(parameter_data=parameter_data)
 
         posterior_parameters = property(lambda self: SimpleNamespace(_df=values))
+        prior_parameters = property(lambda self: SimpleNamespace(_df=values))
 
     assert int(_Stub().parameters_at_bounds(tol=0.1).loc["g", "n_at_upper"]) == 0
 

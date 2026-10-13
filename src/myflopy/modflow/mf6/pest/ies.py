@@ -76,6 +76,11 @@ _MPL_CONFLICT = viz.PALETTE.mpl_conflict
 
 logger = get_logger(__name__)
 
+#: :meth:`IesResults.sensitivity` and :meth:`IesResults.parameters_at_bounds` warn when
+#: fewer than this share of the realizations PESTPP-IES started with survive in the
+#: ensemble they read (ledger 575).
+SURVIVING_SHARE_WARNING = 0.5
+
 
 def _normalize_backend(backend: str) -> str:
     """Map friendly backend names to ``"plotly"`` or ``"matplotlib"``."""
@@ -1404,6 +1409,33 @@ class IesResults:
                           xaxis_title="log10(phi)", yaxis_title="realizations")
         return fig
 
+    def _surviving_realizations(self, side: str, *, caller: str) -> tuple[int, int]:
+        """How many realizations the ``side`` ensemble's statistics rest on, of how many were drawn.
+
+        ``drawn`` is the prior PARAMETER ensemble's rows -- every realization
+        PESTPP-IES started with. ``surviving`` is the posterior parameter ensemble's
+        rows (PESTPP-IES carries only the realizations it kept, failed runs and
+        ``ies_bad_phi_sigma`` rejections dropped), or, for the prior, the prior
+        OBSERVATION ensemble's: the ones whose model run finished. Measured on a run
+        whose forward run failed a third of the draw: 12 drawn, 9 run, 5 in the
+        posterior. Below half of ``drawn`` it is said with a ``UserWarning`` and the
+        logger (ledger 288's rule), since the statistics rest on what survived.
+        """
+
+        drawn = len(self.prior_parameters._df)
+        surviving = len((self.posterior_parameters if side == "posterior" else self.prior)._df)
+        if drawn and surviving < SURVIVING_SHARE_WARNING * drawn:
+            message = (
+                f"{caller}: the {side} ensemble holds {surviving} of the {drawn} "
+                f"realizations PESTPP-IES started with -- it dropped {drawn - surviving} "
+                "(failed model runs, or ies_bad_phi_sigma rejections) -- so these "
+                f"statistics rest on {surviving}. Look at the run's .rec file for why "
+                "realizations failed before reading them."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+        return surviving, drawn
+
     def parameters_at_bounds(self, *, which: str = "posterior", tol: float = 0.01) -> pd.DataFrame:
         """Return, by parameter group, how many parameters are pinned at a bound.
 
@@ -1437,11 +1469,17 @@ class IesResults:
         -------
         pandas.DataFrame
             Indexed by parameter group with columns ``n_parameters``,
-            ``n_at_lower``, ``n_at_upper`` and ``pct_at_bound``, most-pinned group
+            ``n_at_lower``, ``n_at_upper``, ``pct_at_bound``, ``n_reals`` -- the
+            realizations the means rest on: the posterior's, or for the prior the ones
+            whose run finished -- and ``n_reals_drawn``, the prior's; most-pinned group
             first. Only parameters in both the ensemble and the control file count.
+            When ``n_reals`` is below half of ``n_reals_drawn`` -- PESTPP-IES dropped
+            most realizations -- a ``UserWarning`` says so (ledger
+            575).
         """
 
         side = _which_ensemble(which)
+        surviving, drawn = self._surviving_realizations(side, caller="parameters_at_bounds()")
         ensemble = (self.posterior_parameters if side == "posterior" else self.prior_parameters)._df
         par = self.pst.parameter_data.loc[[c for c in ensemble.columns if c in self.pst.parameter_data.index]]
         values = ensemble[par.index].astype(float)
@@ -1472,6 +1510,8 @@ class IesResults:
             n_at_upper=("at_upper", "sum"),
         )
         grouped["pct_at_bound"] = 100.0 * (grouped["n_at_lower"] + grouped["n_at_upper"]) / grouped["n_parameters"]
+        grouped["n_reals"] = surviving
+        grouped["n_reals_drawn"] = drawn
         return grouped.sort_values("pct_at_bound", ascending=False)
 
     def sensitivity(self, *, forecast: str | None = None,
@@ -1500,7 +1540,11 @@ class IesResults:
         **Sampling noise is real.** With ``n`` realizations a correlation of
         roughly ``1/sqrt(n)`` is indistinguishable from zero — at the common
         ``reals=50`` that is about 0.14, so small values should not be ranked
-        against each other. ``n_reals`` is returned so the reader can judge.
+        against each other. ``n_reals`` -- the posterior realizations PESTPP-IES
+        kept -- and ``n_reals_drawn`` -- the prior's -- are returned so the reader can
+        judge; below half kept, a ``UserWarning`` says so (ledger
+        575), since ``learned`` then compares the whole prior with
+        what survived.
 
         Parameters
         ----------
@@ -1529,11 +1573,14 @@ class IesResults:
         -------
         pandas.DataFrame
             Sorted by the strongest signal available, most informative first.
-            Only adjustable parameters (not ``fixed`` or ``tied``) present in
-            both the prior and the posterior ensemble count; with none the frame
+            Columns ``learned`` (and ``forecast_corr``), ``n_reals`` and
+            ``n_reals_drawn`` (above); by group also ``n_parameters``, per parameter
+            ``pargp``. Only adjustable parameters (not ``fixed`` or ``tied``) present
+            in both the prior and the posterior ensemble count; with none the frame
             is empty.
         """
 
+        surviving, drawn = self._surviving_realizations("posterior", caller="sensitivity()")
         prior = self.prior_parameters._df
         posterior = self.posterior_parameters._df
         shared = [name for name in posterior.columns if name in prior.columns]
@@ -1545,7 +1592,7 @@ class IesResults:
         ]
         if not adjustable:
             return pd.DataFrame(
-                columns=["n_parameters", "learned", "forecast_corr", "n_reals"]
+                columns=["n_parameters", "learned", "forecast_corr", "n_reals", "n_reals_drawn"]
             )
 
         prior_values = prior[adjustable].astype(float)
@@ -1565,7 +1612,8 @@ class IesResults:
             "pargp": par.loc[adjustable, "pargp"].astype(str).to_numpy(),
             "learned": learned.reindex(adjustable).to_numpy(dtype=float),
         }, index=adjustable)
-        table["n_reals"] = int(len(posterior_values))
+        table["n_reals"] = int(surviving)
+        table["n_reals_drawn"] = int(drawn)
 
         if forecast is not None:
             values = self._forecast_realizations(forecast, posterior_values.index)
@@ -1584,7 +1632,8 @@ class IesResults:
 
         aggregations = {"n_parameters": ("learned", "size"),
                         "learned": ("learned", "mean"),
-                        "n_reals": ("n_reals", "max")}
+                        "n_reals": ("n_reals", "max"),
+                        "n_reals_drawn": ("n_reals_drawn", "max")}
         if forecast is not None:
             # Mean of the ABSOLUTE correlation: a group whose members push a
             # forecast in opposite directions is still influential, and averaging

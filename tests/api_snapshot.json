@@ -786,7 +786,8 @@
     ],
     "DrnFlowObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
-      "prefix:POSITIONAL_OR_KEYWORD='drn_flow'"
+      "prefix:POSITIONAL_OR_KEYWORD='drn_flow'",
+      "weight:POSITIONAL_OR_KEYWORD=None"
     ],
     "DrnFlowTargets": [
       "locations:POSITIONAL_OR_KEYWORD=<required>",
@@ -3568,7 +3569,8 @@
     "RegionRegistry.summary": [],
     "RivFlowObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
-      "prefix:POSITIONAL_OR_KEYWORD='riv_flow'"
+      "prefix:POSITIONAL_OR_KEYWORD='riv_flow'",
+      "weight:POSITIONAL_OR_KEYWORD=None"
     ],
     "RivFlowTargets": [
       "locations:POSITIONAL_OR_KEYWORD=<required>",

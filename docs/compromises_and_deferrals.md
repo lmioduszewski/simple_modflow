@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 574 entries (579 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 575 entries (580 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 575 | `sensitivity()` and `parameters_at_bounds()` say how many realizations they read, and warn below half | 2026-10-12 |
 | 574 | Every PESTPP-IES launch is recorded in the template's metadata, and run discovery finds a master wherever... | 2026-10-12 |
 | 573 | The correlated prior myflopy draws is seeded: `seed=` on `run_ies()`/`prior()`/`draw_prior()`, recorded wit... | 2026-10-12 |
 | 572 | `noise=` is set or cleared by every `run_ies()`/`prior()`, and `ies_no_noise` by hand is refused | 2026-10-12 |
@@ -20291,8 +20292,10 @@ same day, which is the useful part of the result.
       otherwise be read as a target named `weight`, and a wide table has no row per
       reading to weigh. Other extra columns of a LONG table are still dropped, not
       refused, because refusing them would break tables that carry notes or units.
-      **Not done:** a standard-deviation column in place of a weight, and a set
-      `weight` on `DrnFlowObservationSpec`, whose zones already carry one.
+      **Not done:** a standard-deviation column in place of a weight~~, and a set
+      `weight` on `DrnFlowObservationSpec`, whose zones already carry one~~.
+      **Restated 2026-10-12:** `DrnFlowObservationSpec` and `RivFlowObservationSpec`
+      take a set `weight=` too, below a zone's own in the order above.
 
 505. **The PEST head and concentration writers read the file the model's OC declares, and the build refuses one that is absent rather than read another (2026-10-12).**
       `_write_head_target_csv`/`_write_conc_target_csv` opened `<model>.hds`/`.ucn`, the
@@ -20834,7 +20837,9 @@ same day, which is the useful part of the result.
       -192,843.0 and `crisp` -207,276.7 ft3/d, a two-creek zone -400,119.7 with
       `package=None`; each read in 0.02 s. Reproducer: `docs/reproducers/riv_flow_targets.py`.
       **Not built:** a per-zone `package` column (one set per package covers it); a set
-      `weight=` on the spec (DRN has none either; a zone's `weight` column does it).
+      ~~`weight=` on the spec (DRN has none either; a zone's `weight` column does it).~~
+      **Restated 2026-10-12:** both specs take a set `weight=`, below a zone's own
+      (ledger 504's order).
 
 535. **A zone drawn as geometry with no `layer` reads EVERY layer of the columns it covers (2026-10-12).**
       flows-1. It read layer 0 alone, documented but silent: on a copy of Ten Trails `ss`
@@ -21668,3 +21673,14 @@ same day, which is the useful part of the result.
       the default masters stay found by name. **Not done:** a master the template was
       never told of (launched by hand with pyEMU) is still found only at the default
       place.
+
+575. **`sensitivity()` and `parameters_at_bounds()` say how many realizations they read, and warn below half (2026-10-12).**
+      Measured (`docs/reproducers/ies_dropped_realizations.py`, real PESTPP-IES, a forward
+      run failing every K multiplier below 1): iteration 0's parameter ensemble keeps all
+      12 drawn, its observation ensemble the 9 that ran, and iteration 1-2's parameter
+      ensemble the 5 PESTPP-IES kept. **Chosen:** columns `n_reals` (the posterior
+      parameter ensemble's rows; for `which="prior"` the prior observation ensemble's)
+      and `n_reals_drawn` (the prior parameter ensemble's), and a `UserWarning` plus a
+      log line when `n_reals < n_reals_drawn / 2` (`ies.SURVIVING_SHARE_WARNING`); the
+      half is the task's threshold, not a measurement. The statistics themselves are
+      unchanged: `learned` still compares the whole prior with what survived.

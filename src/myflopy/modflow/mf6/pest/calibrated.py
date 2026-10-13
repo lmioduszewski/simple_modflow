@@ -172,7 +172,11 @@ def _complete_values(pst, values: pd.Series) -> dict[str, float]:
 
     A FIXED parameter a file leaves out is at its ``parval1``; a TIED one is refused
     (its value is its parent's times a ratio this does not reconstruct), and so is an
-    adjustable one the file does not hold.
+    adjustable one the file does not hold. So is one whose ``scale`` is not 1 or whose
+    ``offset`` is not 0: PEST writes ``value * scale + offset`` into a template, and
+    the templates are filled here with the value alone. myflopy never sets either, so
+    one is a hand edit of the control file, and filling past it would rebuild what
+    the run did not run.
     """
 
     data = pst.parameter_data
@@ -181,6 +185,21 @@ def _complete_values(pst, values: pd.Series) -> dict[str, float]:
         raise ValueError(
             f"Parameter(s) {tied[:5]} are TIED; a write-back reads each parameter's own "
             "value and does not reconstruct a tie. Untie them and run again."
+        )
+    scale = (pd.to_numeric(data["scale"], errors="coerce") if "scale" in data.columns
+             else pd.Series(1.0, index=data.index))
+    offset = (pd.to_numeric(data["offset"], errors="coerce") if "offset" in data.columns
+              else pd.Series(0.0, index=data.index))
+    moved = sorted(data.index[((scale != 1.0) | (offset != 0.0)).to_numpy()])
+    if moved:
+        first = moved[0]
+        raise ValueError(
+            f"Parameter(s) {moved[:5]}{' ...' if len(moved) > 5 else ''} carry a scale or "
+            f"offset -- {first!r}: scale {float(scale[first]):g}, offset "
+            f"{float(offset[first]):g} -- so PEST wrote value * scale + offset into "
+            "their templates, which a write-back, filling each template with the value, "
+            "does not reproduce. myflopy sets neither; set scale 1 and offset 0 in the "
+            "control file and run again."
         )
     complete: dict[str, float] = {}
     missing = []

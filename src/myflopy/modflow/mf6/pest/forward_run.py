@@ -153,7 +153,9 @@ def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
     for record in info["sets"]:
         if record["name"] not in wanted:
             continue
-        frame = pd.read_csv(record["parameter_csv"])
+        # `round_trip`: pandas' default C parser can miss the float the text names by
+        # an ulp, and PEST wrote each value to be read back exactly.
+        frame = pd.read_csv(record["parameter_csv"], float_precision="round_trip")
         given = pd.Series(
             pd.to_numeric(frame["value"], errors="coerce").to_numpy(),
             index=frame["parnme"].astype(str).str.lower(),

@@ -356,9 +356,9 @@ class DrnFlowObservationSpec:
 
     Pairs a :class:`~myflopy.modflow.mf6.observations.DrnFlowTargets` with the
     pyEMU observation-name ``prefix``. ``cal.observe(...)`` / ``cal.forecast(...)``
-    accept a bare ``DrnFlowTargets`` and wrap it; build this spec explicitly only
-    to pin a non-default prefix. Used for spring/seep discharge aggregated over
-    a group of drain cells.
+    accept a bare ``DrnFlowTargets`` and wrap it; build this spec explicitly to pin
+    a non-default prefix or a set ``weight``. Used for spring/seep discharge
+    aggregated over a group of drain cells.
 
     Parameters
     ----------
@@ -371,10 +371,21 @@ class DrnFlowObservationSpec:
         the files the build writes (``<prefix>_simulated_drn_flow.csv``,
         ``<prefix>_target_values.csv``, ``<prefix>_target_locations.*``), so
         two sets need two prefixes.
+    weight : float or None, optional
+        The set's observation weight (ledger 504's order): every target row
+        holding a value and no weight of its own -- neither a reading's ``weight``
+        in the targets' values table nor its zone's in the locations table -- gets
+        it (cast with ``float``). Default ``None``: those rows get weight ``1.0``.
+        Rows no target measures get weight 0 either way, and a forecast's weights
+        are zero regardless. ``cal.observe(targets)`` builds the spec without one;
+        build this spec to set it. PESTPP-IES draws a reading's noise with standard
+        deviation 1/weight, so a flow in ft3/d at weight 1 carries 1 ft3/d of
+        noise.
     """
 
     targets: DrnFlowTargets
     prefix: str = "drn_flow"
+    weight: float | None = None
 
 
 @dataclass
@@ -383,9 +394,9 @@ class RivFlowObservationSpec:
 
     Pairs a :class:`~myflopy.modflow.mf6.observations.RivFlowTargets` with the
     pyEMU observation-name ``prefix``. ``cal.observe(...)`` / ``cal.forecast(...)``
-    accept a bare ``RivFlowTargets`` and wrap it; build this spec explicitly only
-    to pin a non-default prefix. Used for a creek's gauged baseflow, summed over
-    the river cells of a reach.
+    accept a bare ``RivFlowTargets`` and wrap it; build this spec explicitly to pin
+    a non-default prefix or a set ``weight``. Used for a creek's gauged baseflow,
+    summed over the river cells of a reach.
 
     Parameters
     ----------
@@ -400,10 +411,15 @@ class RivFlowObservationSpec:
         ``<prefix>_target_values.csv``, ``<prefix>_target_locations.*``), so
         two sets need two prefixes; and it is the PEST observation group of the
         zones given no ``group`` label (ledger 358).
+    weight : float or None, optional
+        The set's observation weight, as :class:`DrnFlowObservationSpec`'s: a
+        reading's own weight beats its zone's, which beats this, which beats
+        ``1.0`` (ledger 504). Default ``None``.
     """
 
     targets: RivFlowTargets
     prefix: str = "riv_flow"
+    weight: float | None = None
 
 
 @dataclass

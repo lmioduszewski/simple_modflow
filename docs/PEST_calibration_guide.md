@@ -407,7 +407,8 @@ cal.observe(head_targets)          # history-matching targets (measured values +
 column in a LONG values table (`time`, `name`, value, `weight`) -- beats its location's
 (the locations' `weight` column, for head, concentration and DRN/RIV-zone targets), which
 beats the set's (`LakeStageObservationSpec(weight=)`, `SfrStageObservationSpec(weight=)`,
-`SfrFlowObservationSpec(weight=)`), which beats 1.0. A blank weight means "none of its
+`SfrFlowObservationSpec(weight=)`, `DrnFlowObservationSpec(weight=)`,
+`RivFlowObservationSpec(weight=)`), which beats 1.0. A blank weight means "none of its
 own". A WIDE values table cannot carry one and is refused naming the LONG form.
 
 **What the control file holds is exactly your targets** (ledger 340). Each target is
@@ -1114,6 +1115,11 @@ Two honest caveats, both worth taking seriously:
   indistinguishable from zero — at `reals=50` that is ~0.14. `plot_sensitivity` draws
   that floor on the chart, and `n_reals` is in the returned frame; do not rank bars
   below it against each other.
+- **Dropped realizations shrink `n`.** PESTPP-IES drops a realization whose model run
+  failed (or that `ies_bad_phi_sigma` rejects) from every later ensemble. `sensitivity()`
+  and `parameters_at_bounds()` return `n_reals` -- the realizations their numbers rest
+  on -- beside `n_reals_drawn`, the prior's, and warn when fewer than half survived
+  (ledger 575): look at the run's `.rec` before reading the table.
 
 **Prior vs posterior, side by side.** `plot_field_mosaic("k", stat="mean")` draws one
 panel per ensemble on **one shared color scale** — which is the whole point, since two
