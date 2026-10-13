@@ -689,6 +689,14 @@ the registered set's `differences()` (ledger 567).
   errors, so its weight is `1 / sqrt(1/w1² + 1/w2²)` -- `w / sqrt(2)` for equal ones.
 - **`weight=`** replaces either rule with one number for every difference -- how much
   the shape should count against the level is yours to decide.
+- **Beside the levels, the differences add no measurement** (ledger 592).
+  They are the same readings recombined, so both at their default weights count every
+  reading's noise twice in the shape. Measured on the rehearsal at a converging budget:
+  the seasonal recharge and Sy multipliers' posterior bands came back 1.15-1.33x too
+  narrow (the other scalars 0.98-1.02x). Trusted levels: observe them alone. Levels you
+  cannot trust: the differences alone, or the levels at a weight `w_levels` that carries
+  the datum's error and `differences(weight=sqrt(w**2 - w_levels**2))`, so the shape counts
+  once at the readings' weight `w`.
 - **A reading of weight 0 is part of no difference** (ledger 566, settled): it is in
   no mean and no pair, and its row is unmeasured. Counted
   in, a silenced outlier moved its well's MEAN and with it every weighted reading's
@@ -891,6 +899,34 @@ print(ies.settings)
 Defaults make `cal.run_ies()` a valid first call. Production knobs (localization,
 covariance re-inflation, bad-phi filtering) pass straight through as keyword
 arguments when you need them.
+
+**How big an ensemble** (ledger 591, measured on the rehearsal --
+20 adjustable parameters, 340 weighted observations plus 24 one-sided bounds, noise
+drawn, 1-6 seeds a row;
+`docs/reproducers/rehearsal_recovery_budget.py`):
+
+| Budget | Model runs | Base phi / truth's | Forecast covered | Scalar truths in their 5-95% bands |
+|---|---|---|---|---|
+| 16 reals x 2, one lambda (the rehearsal notebook's CI knobs) | ~50 | 1.8-3.0 | 1 of 3 | 0-1 of 6 a run |
+| 16 x 2, lambda testing | 112 | 1.43 | no | 2 of 6 |
+| 32 x 4, lambda testing | 288 | 0.90-0.96 | 2 of 3 | 13 of 18 |
+| 64 x 3, lambda testing | 400 | 0.90-0.96 | 3 of 3 | 15 of 18 |
+| 64 x 6, lambda testing | 736 | 0.88-0.95 | 6 of 6 | 28 of 36 |
+
+- **Keep PESTPP-IES's lambda testing** -- `run_ies`'s default. The rehearsal notebook's
+  `ies_lambda_mults=1.0, lambda_scale_fac=1.0` buy a fast CI run, not a converged one.
+- **Iterate until phi stops falling**: here iterations 4-6 lowered it 1.4-4.6% in all
+  (the sixth under 0.7%), and 3 iterations recovered what 6 did. Two did not converge,
+  with or without lambda testing.
+- **Converged looks like this**: the base realization's measured phi near the number of
+  weighted observations (269-343 for 340 here), not 1.5-3 times it, and flat over the last
+  iterations. A narrow band from a run that has not got there is not an uncertainty.
+- **Realizations**: 64 sufficed for 20 adjustable parameters; 32 converged in phi but
+  missed the forecast once in three. A model with more parameters the data inform wants
+  more.
+- Even converged, each 5-95% band misses its truth one time in ten, so in a rehearsal
+  with six known truths one or more is outside about half the time: judge coverage over
+  several seeds, not one run.
 
 **Defaults set for long runs on a shared machine.**
 

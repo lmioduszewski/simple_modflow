@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 590 entries (595 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 592 entries (597 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 592 | Levels and their differences observed together at the source weight count each reading's noise twice in the... | 2026-10-13 |
+| 591 | At a converging PESTPP-IES budget the rehearsal recovers its truth as well as its posterior can; the notebo... | 2026-10-13 |
 | 590 | `run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` --... | 2026-10-12 |
 | 589 | The recalibration rehearsal is the PEST preparation's acceptance test: a Ten Trails-shaped truth, declared... | 2026-10-12 |
 | 588 | A parallel run's master and workers are copies of the template as the BUILD left it | 2026-10-12 |
@@ -21968,7 +21970,9 @@ same day, which is the useful part of the result.
       the source weight (Q5) counts each head's noise twice, and PESTPP-IES draws the
       two sets' noise independently.~~ **Those runs drew NO noise** -- `run_ies`'s default
       left PESTPP-IES's noise off (ledger 590) -- **and the over-confidence
-      is an ensemble that has not converged**, not the differences: halving both head
+      is an ensemble that has not converged**, not the differences -- at this budget (at a
+      converging one, the differences beside the levels make the seasonal parameters'
+      bands 1.15-1.33x too narrow, ledger 592): halving both head
       weights (32x3, seed 2) left the same three truths outside at z -6.4/-8.3/-4.3, and
       with noise drawn every 16x2 and 32x3 run measured ends at a posterior base whose
       phi on the noisy data is 1.6-3.0x the phi of the TRUTH's multipliers on the same
@@ -21997,4 +22001,54 @@ same day, which is the useful part of the result.
       `lambda_scale_fac=1.0`; with noise drawn, the posterior base still ends at 1.6-3.0x
       the truth's phi on the same data and 5-6 of 6 scalar truths outside their bands
       at 16x2 (3 at 32x3) -- an unconverged ensemble, so Q9's coverage criteria stay a
-      non-strict xfail. `rehearsal_recovery_budget.py` now prints both phis.
+      non-strict xfail. `rehearsal_recovery_budget.py` now prints both phis. **Measured
+      at a converging budget** (ledger 591: 64x6 and 64x3 with PESTPP-IES's
+      own lambda testing): the base fits the noisy data better than the truth (0.82-0.96x
+      its phi), the forecast is covered in 15 of 15 runs and 28-30 of 36 scalar truths sit
+      inside their bands -- the unconverged ensemble is confirmed as the cause; the
+      notebook keeps 16x2 for CI and the xfail stays.
+
+591. **At a converging PESTPP-IES budget the rehearsal recovers its truth as well as its posterior can; the notebook keeps its fast budget and the coverage test its non-strict xfail (2026-10-13).**
+      The user's Q9 follow-up: run `canonical_08` at a budget where PESTPP-IES converges.
+      `docs/reproducers/rehearsal_recovery_budget.py` gained `+lambda` (drops the
+      notebook's `ies_lambda_mults=1.0, lambda_scale_fac=1.0`: PESTPP-IES's own lambda
+      testing), `+nodiff`, `--seeds`/`--workers`/`--keep` and `--linear` (a
+      finite-difference Jacobian at the base: the linear posterior beside the ensemble's).
+      **Measured** (noise drawn, 12 workers; tables in its docstring): at 64x6 every exact
+      gate, phi (0.007-0.014 of the prior's) and crisp's gap (0.97-1.02) hold on 6 seeds,
+      the base fits the noisy data BETTER than the truth (0.82-0.95x its phi), the
+      forecast's truth is inside the posterior range 12 of 12, and 28 of 36 scalar truths
+      (30 of 36 without the differences) sit inside their 5-95% bands. The ensemble is what
+      the data say: its sd is the linear posterior's (0.71-1.16x, five runs), and the two
+      misses the levels alone leave -- sy z +3.0 on seed 3, bedleak_north -2.3 on seed 6 --
+      are the linear posterior's own, so the noise drawn, not IES. Phi has nearly stopped
+      falling after the THIRD iteration (1.4-4.6% more over the next three); 64x3 (5 min) recovers what 64x6 (8.6 min) does; 32x4 converges in
+      phi but missed the forecast once in 3; 16x2 with lambda testing does not converge
+      (base 1.43x the truth's phi). **Chosen:** no library change -- no parameter, noise
+      or forecast was found misrouted. The notebook keeps the user's 16x2 single-lambda
+      knobs (the CI budget), `test_rehearsal_posterior_covers_the_truth` stays a
+      non-strict xfail with its reason citing this, and Q9's per-run "every scalar truth
+      inside" is NOT reworded -- an exact posterior meets it about half the time (0.9^6;
+      1 and 2 of 6 runs here) -- it goes back to the user. **For Ten Trails:** lambda
+      testing ON (do not copy the notebook's overrides), at least 3 iterations and on while
+      phi still falls by more than ~1-2% an iteration, and 64 realizations sufficed for these
+      20 adjustable parameters where 32 missed the forecast once in 3 -- more parameters
+      the data inform want more; converged means the base's measured phi
+      is near the count of weighted observations (150-187 here against 188, and 269-343
+      against 340), not 1.5-3x it.
+
+592. **Levels and their differences observed together at the source weight count each reading's noise twice in the hydrograph's shape; documented, not changed (2026-10-13).**
+      `differences(kind="mean")` is a fixed linear map of the same binned readings the
+      levels are (each minus its well's mean), so beside the levels it adds no measurement:
+      at the source weight (Q5) PEST counts the shape's noise twice and PESTPP-IES draws the
+      two sets' noise independently. Measured on the rehearsal (`--linear`, the data's
+      noise propagated through both): the sd of a truth's z is 1.15-1.33 for rch_wet,
+      rch_dry and Sy -- the parameters the seasonal shape informs -- and 0.98-1.02 for crisp
+      and the bed leakances; with the levels alone 0.82-0.98 for all. At a converging budget
+      that is 28 against 30 of 36 truths inside their bands. **Not changed, the user's
+      decision:** Q5's source weight is right for differences used INSTEAD of levels (a
+      datum or screen error), and the rehearsal's declaration observes both; the
+      differences' docstring and the PEST guide now say it. The ways out are the user's:
+      the levels alone where they are trusted; or levels at a weight that carries the datum
+      error and differences at `weight=sqrt(w**2 - w_levels**2)`, so the shape is counted
+      once; or a refusal of both at full weight.

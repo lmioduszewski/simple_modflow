@@ -18,8 +18,10 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
 - the whole notebook, run once: the user's pass criteria (Q9) on its
   ``rehearsal_report`` -- the round trips, the equilibrium, phi and crisp's log gap
   asserted, the two posterior-coverage criteria held as a non-strict xfail until the user
-  decides (ledger 589: not met at any ensemble size measured; ledger
-  590: the ensemble has not converged).
+  decides: at the notebook's fast budget the ensemble has not converged (ledgers 589,
+  590); at a converging one (64x6 or 64x3, PESTPP-IES's own lambda testing) the
+  forecast is covered on every seed and the scalar truths as often as the linear
+  posterior's bands allow (ledger 591).
 """
 
 from __future__ import annotations
@@ -243,7 +245,10 @@ MET = ("truth_round_trip", "write_back", "equilibrium", "phi_ratio", "crisp_gap_
 #: seeds, one to six of the six scalar truths fall outside and the forecast range misses
 #: on some seeds -- an ensemble that has not converged at this budget: the realization
 #: IES ends on fits the noisy data 1.6-3x worse than the truth's multipliers do (ledger
-#: 589, ledger 590), pending the user's decision.
+#: 589, ledger 590). At a converging budget (64x6, lambda testing on, six seeds) the
+#: forecast is covered 12 of 12 and 28 of 36 scalar truths sit inside their bands, but
+#: only 1 run of 6 has all six inside -- which an exact posterior manages about half the
+#: time (ledger 591); the criterion is the user's to restate.
 UNDECIDED = ("scalars_inside", "forecast_covered")
 
 
@@ -259,10 +264,46 @@ def test_rehearsal_notebook_recovers_the_truth(rehearsed):
 @pytest.mark.slow
 @NEEDS_PEST
 @pytest.mark.xfail(strict=False, reason=(
-    "an unconverged ensemble at 16x2: the posterior 5-95% bands miss 5-6 of 6 scalar truths "
-    "and the forecast range misses on some seeds -- ledger 590, the user's "
-    "decision"))
+    "an unconverged ensemble at the notebook's 16x2: the posterior 5-95% bands miss 5-6 of 6 "
+    "scalar truths and the forecast range misses on some seeds (ledger 590); converged "
+    "(64x6, lambda testing) the forecast is covered on 12 of 12 runs but all six truths are "
+    "inside on 1 of 6, an exact posterior's about 1 in 2 -- ledger 591, the "
+    "user's decision"))
 def test_rehearsal_posterior_covers_the_truth(rehearsed):
     failed = sorted(name for name in UNDECIDED if not rehearsed["passes"][name])
     assert failed == [], {"scalars": rehearsed["scalars"],
                           "forecast": (rehearsed["forecast_truth"], rehearsed["forecast_posterior"])}
+
+
+# -- the budget reproducer ----------------------------------------------------------------
+
+
+def _budget_reproducer():
+    """``docs/reproducers/rehearsal_recovery_budget.py``, imported by path."""
+
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "docs" / "reproducers" / "rehearsal_recovery_budget.py"
+    spec = importlib.util.spec_from_file_location("_rehearsal_recovery_budget", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_budget_reproducers_flags_still_edit_the_notebook():
+    """Each ``+flag`` of the converging-budget measurement (ledger 591)
+    edits text the notebook still holds, once: an edit of the notebook that moves it
+    fails here, not hours into a measurement."""
+
+    budget = _budget_reproducer()
+    plain = budget._cells(())
+    for flag, (old, _new) in budget.FLAGS.items():
+        edited = budget._cells((flag,))
+        changed = [index for index, (a, b) in enumerate(zip(plain, edited, strict=True)) if a != b]
+        assert len(changed) == 1, flag
+        assert old in plain[changed[0]] and old not in edited[changed[0]], flag
+        compile(edited[changed[0]], f"<{flag}>", "exec")
+    assert budget.parse_config("64x6+lambda+nodiff") == (64, 6, ("lambda", "nodiff"))
+    with pytest.raises(SystemExit, match="unknown flag"):
+        budget.parse_config("64x6+lamda")

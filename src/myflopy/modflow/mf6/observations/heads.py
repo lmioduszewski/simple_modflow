@@ -1886,6 +1886,18 @@ class HeadTargets:
         calls; both read the same head file, once each per run); it answers
         :meth:`HeadDifferences.compare` and :meth:`HeadDifferences.stats` off-PEST.
 
+        **Beside the levels it adds no measurement.** A difference is a fixed
+        combination of the same readings the levels are, so registering both at the
+        default weights counts each reading's noise twice in the hydrograph's shape:
+        the parameters the shape informs come back with posterior bands too narrow --
+        1.15-1.33x for the seasonal recharge and specific-yield multipliers of the
+        recalibration rehearsal, 0.98-1.02 for its other scalars (ledger
+        592). Instead of the levels (a datum or screen error you cannot
+        trust) it counts each reading once; beside them, give the levels a weight
+        ``w_levels`` that carries the datum's error and the ``"mean"`` differences
+        ``weight=sqrt(w**2 - w_levels**2)``, so the shape is counted once at the
+        readings' weight ``w``.
+
         Parameters
         ----------
         kind : str, default "mean"
