@@ -696,7 +696,9 @@ the registered set's `differences()` (ledger 567).
   narrow (the other scalars 0.98-1.02x). Trusted levels: observe them alone. Levels you
   cannot trust: the differences alone, or the levels at a weight `w_levels` that carries
   the datum's error and `differences(weight=sqrt(w**2 - w_levels**2))`, so the shape counts
-  once at the readings' weight `w`.
+  once at the readings' weight `w` -- what the rehearsal notebook declares since ledger
+  593 (`w_levels = 1 / hypot(noise, DATUM)`): with it six converged runs pass
+  the pooled coverage check below, where both at `w` failed it on a Sy `z` of +3.7.
 - **A reading of weight 0 is part of no difference** (ledger 566, settled): it is in
   no mean and no pair, and its row is unmeasured. Counted
   in, a silenced outlier moved its well's MEAN and with it every weighted reading's
@@ -912,6 +914,14 @@ drawn, 1-6 seeds a row;
 | 32 x 4, lambda testing | 288 | 0.90-0.96 | 2 of 3 | 13 of 18 |
 | 64 x 3, lambda testing | 400 | 0.90-0.96 | 3 of 3 | 15 of 18 |
 | 64 x 6, lambda testing | 736 | 0.88-0.95 | 6 of 6 | 28 of 36 |
+| 64 x 3, lambda testing, each reading counted once (ledger 593) | 400 | 0.90-0.99 | 6 of 6 | 33 of 36: pooled verdict PASSES |
+
+The rows above the last observe the levels and their differences both at the reading's
+weight, and score a band by the ensemble's own percentiles with its `base` realization
+in them; the last uses the split weights and the one rule of ledger 593 (the
+normal fitted to the realizations in log10). The same six seeds as the split row, with
+both at full weight and the new rule: 32 of 36, a Sy `z` of +3.73 -- the pooled verdict
+FAILS.
 
 - **Keep PESTPP-IES's lambda testing** -- `run_ies`'s default. The rehearsal notebook's
   `ies_lambda_mults=1.0, lambda_scale_fac=1.0` buy a fast CI run, not a converged one.
@@ -934,7 +944,16 @@ drawn, 1-6 seeds a row;
   data inform wants more realizations.
 - Even converged, each 5-95% band misses its truth one time in ten, so in a rehearsal
   with six known truths one or more is outside about half the time: judge coverage over
-  several seeds, not one run.
+  several seeds, not one run. The rehearsal does, with
+  `canonical_rehearsal.pooled_recovery(reports)` (ledger 593): pooled over the
+  runs, the fraction of truths inside their bands, the largest `|z|` and the runs whose
+  forecast range holds its truth, each against a threshold an EXACT posterior fails about
+  1% of the time -- for six runs of six scalars at 64 realizations, at least 28
+  of 36 inside, every `|z|` at most 3.63, the forecast covered in 5 of 6. Together they
+  fail an exact posterior 3.1% of the time if each run's z were independent and about 4%
+  with the correlation the rehearsal's posteriors carry (rch_wet with Sy 0.7). The check
+  is opt-in: `SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1` runs it (about 30 minutes at 12
+  workers).
 
 **Defaults set for long runs on a shared machine.**
 
@@ -1381,4 +1400,6 @@ lake stages, a baseflow target and a bound. Before any IES it runs the template 
 the truth's multipliers (`canonical_rehearsal.run_template`) and requires the noise-free
 data back: a parameter or observation routed to the wrong package, lake, month, layer or
 row shows there as a residual of feet, where the truth's agrees to 1e-8. On a real model
-the same call at a hand-set parameter set is the cheapest check of a new template.
+the same call at a hand-set parameter set is the cheapest check of a new template. Its
+recovery is judged POOLED over several converged runs (`canonical_rehearsal.pooled_recovery`,
+ledger 593; "How big an ensemble" above), never one.

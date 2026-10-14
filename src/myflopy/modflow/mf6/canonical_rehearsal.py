@@ -25,7 +25,11 @@ What is here:
 * :func:`synthetic_hydrographs` / :func:`synthetic_series` -- the data, dated as a
   field program reads them, off the truth run;
 * :func:`truth_parameter_values` and :func:`run_template` -- the truth round trip:
-  the template run at the truth's multipliers.
+  the template run at the truth's multipliers;
+* :func:`recovery` and :func:`forecast_recovery` -- one run's scalars and forecast
+  against the truth, by one rule; :func:`pooled_recovery` -- the verdict on several
+  converged runs at once, the user's criterion for whether the truth came back (ledger
+  593).
 
 It is demo infrastructure like :mod:`~myflopy.modflow.mf6.canonical_calibration`
 and is not exported top-level. It pins its own 21x21 grid and ignores
@@ -37,13 +41,15 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any
 
 import geopandas as gpd
@@ -1224,16 +1230,47 @@ def base_observations(ies) -> pd.Series:
     return values
 
 
-#: The rehearsal's stochastic pass criteria (ledger 589; the user's Q9).
+#: The rehearsal's per-run stochastic pass criteria (ledger 589; the user's Q9).
 PHI_RATIO_MAX = 0.2
 GAP_CLOSED_MIN = 0.5
+
+#: The two-sided 90% point of a standard normal, ``NormalDist().inv_cdf(0.95)``: a
+#: scalar's 5-95% band is its posterior log10 mean +- this many log10 sds, and its
+#: truth is inside exactly when ``|z|`` is at most this (ledger 593).
+Z_BAND = NormalDist().inv_cdf(0.95)
+#: The probability an EXACT posterior's 5-95% band holds its truth.
+BAND_COVERAGE = 0.9
+#: How often each pooled criterion may fail an exact, converged posterior, by the
+#: independence model :func:`pooled_recovery` computes it with (ledger 593).
+#: The coverage entry is set low because a run's z values are NOT independent: with
+#: the rehearsal's posterior correlations (rch_wet with Sy 0.68, with rch_dry 0.61,
+#: measured over six converged runs) the same threshold fails an exact posterior about
+#: 2.3x as often as the binomial says -- 1.8% at six runs against its 0.77%, so the three
+#: together fail one about 4% of the time.
+POOLED_FALSE_FAIL = {"coverage": 0.01, "largest_z": 0.01, "forecast": 0.015}
+
+
+def _realizations(ensemble) -> pd.DataFrame:
+    """An IES ensemble's realizations, column names lower-cased: never its ``base`` row."""
+
+    frame = ensemble._df.rename(columns=str.lower)
+    return frame.drop(index=[label for label in frame.index if str(label).lower() == "base"])
 
 
 def recovery(case: RehearsalCase, cal, ies) -> pd.DataFrame:
     """How the SCALAR parameters came back: truth, prior and posterior 5-95% bands.
 
     A scalar is a parameter group of ONE parameter -- every group but the pilot
-    points -- read in its log space (each is a log-transformed multiplier).
+    points -- read in its log10 space (each is a log-transformed multiplier, which
+    PESTPP-IES draws and updates as a Gaussian in log space). **One rule** (ledger
+    593): an ensemble's band is the normal fitted to its REALIZATIONS'
+    log10 values -- the ``base`` realization is not a draw and is left out of every
+    statistic -- so a band is its log10 mean +- :data:`Z_BAND` sds and ``inside`` is
+    ``|z| <= Z_BAND``: the two cannot disagree. The fitted band rather than the
+    ensemble's own 5th/95th percentiles, because 64 members put each percentile
+    between two members (its sampling error is several times the mean's), and because
+    the pooled criterion's largest ``|z|`` reaches past the ensemble's range, where a
+    percentile has nothing to say.
 
     Parameters
     ----------
@@ -1248,40 +1285,286 @@ def recovery(case: RehearsalCase, cal, ies) -> pd.DataFrame:
     -------
     pandas.DataFrame
         One row per scalar parameter group (``pargp``): ``truth``, ``prior_p05``,
-        ``prior_p95``, ``posterior_p05``, ``posterior_p95`` (percentiles of the
-        prior and posterior parameter ensembles), ``posterior_mean`` (the GEOMETRIC
-        mean), ``base`` (the posterior base realization), ``inside`` (truth within
-        the posterior band), ``narrowed`` (the posterior band narrower than the
-        prior's), ``gap_closed`` -- how much of the log distance from the start
-        (1.0) to the truth the posterior mean covered, ``NaN`` where the truth is
-        the start -- and ``z``, the truth's distance from the posterior mean in
-        posterior standard deviations, both in log10 (about 1.6 is the edge of a
-        5-95% band of a normal posterior).
+        ``prior_p95``, ``posterior_p05``, ``posterior_p95`` (the bands, as above, of
+        the prior and posterior ensembles), ``posterior_mean`` (the GEOMETRIC mean of
+        the posterior realizations), ``base`` (the posterior base realization's value,
+        ``NaN`` for a run without one), ``inside`` (``|z| <= Z_BAND``: the truth within
+        the posterior band), ``narrowed`` (the posterior's log10 sd below the prior's),
+        ``gap_closed`` -- how much of the log distance from the start (1.0) to the
+        truth the posterior mean covered, ``NaN`` where the truth is the start -- and
+        ``z``, the truth's distance from the posterior log10 mean in posterior log10
+        sds (``+-inf`` when every realization holds one value and the truth another,
+        ``0.0`` when it is that value).
     """
 
     truth = truth_parameter_values(case, cal)
     data = cal.pst.parameter_data
     groups = data.groupby("pargp")["parnme"].apply(list)
-    prior = ies.prior_parameters._df.rename(columns=str.lower)
-    posterior = ies.posterior_parameters._df.rename(columns=str.lower)
+    prior = _realizations(ies.prior_parameters)
+    whole = ies.posterior_parameters._df.rename(columns=str.lower)
+    posterior = _realizations(ies.posterior_parameters)
+    bases = [label for label in whole.index if str(label).lower() == "base"]
     rows = []
     for group, names in groups.items():
         if len(names) != 1:
             continue
         name = str(names[0]).lower()
         log_post = np.log10(posterior[name].astype(float))
-        p05, p95 = np.percentile(posterior[name].astype(float), [5, 95])
-        q05, q95 = np.percentile(prior[name].astype(float), [5, 95])
-        mean = float(10 ** log_post.mean())
+        log_prior = np.log10(prior[name].astype(float))
+        mean, spread = float(log_post.mean()), float(log_post.std(ddof=1))
+        prior_mean, prior_spread = float(log_prior.mean()), float(log_prior.std(ddof=1))
         value = truth[name]
-        gap = np.log10(value)
-        spread = float(log_post.std(ddof=1))
+        gap = float(np.log10(value))
+        if spread > 0:
+            z = (gap - mean) / spread
+        else:
+            z = 0.0 if gap == mean else float(np.copysign(np.inf, gap - mean))
         rows.append({
-            "pargp": group, "truth": value, "prior_p05": q05, "prior_p95": q95,
-            "posterior_p05": p05, "posterior_p95": p95, "posterior_mean": mean,
-            "base": float(posterior.loc["base", name]) if "base" in posterior.index else np.nan,
-            "inside": bool(p05 <= value <= p95), "narrowed": bool(p95 - p05 < q95 - q05),
-            "gap_closed": float(np.log10(mean) / gap) if gap != 0 else np.nan,
-            "z": float((gap - log_post.mean()) / spread) if spread > 0 else np.inf,
+            "pargp": group, "truth": value,
+            "prior_p05": 10 ** (prior_mean - Z_BAND * prior_spread),
+            "prior_p95": 10 ** (prior_mean + Z_BAND * prior_spread),
+            "posterior_p05": 10 ** (mean - Z_BAND * spread),
+            "posterior_p95": 10 ** (mean + Z_BAND * spread),
+            "posterior_mean": 10 ** mean,
+            "base": float(whole.loc[bases[0], name]) if bases else np.nan,
+            "inside": bool(abs(z) <= Z_BAND), "narrowed": bool(spread < prior_spread),
+            "gap_closed": float(mean / gap) if gap != 0 else np.nan,
+            "z": float(z),
         })
     return pd.DataFrame(rows).set_index("pargp")
+
+
+def forecast_recovery(ies, simulated: pd.Series, name: str | int = 0) -> dict:
+    """Whether a forecast's truth is inside its posterior ensemble's range.
+
+    The range is the posterior REALIZATIONS' minimum to maximum -- the ``base``
+    realization left out, as in :func:`recovery` -- so for an exact posterior of
+    ``members`` exchangeable realizations the truth falls outside it with probability
+    ``2 / (members + 1)``, which is what :func:`pooled_recovery` allows for.
+
+    Parameters
+    ----------
+    ies : IesResults
+        The run (``cal.run_ies(...)``).
+    simulated : pandas.Series
+        The forecast's TRUE value, read by the observation's full name: the template
+        run at the truth's multipliers (:func:`run_template` with
+        :func:`truth_parameter_values`), noise-free.
+    name : str or int, default 0
+        Which forecast, as :meth:`IesResults.forecast` takes it: a name (exact, else
+        a unique case-insensitive substring) or a position in its ``forecast_names``.
+
+    Returns
+    -------
+    dict
+        ``name`` (the full observation name), ``truth``, ``posterior_low`` /
+        ``posterior_high`` and ``prior_low`` / ``prior_high`` (each ensemble's
+        realizations' range), ``members`` (the number of posterior realizations) and
+        ``covered`` (``posterior_low <= truth <= posterior_high``).
+    """
+
+    forecast = ies.forecast(name).name
+    key = forecast.lower()
+    posterior = _realizations(ies.posterior)[key].astype(float)
+    prior = _realizations(ies.prior)[key].astype(float)
+    truth = float(simulated[forecast])
+    low, high = float(posterior.min()), float(posterior.max())
+    return {"name": forecast, "truth": truth, "posterior_low": low, "posterior_high": high,
+            "prior_low": float(prior.min()), "prior_high": float(prior.max()),
+            "members": int(posterior.size), "covered": bool(low <= truth <= high)}
+
+
+def _binomial_cdf(k: int, n: int, p: float) -> float:
+    """``P(X <= k)`` for ``X ~ Binomial(n, p)``, summed exactly."""
+
+    return float(sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k + 1)))
+
+
+def _fewer_than(misses: Sequence[float]) -> list[float]:
+    """``P(covered < m)`` for ``m = 0..len(misses)``: independent runs, each missing with
+    its own probability (a Poisson-binomial, by convolution)."""
+
+    distribution = [1.0]
+    for miss in misses:
+        covered = 1.0 - miss
+        nxt = [0.0] * (len(distribution) + 1)
+        for count, probability in enumerate(distribution):
+            nxt[count] += probability * miss
+            nxt[count + 1] += probability * covered
+        distribution = nxt
+    return [float(sum(distribution[:m])) for m in range(len(distribution))]
+
+
+@dataclass(frozen=True)
+class PooledRecovery:
+    """The pooled verdict on several rehearsal runs' recovery (:func:`pooled_recovery`).
+
+    Attributes
+    ----------
+    runs : int
+        How many runs were pooled.
+    values : int
+        How many scalar truths they hold in all (runs x scalars a run).
+    inside : int
+        How many of those sit inside their posterior 5-95% band (``|z| <= Z_BAND``).
+    inside_min : int
+        The fewest that pass: the largest count an exact posterior falls BELOW with
+        probability at most ``POOLED_FALSE_FAIL["coverage"]`` (binomial, ``values``
+        draws at :data:`BAND_COVERAGE`).
+    largest_z : float
+        The largest ``|z|`` over every scalar of every run.
+    largest_z_at : tuple of (int, str)
+        Where it is: the run's position in the reports passed and the parameter group.
+    z_max : float
+        The largest ``|z|`` that passes: the bound ``values`` independent standard
+        normals all stay inside with probability ``1 - POOLED_FALSE_FAIL["largest_z"]``
+        (Sidak; by Sidak's inequality correlated ones stay inside at least as often).
+    forecasts_covered : int
+        How many runs' forecast truth is inside their posterior range.
+    forecasts_min : int
+        The fewest that pass: the largest count an exact posterior falls below with
+        probability at most ``POOLED_FALSE_FAIL["forecast"]``, each run missing with
+        probability ``2 / (members + 1)``.
+    false_fail : dict of str to float
+        How often an exact, converged posterior fails each criterion at these
+        thresholds (``coverage``, ``largest_z``, ``forecast``) and, as their sum, at
+        most how often it fails the verdict (``total``). The coverage rate assumes the
+        scalars' z are independent; within one run they are correlated through the
+        posterior, which raises it -- about 2.3x on the rehearsal, measured by the
+        reproducer (``correlated_false_fail``; ledger 593) -- and is why its
+        budget is the smallest.
+    passes : dict of str to bool
+        Each criterion's verdict: ``coverage`` (``inside >= inside_min``),
+        ``largest_z`` (``largest_z <= z_max``), ``forecast``
+        (``forecasts_covered >= forecasts_min``).
+    """
+
+    runs: int
+    values: int
+    inside: int
+    inside_min: int
+    largest_z: float
+    largest_z_at: tuple[int, str]
+    z_max: float
+    forecasts_covered: int
+    forecasts_min: int
+    false_fail: Mapping[str, float]
+    passes: Mapping[str, bool]
+
+    @property
+    def fraction(self) -> float:
+        """The fraction of scalar truths inside their posterior 5-95% bands."""
+
+        return self.inside / self.values
+
+    @property
+    def passed(self) -> bool:
+        """Every pooled criterion passes."""
+
+        return all(self.passes.values())
+
+    def summary(self) -> pd.DataFrame:
+        """One row per criterion: what was measured, the threshold, the verdict and
+        how often an exact posterior fails it."""
+
+        return pd.DataFrame({
+            "measured": [f"{self.inside} of {self.values} ({self.fraction:.0%})",
+                         f"{self.largest_z:.2f} (run {self.largest_z_at[0]}, "
+                         f"{self.largest_z_at[1]})",
+                         f"{self.forecasts_covered} of {self.runs}"],
+            "threshold": [f">= {self.inside_min}", f"<= {self.z_max:.2f}",
+                          f">= {self.forecasts_min}"],
+            "passes": [self.passes["coverage"], self.passes["largest_z"],
+                       self.passes["forecast"]],
+            "false_fail": [self.false_fail["coverage"], self.false_fail["largest_z"],
+                           self.false_fail["forecast"]],
+        }, index=pd.Index(["truths inside their 5-95% bands", "largest |z|",
+                           "forecast covered"], name="criterion"))
+
+
+def pooled_recovery(reports: Sequence[Mapping]) -> PooledRecovery:
+    """Judge the rehearsal's recovery over several CONVERGED runs at once.
+
+    The user's criterion (ledger 593), in place of "every scalar truth
+    inside its 5-95% band in every run", which an exact posterior meets only
+    ``0.9 ** 6`` (53%) of the time with six scalars. Pooled over every run: the
+    fraction of scalar truths inside their bands, the largest ``|z|``, and how many
+    runs' forecast range holds its truth -- each against the threshold an EXACT,
+    converged posterior fails with probability at most :data:`POOLED_FALSE_FAIL`'s
+    entry (computed for the counts passed, so it holds for any number of runs). At
+    six runs of six scalars that is at least 28 of 36 inside, every ``|z|`` at most
+    3.63 and the forecast covered in 5 of 6 at 64 realizations: the three fail an exact
+    posterior 3.1% of the time if a run's z were independent, and about 4% with the
+    correlation the rehearsal's posteriors carry. Run it on runs whose ensembles have
+    converged: an unconverged one is over-confident (ledger 590) and fails it as it
+    should.
+
+    Parameters
+    ----------
+    reports : sequence of mapping
+        One ``rehearsal_report`` per run, as
+        ``canonical_08_recalibration_rehearsal.ipynb`` builds it, from independent
+        seeds: each needs ``"scalars"`` (parameter group -> a mapping holding
+        ``"z"``, from :func:`recovery`) and ``"forecast"`` (the mapping
+        :func:`forecast_recovery` returns: ``"covered"`` and ``"members"``). A
+        report's ``inside`` is re-derived from its ``z`` (``|z| <= Z_BAND``), the one
+        rule. A ``z`` that is ``NaN`` is outside.
+
+    Returns
+    -------
+    PooledRecovery
+        The counts, the thresholds, each criterion's verdict and how often an exact
+        posterior fails each; ``.passed`` is the verdict, ``.summary()`` a table.
+
+    Raises
+    ------
+    ValueError
+        When ``reports`` is empty, or a report holds no scalars.
+    KeyError
+        When a report lacks ``"scalars"``, ``"forecast"``, a scalar's ``"z"`` or the
+        forecast's ``"covered"``/``"members"`` -- a report from before ledger
+        593 carries ``forecast_truth``/``forecast_posterior`` instead.
+    """
+
+    reports = list(reports)
+    if not reports:
+        raise ValueError("pooled_recovery needs at least one run's report.")
+    zs: list[tuple[int, str, float]] = []
+    misses: list[float] = []
+    covered = 0
+    for index, report in enumerate(reports):
+        for key in ("scalars", "forecast"):
+            if key not in report:
+                raise KeyError(f"report {index} has no {key!r}: build it as "
+                               "canonical_08_recalibration_rehearsal.ipynb does "
+                               "(recovery() and forecast_recovery()).")
+        if not report["scalars"]:
+            raise ValueError(f"report {index} holds no scalar parameters.")
+        for group, row in report["scalars"].items():
+            zs.append((index, str(group), float(row["z"])))
+        forecast = report["forecast"]
+        covered += bool(forecast["covered"])
+        misses.append(2.0 / (int(forecast["members"]) + 1))
+
+    values = len(zs)
+    magnitudes = [abs(z) if not math.isnan(z) else math.inf for _, _, z in zs]
+    inside = sum(magnitude <= Z_BAND for magnitude in magnitudes)
+    budget = POOLED_FALSE_FAIL
+    inside_min = max(k for k in range(values + 1)
+                     if k == 0 or _binomial_cdf(k - 1, values, BAND_COVERAGE) <= budget["coverage"])
+    coverage_rate = _binomial_cdf(inside_min - 1, values, BAND_COVERAGE) if inside_min else 0.0
+    per_value = 1.0 - (1.0 - budget["largest_z"]) ** (1.0 / values)
+    z_max = NormalDist().inv_cdf(1.0 - per_value / 2.0)
+    fewer = _fewer_than(misses)
+    forecasts_min = max(m for m, rate in enumerate(fewer) if rate <= budget["forecast"])
+    worst = max(range(values), key=lambda i: magnitudes[i])
+    false_fail = {"coverage": coverage_rate, "largest_z": budget["largest_z"],
+                  "forecast": fewer[forecasts_min]}
+    false_fail["total"] = sum(false_fail.values())
+    return PooledRecovery(
+        runs=len(reports), values=values, inside=inside, inside_min=inside_min,
+        largest_z=magnitudes[worst], largest_z_at=(zs[worst][0], zs[worst][1]), z_max=z_max,
+        forecasts_covered=covered, forecasts_min=forecasts_min, false_fail=false_fail,
+        passes={"coverage": inside >= inside_min, "largest_z": magnitudes[worst] <= z_max,
+                "forecast": covered >= forecasts_min},
+    )

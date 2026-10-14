@@ -1896,7 +1896,9 @@ class HeadTargets:
         trust) it counts each reading once; beside them, give the levels a weight
         ``w_levels`` that carries the datum's error and the ``"mean"`` differences
         ``weight=sqrt(w**2 - w_levels**2)``, so the shape is counted once at the
-        readings' weight ``w``.
+        readings' weight ``w`` -- as the rehearsal notebook does, whose six converged
+        runs pass its pooled coverage check that way and fail it with both at ``w``
+        (ledger 593).
 
         Parameters
         ----------

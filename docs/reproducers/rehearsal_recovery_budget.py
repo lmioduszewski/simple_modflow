@@ -9,25 +9,45 @@ report's numbers, so every threshold the slow test asserts rests on this table a
 workflow measured is the one the notebook teaches (not a copy of it).
 
     PYTHONPATH=src /home/lukem/python/envs/gw/bin/python docs/reproducers/rehearsal_recovery_budget.py \
-        [config ...] [--seeds 1,2,3] [--workers N] [--keep DIR] [--linear]
+        [config ...] [--seeds 1,2,3] [--workers N] [--keep DIR] [--linear] [--reports DIR]
 
 A config is ``REALSxITERATIONS[+flag...]`` (``16x2``, ``64x6+lambda``); default: the
 four unflagged configs of the first table, seeds 1-3. ``+lambda`` turns PESTPP-IES's own
 lambda testing back on (drops the notebook's ``ies_lambda_mults=1.0,
 lambda_scale_fac=1.0``, so its default multipliers and scale factors are tried every
-iteration); ``+nodiff`` drops the notebook's ``cal.observe(heads.differences())`` line.
-Each flag edits the notebook's SOURCE before it runs and refuses to run unless its text
-is found exactly once. ``--workers`` overrides the notebook's ``WORKERS``; ``--keep``
-keeps every run's workspace and its ``report.json``; ``--linear`` adds
-:func:`linear_check` after each run. Needs ``mf6`` and ``pestpp-ies``; minutes per run.
+iteration); ``+nodiff`` observes the levels alone at the reading's weight (no
+``heads.differences``); ``+double`` restores the notebook's declaration before ledger
+593 -- the levels and their differences both at the reading's weight. Each
+flag edits the notebook's SOURCE before it runs and refuses to run unless each of its
+texts is found exactly once. ``--workers`` overrides the notebook's ``WORKERS``;
+``--keep`` keeps every run's workspace and its ``report.json`` (a relative path is
+resolved where the script is started); ``--linear`` adds :func:`linear_check` after each
+run; ``--reports DIR`` runs nothing and pools the ``report.json`` files a ``--keep`` run
+left. After the per-run table it prints, for each configuration, the seeds POOLED:
+``canonical_rehearsal.pooled_recovery``'s verdict and how often an exact posterior fails
+its thresholds -- by the binomial it uses, and with each run's z correlated as its
+posterior is (:func:`correlated_false_fail`). Needs ``mf6`` and ``pestpp-ies``; minutes
+per run.
 
-THE CRITERIA (the user's, Q9). Exact: the truth round trip (the template at the truth's
-multipliers against the noise-free data, <= 1e-3), the write-back round trip (the model
-rebuilt from ``ies.calibrated().to_library()`` against what PESTPP-IES ran for the base
-realization), the equilibrium of the truth's last two cycles (0.05 ft). Stochastic:
-measured phi of the last iteration <= 0.2 x the prior's; every scalar truth inside its
-posterior 5-95% band; crisp's conductance closing >= 50% of its log gap; the forecast's
-truth inside the posterior ensemble's range.
+THE CRITERIA (the user's, Q9; the coverage restated 2026-10-14, ledger 593).
+Exact: the truth round trip (the template at the truth's multipliers against the
+noise-free data, <= 1e-3), the write-back round trip (the model rebuilt from
+``ies.calibrated().to_library()`` against what PESTPP-IES ran for the base realization),
+the equilibrium of the truth's last two cycles (0.05 ft). Stochastic, per run: measured
+phi of the last iteration <= 0.2 x the prior's; crisp's conductance closing >= 50% of its
+log gap. Stochastic, POOLED over several converged runs (``pooled_recovery``): the
+fraction of scalar truths inside their posterior 5-95% bands, the largest |z| and the
+runs whose forecast range holds its truth -- six runs: at least 28 of 36, at most 3.63,
+at least 5 of 6. That replaced "every scalar truth inside its band, and the forecast
+covered, in every run", which an exact posterior meets only 0.9^6 = 53% of the time.
+
+THE BANDS. Since ledger 593 a band is the normal fitted to the posterior
+REALIZATIONS' log10 values (mean +- 1.645 sd; the ``base`` row left out) and ``inside``
+is ``|z| <= 1.645``. Every table above the POOLED one below was scored by the earlier
+rule -- the ensemble's own 5th/95th percentiles with the ``base`` row in them, and ``z``
+from the same moments -- under which the two could disagree (64x6 seed 6: sy z -1.56
+reported outside). And every table above it ran the notebook's declaration of then: its
+unflagged rows are what ``+double`` is now.
 
 "phi truth" is the phi of the TRUTH's multipliers on the noisy data the run fitted (the
 template run at them), "phi base" the posterior base realization's: when the truth fits
@@ -132,6 +152,49 @@ seed whose rch_dry the 64-member ensemble missed:
 rch_dry is inside (z +0.78) and its sd 0.85x the linear's (0.71x at 64x6); rch_wet 0.89x
 (0.82x), bedleak_south 1.29x. rch_wet is outside by 0.001 of its band at |z| < 1.645 --
 the band is the ensemble's percentiles, z its log mean and sd, and they need not agree.
+
+POOLED (ledger 593; 2026-10-14, noise drawn, 12 workers, nice 10, load average
+9-18 from other work; 4.7-4.8 min a run). The scoring of every row here is the one rule
+above; "z" in the outside column. Every run: truth round trip 1.1e-05, write-back
+0.19-0.30, equilibrium yes, phi ratio 0.012-0.015, crisp gap 0.96-1.01, forecast covered:
+
+     config               seed  base/truth  outside the 5-95% band (z)
+     64x3+lambda+double      1        0.93  rch_wet -1.79
+     64x3+lambda+double      2        0.96  -
+     64x3+lambda+double      3        0.90  sy +3.73
+     64x3+lambda+double      4        0.98  -
+     64x3+lambda+double      5        0.92  -
+     64x3+lambda+double      6        0.92  bedleak_north -2.29, sy -1.69
+     64x3+lambda (split)     1        0.92  -
+     64x3+lambda (split)     2        0.96  -
+     64x3+lambda (split)     3        0.90  sy +2.56
+     64x3+lambda (split)     4        0.99  bedleak_north -1.73
+     64x3+lambda (split)     5        0.92  -
+     64x3+lambda (split)     6        0.93  bedleak_north -2.13
+
+(the ``+double`` rows were measured as the notebook then stood, unflagged, and the split
+ones as ``+split`` -- an edit this script carried until the notebook took it.)
+
+     pooled              inside (>= 28)  largest |z| (<= 3.63)  forecast (>= 5)  verdict
+     64x3+lambda+double  32 of 36        3.73 (seed 3, sy)      6 of 6           FAILS
+     64x3+lambda (split) 33 of 36        2.56 (seed 3, sy)      6 of 6           PASSES
+
+An exact posterior fails these thresholds 3.1% of the time by the binomial and the
+independent tails ``pooled_recovery`` computes (coverage 0.77%, |z| 1.0%, forecast 1.35%
+at 63 realizations), and about 4% with each run's z correlated as its posterior is --
+the rehearsal's carries rch_wet with sy at 0.68-0.71 and with rch_dry at 0.61-0.62,
+which takes the coverage threshold's rate from 0.77% to 1.8% (Monte Carlo, both
+measurements alike); 29, the binomial's 2.5% point, would have failed an exact
+posterior 4.1% of the time on its own. The levels beside their differences at the
+reading's weight fail on the largest |z|: the same seed's sy is +3.73 with the shape
+counted twice and +2.56 with it counted once (ledger 592: that double count widens a
+seasonal parameter's z by 1.15-1.33x). The split -- the levels at ``1 / hypot(0.05,
+DATUM=0.05)`` ft, the differences at ``sqrt(0.05**-2 - w_levels**2)`` -- is the
+notebook's declaration since. The synthetic data carry no datum error, so it
+under-weights the mean levels: a posterior on the safe side. The notebook's CI budget
+with it (16x2, seeds 2026, 1, 2): phi ratio 0.021-0.029, crisp gap 1.01-1.16, round trip
+1.1e-05, write-back 0.22-0.32 -- its per-run gates hold; the pooled verdict fails (3 of
+18 inside, |z| up to 14.6), as an unconverged ensemble must.
 """
 
 from __future__ import annotations
@@ -156,15 +219,28 @@ NOTEBOOKS = ROOT / "examples" / "mf6" / "notebooks"
 NOTEBOOK = NOTEBOOKS / "canonical_08_recalibration_rehearsal.ipynb"
 CONFIGS = ("16x2", "24x3", "32x3", "48x3")
 SEEDS = (1, 2, 3)
-#: What a config's ``+flag`` does to the notebook's SOURCE before it runs. Each edit
-#: must match its cell exactly once, or the run is refused: a notebook edited since
-#: would otherwise be measured without the change the table claims.
+#: What a config's ``+flag`` does to the notebook's SOURCE before it runs: one or more
+#: (old, new) edits. Each must match its cell exactly once, or the run is refused: a
+#: notebook edited since would otherwise be measured without the change the table claims.
 FLAGS = {
     # PESTPP-IES's own lambda testing (its default ies_lambda_mults and
     # lambda_scale_fac): drop the notebook's single-lambda overrides.
-    "lambda": ("ies_lambda_mults=1.0, lambda_scale_fac=1.0", ""),
-    # The levels alone: drop the hydrographs' shape targets.
-    "nodiff": ("    cal.observe(heads.differences())\n", ""),
+    "lambda": (("ies_lambda_mults=1.0, lambda_scale_fac=1.0", ""),),
+    # The levels alone, at the reading's weight 1 / NOISE["head"]: no shape targets.
+    "nodiff": (
+        ('    w_levels = 1.0 / np.hypot(NOISE["head"], DATUM)\n',
+         '    w_levels = 1.0 / NOISE["head"]\n'),
+        ('    w_shape = np.sqrt(NOISE["head"] ** -2 - w_levels**2)\n', ""),
+        ("    cal.observe(heads.differences(weight=w_shape))\n", ""),
+    ),
+    # The notebook's declaration before ledger 593: the levels AND their
+    # differences both at the reading's weight, each reading's noise counted twice in
+    # the shape (ledger 592).
+    "double": (
+        ("case.wells.assign(weight=w_levels)", "case.wells"),
+        ("    cal.observe(heads.differences(weight=w_shape))\n",
+         "    cal.observe(heads.differences())\n"),
+    ),
 }
 
 
@@ -188,12 +264,12 @@ def _cells(flags) -> list[str]:
         if cell["cell_type"] == "code"
     ]
     for flag in flags:
-        old, new = FLAGS[flag]
-        hits = [index for index, source in enumerate(cells) if old in source]
-        if len(hits) != 1 or cells[hits[0]].count(old) != 1:
-            raise SystemExit(f"+{flag}: {old!r} is not in exactly one place of {NOTEBOOK.name}; "
-                             "update FLAGS to the notebook's current source")
-        cells[hits[0]] = cells[hits[0]].replace(old, new)
+        for old, new in FLAGS[flag]:
+            hits = [index for index, source in enumerate(cells) if old in source]
+            if len(hits) != 1 or cells[hits[0]].count(old) != 1:
+                raise SystemExit(f"+{flag}: {old!r} is not in exactly one place of "
+                                 f"{NOTEBOOK.name}; update FLAGS to the notebook's current source")
+            cells[hits[0]] = cells[hits[0]].replace(old, new)
     return cells
 
 
@@ -223,10 +299,13 @@ def run(reals: int, iterations: int, seed: int, workspace: pathlib.Path, *,
                                             if "base" in row else float("nan"),
                                             "runs": int(row["total_runs"])}
                                   for it, row in phi.iterrows()}
+    report["scalar_correlation"] = scalar_correlation(namespace["cal"], namespace["ies"],
+                                                      report["scalars"])
     if linear:
         report["linear"] = linear_check(namespace["cal"], namespace["ies"].workspace,
                                         namespace["ies"].case, report["scalars"], workspace / "linear",
-                                        workers=workers or 4)
+                                        workers=workers or 4,
+                                        head_noise=namespace["NOISE"]["head"])
     return report
 
 
@@ -257,10 +336,56 @@ def _phi_at_truth_and_base(namespace, workspace):
     return _weighted_phi(cal, at_truth), _weighted_phi(cal, rehearsal.base_observations(namespace["ies"]))
 
 
+def scalar_correlation(cal, ies, scalars) -> dict:
+    """The posterior correlation of the scalars' log10 values, ``{group: {group: r}}``.
+
+    From the posterior REALIZATIONS (the ``base`` row left out). Under an exact
+    posterior a run's z values are correlated as its parameters are, which the
+    binomial behind :func:`~myflopy.modflow.mf6.canonical_rehearsal.pooled_recovery`'s
+    coverage threshold ignores; :func:`correlated_false_fail` puts it back.
+    """
+
+    import numpy as np
+
+    data = cal.pst.parameter_data
+    groups = data.groupby("pargp")["parnme"].apply(list)
+    names = {group: str(members[0]).lower() for group, members in groups.items()
+             if len(members) == 1 and group in scalars}
+    posterior = ies.posterior_parameters._df.rename(columns=str.lower)
+    posterior = posterior.drop(index=[i for i in posterior.index if str(i).lower() == "base"])
+    logs = np.log10(posterior[list(names.values())].astype(float))
+    logs.columns = list(names)
+    return logs.corr().to_dict()
+
+
+def correlated_false_fail(reports, verdict, draws=200_000, seed=0) -> dict:
+    """How often an exact posterior fails ``verdict``'s thresholds with each run's z
+    correlated as its posterior is (``report["scalar_correlation"]``): Monte Carlo of
+    one multivariate normal per run, the forecast at its exact binomial rate."""
+
+    import numpy as np
+
+    from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
+
+    rng = np.random.default_rng(seed)
+    inside = np.zeros(draws, int)
+    largest = np.zeros(draws)
+    for report in reports:
+        order = list(report["scalars"])
+        corr = np.array([[report["scalar_correlation"][a][b] for b in order] for a in order])
+        z = rng.multivariate_normal(np.zeros(len(order)), corr, size=draws, method="eigh")
+        inside += (np.abs(z) <= rehearsal.Z_BAND).sum(axis=1)
+        largest = np.maximum(largest, np.abs(z).max(axis=1))
+    coverage = float((inside < verdict.inside_min).mean())
+    largest_z = float((largest > verdict.z_max).mean())
+    return {"coverage": coverage, "largest_z": largest_z,
+            "either": float(((inside < verdict.inside_min) | (largest > verdict.z_max)).mean())}
+
+
 LINEAR_STEP = 0.01  # log10 step of the finite-difference Jacobian (2.3 % of a value)
 
 
-def linear_check(cal, master, case, scalars, scratch, *, workers=4) -> dict:
+def linear_check(cal, master, case, scalars, scratch, *, workers=4, head_noise=None) -> dict:
     """The linear (first-order) posterior at the base realization, beside the ensemble's.
 
     A finite-difference Jacobian of every measured equality observation (the bound
@@ -279,7 +404,9 @@ def linear_check(cal, master, case, scalars, scratch, *, workers=4) -> dict:
       (``synthetic_hydrographs`` bins to truth + draw, and the differences are taken
       from those binned targets) -- with the observations as declared and with the
       levels alone. 1 is a calibrated posterior; above 1 its bands are that many times
-      too narrow.
+      too narrow. A level's noise is ``head_noise`` (ft) when given -- the notebook's
+      ``NOISE["head"]``, which the levels' weight no longer is once it carries a datum
+      error (ledger 593) -- else 1 / its weight, as every other observation's.
     """
 
     from concurrent.futures import ThreadPoolExecutor
@@ -338,7 +465,10 @@ def linear_check(cal, master, case, scalars, scratch, *, workers=4) -> dict:
 
     # The data's actual noise as a map of independent unit draws: noise = A @ draws.
     n = len(used)
-    noise_map = np.diag(np.where(groups == "hdiff", 0.0, 1.0 / np.where(w > 0, w, 1.0)))
+    sd = 1.0 / np.where(w > 0, w, 1.0)
+    if head_noise is not None:
+        sd = np.where(groups == "hds", float(head_noise), sd)
+    noise_map = np.diag(np.where(groups == "hdiff", 0.0, sd))
     level_row = {re.sub(r"^oname:hds_", "", name): i for i, name in enumerate(used) if groups[i] == "hds"}
     by_well = {}
     for i, name in enumerate(used):
@@ -392,9 +522,10 @@ def _print_run(label: str, seed: int, minutes: float, report: dict) -> None:
         print(f"   {name:>14}: truth {row['truth']:.3f}  posterior 5-95% "
               f"[{row['posterior_p05']:.3f}, {row['posterior_p95']:.3f}]  z {row['z']:+.2f}"
               f"{'' if inside else '  OUTSIDE'}")
-    low, high = report["forecast_posterior"]
-    print(f"   forecast: truth {report['forecast_truth']:.3f} in {low:.3f}..{high:.3f}: "
-          f"{'yes' if report['passes']['forecast_covered'] else 'NO'}")
+    forecast = report["forecast"]
+    print(f"   forecast: truth {forecast['truth']:.3f} in {forecast['posterior_low']:.3f}.."
+          f"{forecast['posterior_high']:.3f} ({forecast['members']} realizations): "
+          f"{'yes' if forecast['covered'] else 'NO'}")
     print(f"   crisp gap closed {report['crisp_gap_closed']:.2f}  truth round trip "
           f"{report['truth_round_trip']:.1e}  write-back {report['write_back']:.1e}  "
           f"equilibrium {'yes' if report['equilibrium'] else 'NO'}", flush=True)
@@ -417,14 +548,25 @@ def main(argv=None) -> None:
     parser.add_argument("--keep", type=pathlib.Path, default=None,
                         help="keep each run's workspace and report (report.json) under this "
                              "directory instead of a temporary one")
+    parser.add_argument("--reports", type=pathlib.Path, default=None,
+                        help="run nothing: pool the report.json files a --keep run left under "
+                             "this directory, by configuration")
     args = parser.parse_args(argv)
+    if args.reports is not None:
+        rows = []
+        for path in sorted(args.reports.glob("*/report.json")):
+            label, _, seed = path.parent.name.rpartition("_")
+            rows.append((label, int(seed), float("nan"), json.loads(path.read_text(encoding="utf-8"))))
+        _print_pooled(rows)
+        return
     seeds = [int(seed) for seed in args.seeds.split(",")]
     configs = [(config, *parse_config(config)) for config in args.configs]
+    keep = args.keep.resolve() if args.keep is not None else None  # before the chdir
     os.chdir(NOTEBOOKS)
     sys.path.insert(0, str(NOTEBOOKS))
     rows = []
     with tempfile.TemporaryDirectory(prefix="rehearsal_budget_") as scratch:
-        base = (args.keep.resolve() if args.keep is not None else pathlib.Path(scratch))
+        base = keep if keep is not None else pathlib.Path(scratch)
         for label, reals, iterations, flags in configs:
             for seed in seeds:
                 workspace = base / f"{label.replace('+', '_')}_{seed}"
@@ -447,10 +589,29 @@ def main(argv=None) -> None:
                    for name, inside in report["scalars_inside"].items() if not inside]
         print(f"{label:>16} {seed:>4} {minutes:5.1f} "
               f"{report['phi_ratio']:9.4f} {report['crisp_gap_closed']:9.2f} "
-              f"{'yes' if report['passes']['forecast_covered'] else 'NO':>8} "
+              f"{'yes' if report['forecast']['covered'] else 'NO':>8} "
               f"{report['truth_round_trip']:10.1e} {report['write_back']:10.1e} "
               f"{'yes' if report['equilibrium'] else 'NO':>5} "
               f"{report['phi_truth']:9.1f} {report['phi_base']:8.1f}  {', '.join(outside) or '-'}")
+    _print_pooled(rows)
+
+
+def _print_pooled(rows) -> None:
+    """Each configuration's runs, seeds pooled: ``pooled_recovery``'s verdict, and how
+    often an exact posterior fails its thresholds -- by the binomial it uses and with
+    each run's z correlated as its posterior is."""
+
+    from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
+
+    for label in dict.fromkeys(label for label, *_ in rows):
+        reports = [report for name, _, _, report in rows if name == label]
+        verdict = rehearsal.pooled_recovery(reports)
+        correlated = correlated_false_fail(reports, verdict)
+        print(f"\npooled {label} ({verdict.runs} runs): "
+              f"{'PASSES' if verdict.passed else 'FAILS'}; an exact posterior fails it "
+              f"at most {verdict.false_fail['total']:.3f} (binomial; correlated as measured: "
+              f"coverage {correlated['coverage']:.3f}, largest |z| {correlated['largest_z']:.3f})")
+        print(verdict.summary().to_string())
 
 
 if __name__ == "__main__":

@@ -748,6 +748,13 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50
   profile via `SIMPLE_MODFLOW_CANONICAL_PROFILE=validation`.
+- **The rehearsal's pooled coverage is OPT-IN** (ledger 593):
+  `SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1` runs
+  `tests/test_recalibration_rehearsal.py::test_converged_rehearsals_cover_the_truth_pooled`
+  -- `canonical_08` at 64 realizations x 3 iterations with PESTPP-IES's own lambda testing
+  on six seeds (about 30 min at its 12 workers) -- and asserts
+  `canonical_rehearsal.pooled_recovery`. Off by default: the
+  notebook's CI budget (16x2) cannot converge, so it asserts only the per-run gates.
 - Tour/verify interactively: `examples/mf6/notebooks/canonical_fast_tour.ipynb`.
 - **A test grid is an ASSUMPTION, and the one difference that matters is the vertex
   DTYPE** (ledger 263, corrected in 265). `rectangular_voronoi` is a real SciPy Voronoi
@@ -2177,7 +2184,15 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   added. A flux target (crisp's baseflow) is mandatory: heads alone left recharge at
   0.534 for a truth of 1.0 -- measured by the item-18 design pass on the 4-layer
   canonical testing profile (12x2 and 24x3 IES), before ledger 590's noise fix, not by
-  the rehearsal, which always carries the flux target.
+  the rehearsal, which always carries the flux target. **Its recovery is judged POOLED
+  over several CONVERGED runs** (ledger 593, the user's call):
+  `canonical_rehearsal.pooled_recovery(reports)` -- truths inside their 5-95% bands,
+  largest `|z|`, forecasts covered, each against a threshold an exact posterior fails ~1%
+  of the time -- never "every truth inside in every run" (0.9^6 = 53% for an exact one).
+  A band is the normal fitted to the posterior REALIZATIONS in log10 (never the `base`
+  row), so `inside` is `|z| <= 1.645` -- one rule. The notebook counts each head reading
+  ONCE (levels at `1/hypot(noise, DATUM)`, differences at the rest of the weight): both at
+  full weight failed the pooled check on a Sy `z` of +3.7.
 
 ### What's missing / next steps for PEST
 > Verify against the code before building — most of the old list is now done

@@ -15,19 +15,31 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
   catches a misrouted mapping: a ``package="crisp"`` multiplier sent to ``riv``, the wet
   and dry months swapped, average-year targets binned onto the wrong cycle, or the two
   lakes' bed leakances swapped each fail it;
-- the whole notebook, run once: the user's pass criteria (Q9) on its
-  ``rehearsal_report`` -- the round trips, the equilibrium, phi and crisp's log gap
-  asserted, the two posterior-coverage criteria held as a non-strict xfail until the user
-  decides: at the notebook's fast budget the ensemble has not converged (ledgers 589,
-  590); at a converging one (64x6 or 64x3, PESTPP-IES's own lambda testing) the
-  forecast is covered on every seed and 28 of 36 scalar truths over six seeds, the
-  recharge bands somewhat narrower than the linear posterior's (ledger 591).
+- the whole notebook, run once at its CI budget (16 realizations x 2 iterations, one
+  lambda): the user's per-run pass criteria (Q9) on its ``rehearsal_report`` -- the
+  round trips, the equilibrium, phi and crisp's log gap. Coverage is not asked of it:
+  at that budget the ensemble has not converged (ledgers 589, 590);
+- the recovery's ONE scoring rule (ledger 593): a scalar's band and its ``z``
+  come from the normal fitted to the posterior REALIZATIONS' log10 values (never the
+  ``base`` row), so ``inside`` is ``|z| <= Z_BAND``; and the pooled verdict over several
+  runs, whose thresholds an exact posterior fails at most 5% of the time;
+- OPT-IN, the pooled coverage of CONVERGED runs: with
+  ``SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1`` the notebook runs at 64 realizations x 3
+  iterations with PESTPP-IES's own lambda testing on six seeds (half an hour at 12
+  workers) and ``rehearsal.pooled_recovery`` must pass --
+  the user's criterion in place of "every scalar truth inside its band in every run",
+  which an exact posterior meets about half the time (0.9^6). Measured: it passes with
+  the notebook's heads counted once (33 of 36 inside, largest |z| 2.56, forecast 6 of 6)
+  and failed with the levels and their differences both at the reading's weight (a Sy z
+  of +3.73).
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -237,42 +249,187 @@ def rehearsed(tmp_path_factory):
     return namespace["rehearsal_report"]
 
 
-#: The user's criteria (Q9) a run of the notebook's size meets on every seed measured
-#: (``docs/reproducers/rehearsal_recovery_budget.py``).
+#: The user's per-run criteria (Q9), which a run of the notebook's CI size meets on every
+#: seed measured (``docs/reproducers/rehearsal_recovery_budget.py``). The scalar truths
+#: inside their bands and the forecast covered are judged POOLED over several converged
+#: runs instead (ledger 593): the opt-in test below.
 MET = ("truth_round_trip", "write_back", "equilibrium", "phi_ratio", "crisp_gap_closed")
-#: The two it does not: the scalar truths inside their posterior 5-95% bands, and the
-#: forecast's truth inside the posterior's range. Measured at 16x2 to 48x3 over three
-#: seeds, one to six of the six scalar truths fall outside and the forecast range misses
-#: on some seeds -- an ensemble that has not converged at this budget: the realization
-#: IES ends on fits the noisy data 1.6-3x worse than the truth's multipliers do (ledger
-#: 589, ledger 590). At a converging budget (64x6, lambda testing on, six seeds) the
-#: forecast is covered 12 of 12 and 28 of 36 scalar truths sit inside their bands, but
-#: only 1 run of 6 has all six inside -- which an exact posterior manages about half the
-#: time (ledger 591); the criterion is the user's to restate.
-UNDECIDED = ("scalars_inside", "forecast_covered")
 
 
 @pytest.mark.slow
 @NEEDS_PEST
 def test_rehearsal_notebook_recovers_the_truth(rehearsed):
-    assert set(rehearsed["passes"]) == set(MET) | set(UNDECIDED)
+    assert set(rehearsed["passes"]) == set(MET)
     failed = sorted(name for name in MET if not rehearsed["passes"][name])
     assert failed == [], {name: rehearsed.get(name) for name in failed}
     assert rehearsed["start_misfit"] > 100, "the start is far from the data"
+    # What the pooled verdict reads off each run is in the report, by the one rule.
+    for group, row in rehearsed["scalars"].items():
+        assert rehearsed["scalars_inside"][group] == (abs(row["z"]) <= rehearsal.Z_BAND), group
+    forecast = rehearsed["forecast"]
+    assert forecast["members"] >= 10 and set(forecast) >= {"truth", "covered"}
+    rehearsal.pooled_recovery([rehearsed])  # a report it can read
+
+
+# -- the scoring rule and the pooled verdict (ledger 593) ----------------------
+
+
+class _Ensemble:
+    def __init__(self, frame):
+        self._df = frame
+
+
+def _scored(monkeypatch, posterior, prior, truth):
+    """``recovery`` over hand-made ensembles of one scalar ``p`` (group ``g``)."""
+
+    monkeypatch.setattr(rehearsal, "truth_parameter_values", lambda case, cal: {"p": truth})
+    cal = SimpleNamespace(pst=SimpleNamespace(
+        parameter_data=pd.DataFrame({"parnme": ["p"], "pargp": ["g"]})))
+    ies = SimpleNamespace(posterior_parameters=_Ensemble(posterior),
+                          prior_parameters=_Ensemble(prior))
+    return rehearsal.recovery(None, cal, ies).loc["g"]
+
+
+def test_recovery_scores_the_realizations_by_one_rule(monkeypatch):
+    rng = np.random.default_rng(3)
+    logs = rng.normal(0.0, 0.1, 63)
+    realizations = pd.DataFrame({"P": 10 ** logs}, index=[str(i) for i in range(63)])
+    # A base row far from the realizations: it is not a draw and must move nothing.
+    posterior = pd.concat([realizations, pd.DataFrame({"P": [100.0]}, index=["base"])])
+    prior = pd.concat([realizations * 3.0, pd.DataFrame({"P": [1.0]}, index=["base"])])
+    mean, sd = logs.mean(), logs.std(ddof=1)
+    for z in (-1.7, -1.6, 0.4, 1.62, 1.66, 4.0):
+        row = _scored(monkeypatch, posterior, prior, 10 ** (mean + z * sd))
+        assert row["z"] == pytest.approx(z, abs=1e-9)
+        assert row["inside"] == (abs(z) <= rehearsal.Z_BAND), z
+        assert row["posterior_p05"] == pytest.approx(10 ** (mean - rehearsal.Z_BAND * sd))
+        assert row["posterior_p95"] == pytest.approx(10 ** (mean + rehearsal.Z_BAND * sd))
+        assert row["posterior_p05"] <= row["truth"] <= row["posterior_p95"] or not row["inside"]
+    assert row["posterior_mean"] == pytest.approx(10 ** mean)
+    assert row["base"] == 100.0
+    assert row["prior_p95"] == pytest.approx(3.0 * row["posterior_p95"])
+    assert not _scored(monkeypatch, prior, posterior, 1.0)["narrowed"], "a wider posterior"
+
+
+def test_recovery_z_of_a_collapsed_ensemble(monkeypatch):
+    flat = pd.DataFrame({"p": [2.0] * 8}, index=range(8))
+    assert _scored(monkeypatch, flat, flat * 1.5, 2.0)["z"] == 0.0
+    row = _scored(monkeypatch, flat, flat * 1.5, 1.0)
+    assert row["z"] == -np.inf and not row["inside"]
+
+
+def test_forecast_recovery_reads_the_realizations_range():
+    columns = ["oname:fore_otype:lst_usecol:f01_per:36"]
+    posterior = pd.DataFrame({columns[0]: [10.0, 10.5, 11.0, 30.0]}, index=["0", "1", "2", "base"])
+    prior = pd.DataFrame({columns[0]: [8.0, 12.0, 9.0, 10.0]}, index=["0", "1", "2", "base"])
+    ies = SimpleNamespace(posterior=_Ensemble(posterior), prior=_Ensemble(prior),
+                          forecast=lambda name: SimpleNamespace(name=columns[0]))
+    inside = rehearsal.forecast_recovery(ies, pd.Series({columns[0]: 10.9}))
+    assert inside == {"name": columns[0], "truth": 10.9, "posterior_low": 10.0,
+                      "posterior_high": 11.0, "prior_low": 8.0, "prior_high": 12.0,
+                      "members": 3, "covered": True}
+    # The base realization does not widen the range.
+    assert not rehearsal.forecast_recovery(ies, pd.Series({columns[0]: 20.0}))["covered"]
+
+
+def _report(zs, covered=True, members=63):
+    return {"scalars": {f"p{i}": {"z": float(z)} for i, z in enumerate(zs)},
+            "forecast": {"covered": covered, "members": members}}
+
+
+def test_pooled_thresholds_and_their_false_fail_rates():
+    verdict = rehearsal.pooled_recovery([_report([0.0] * 6)] * 6)
+    # 36 truths at 0.9 each: fewer than 28 inside has probability 0.0077 (binomial), fewer than 29
+    # 0.0235; all 36 |z| <= 3.634 with probability 0.99; 5 of 6 forecasts at 2/64 a miss
+    # (63 realizations).
+    assert (verdict.inside_min, verdict.forecasts_min) == (28, 5)
+    assert verdict.z_max == pytest.approx(3.634, abs=1e-3)
+    assert verdict.false_fail["coverage"] == pytest.approx(0.00767, abs=1e-5)
+    assert verdict.false_fail["forecast"] == pytest.approx(0.01347, abs=1e-5)
+    assert verdict.false_fail["total"] < 0.05
+    assert verdict.passed and verdict.fraction == 1.0
+    one = rehearsal.pooled_recovery([_report([0.0] * 6)])
+    assert (one.inside_min, one.forecasts_min) == (3, 0), "one run: 3 of 6, any forecast"
+
+
+def test_pooled_verdict_fails_each_criterion_by_name():
+    good = [_report([0.0] * 6)] * 6
+    eight_out = [_report([2.0] * 6), _report([2.0, 2.0] + [0.0] * 4)] + good[2:]
+    verdict = rehearsal.pooled_recovery(eight_out)
+    assert verdict.inside == 28 and verdict.passes["coverage"]
+    worse = rehearsal.pooled_recovery([_report([2.0] * 6), _report([2.0] * 3 + [0.0] * 3)]
+                                      + good[2:])
+    assert worse.inside == 27 and not worse.passes["coverage"] and not worse.passed
+    far = rehearsal.pooled_recovery([_report([0.0] * 5 + [-3.7])] + good[1:])
+    assert far.passes["coverage"] and not far.passes["largest_z"]
+    assert far.largest_z_at == (0, "p5") and far.largest_z == pytest.approx(3.7)
+    missed = rehearsal.pooled_recovery([_report([0.0] * 6, covered=False)] * 2 + good[2:])
+    assert missed.forecasts_covered == 4 and not missed.passes["forecast"]
+    assert rehearsal.pooled_recovery([_report([float("nan")] + [0.0] * 5)] + good[1:]).inside == 35
+
+
+def test_an_exact_posterior_fails_the_pooled_verdict_rarely():
+    """Monte Carlo of exact, converged posteriors: six runs of six independent standard
+    normal z and a forecast missing 2/64 of the time fail the verdict at its stated
+    rate, 0.031 (the reproducer measures the rehearsal's correlated rate, about 0.04)."""
+
+    rng = np.random.default_rng(11)
+    trials = 3000
+    failed = sum(
+        not rehearsal.pooled_recovery([
+            _report(rng.normal(size=6), covered=bool(rng.random() >= 2 / 64)) for _ in range(6)
+        ]).passed
+        for _ in range(trials))
+    assert failed / trials == pytest.approx(0.031, abs=0.01)
+
+
+@pytest.mark.parametrize(("reports", "error", "match"), [
+    ([], ValueError, "at least one"),
+    ([{"scalars": {"p": {"z": 0.0}}}], KeyError, "'forecast'"),
+    ([{"scalars": {}, "forecast": {"covered": True, "members": 9}}], ValueError, "no scalar"),
+])
+def test_pooled_recovery_refuses(reports, error, match):
+    with pytest.raises(error, match=match):
+        rehearsal.pooled_recovery(reports)
+
+
+#: The opt-in pooled coverage check (ledger 593): set to ``1`` to run it.
+COVERAGE_ENV = "SIMPLE_MODFLOW_REHEARSAL_COVERAGE"
+#: A converging budget (ledger 591: phi has nearly stopped falling after the third
+#: iteration; 64 realizations covered the forecast on every seed) and the seeds pooled.
+COVERAGE_BUDGET = "64x3+lambda"
+COVERAGE_SEEDS = (1, 2, 3, 4, 5, 6)
+#: PESTPP-IES workers a run: about five minutes a run at 12.
+COVERAGE_WORKERS = min(12, os.cpu_count() or 1)
 
 
 @pytest.mark.slow
 @NEEDS_PEST
-@pytest.mark.xfail(strict=False, reason=(
-    "an unconverged ensemble at the notebook's 16x2: the posterior 5-95% bands miss 5-6 of 6 "
-    "scalar truths and the forecast range misses on some seeds (ledger 590); converged "
-    "(64x6, lambda testing) the forecast is covered on 12 of 12 runs but all six truths are "
-    "inside on 1 of 6, an exact posterior's about 1 in 2 -- ledger 591, the "
-    "user's decision"))
-def test_rehearsal_posterior_covers_the_truth(rehearsed):
-    failed = sorted(name for name in UNDECIDED if not rehearsed["passes"][name])
-    assert failed == [], {"scalars": rehearsed["scalars"],
-                          "forecast": (rehearsed["forecast_truth"], rehearsed["forecast_posterior"])}
+@pytest.mark.skipif(os.environ.get(COVERAGE_ENV) != "1",
+                    reason=f"opt-in: half an hour of PESTPP-IES; set {COVERAGE_ENV}=1")
+def test_converged_rehearsals_cover_the_truth_pooled(tmp_path, monkeypatch):
+    import IPython.display
+
+    budget = _budget_reproducer()
+    reals, iterations, flags = budget.parse_config(COVERAGE_BUDGET)
+    here = tmp_path / "examples" / "mf6" / "notebooks"
+    here.mkdir(parents=True)
+    monkeypatch.chdir(here)  # what the notebook writes beside itself lands under tmp_path
+    monkeypatch.syspath_prepend(str(budget.NOTEBOOKS))
+    monkeypatch.setattr(IPython.display, "display", IPython.display.display)  # run() swaps it
+    reports = []
+    for seed in COVERAGE_SEEDS:
+        workspace = tmp_path / f"seed_{seed}"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            report = budget.run(reals, iterations, seed, workspace, flags=flags,
+                                workers=COVERAGE_WORKERS)
+        failed = sorted(name for name in MET if not report["passes"][name])
+        assert failed == [], (seed, {name: report.get(name) for name in failed})
+        reports.append(report)
+        shutil.rmtree(workspace)  # hundreds of MB a run on a quota'd /tmp
+    verdict = rehearsal.pooled_recovery(reports)
+    assert verdict.passed, verdict.summary().to_string()
 
 
 # -- the budget reproducer ----------------------------------------------------------------
@@ -298,11 +455,12 @@ def test_the_budget_reproducers_flags_still_edit_the_notebook():
 
     budget = _budget_reproducer()
     plain = budget._cells(())
-    for flag, (old, _new) in budget.FLAGS.items():
+    for flag, edits in budget.FLAGS.items():
         edited = budget._cells((flag,))
         changed = [index for index, (a, b) in enumerate(zip(plain, edited, strict=True)) if a != b]
         assert len(changed) == 1, flag
-        assert old in plain[changed[0]] and old not in edited[changed[0]], flag
+        for old, _new in edits:
+            assert old in plain[changed[0]] and old not in edited[changed[0]], flag
         compile(edited[changed[0]], f"<{flag}>", "exec")
     assert budget.parse_config("64x6+lambda+nodiff") == (64, 6, ("lambda", "nodiff"))
     with pytest.raises(SystemExit, match="unknown flag"):

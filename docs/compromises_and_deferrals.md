@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 592 entries (597 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 593 entries (598 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 593 | The rehearsal's recovery is judged by POOLED coverage over several converged runs, scored by one rule, and... | 2026-10-14 |
 | 592 | Levels and their differences observed together at the source weight count each reading's noise twice in the... | 2026-10-13 |
 | 591 | At a converging PESTPP-IES budget the rehearsal covers its forecast and most of its truths, its recharge ba... | 2026-10-13 |
 | 590 | `run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` --... | 2026-10-12 |
@@ -21980,10 +21981,15 @@ same day, which is the useful part of the result.
       5 and 5 of 6 truths inside (|z| <= 1.8 bar one rch_dry at 3.6, bands 3-10x wider;
       no noise drawn) -- while its forecast range missed the truth on all 3 seeds,
       0.01-0.11 ft low. Even an exact posterior would put all six inside their 90% bands
-      only about half the time (0.9^6). The notebook keeps the user's declaration and knobs (differences,
+      only about half the time (0.9^6). ~~The notebook keeps the user's declaration and knobs (differences,
       16x2); its report computes every criterion, `test_rehearsal_notebook_recovers_the_truth`
       asserts the met ones, and `test_rehearsal_posterior_covers_the_truth` holds the other
-      two as a non-strict xfail until decided.
+      two as a non-strict xfail until decided.~~ The notebook keeps its 16x2 knobs and
+      counts each head reading ONCE (the levels at a weight carrying a datum error, their
+      differences at the rest of the reading's weight);
+      `test_rehearsal_notebook_recovers_the_truth` asserts the per-run criteria, and the
+      coverage of the truths and the forecast is judged POOLED over six converged runs by
+      an opt-in test -- the xfail is gone (ledger 593).
 
 590. **`run_ies`/`prior` at the default `noise=True` draw measurement noise -- they write `ies_no_noise false` -- and `seed=`'s refusal names `random_seed` (2026-10-12).**
       Found by the review of the recalibration rehearsal (ledger 589).
@@ -22000,13 +22006,15 @@ same day, which is the useful part of the result.
       notebook calibrates at 16 realizations x 2 iterations with `ies_lambda_mults=1.0`,
       `lambda_scale_fac=1.0`; with noise drawn, the posterior base still ends at 1.6-3.0x
       the truth's phi on the same data and 5-6 of 6 scalar truths outside their bands
-      at 16x2 (3 at 32x3) -- an unconverged ensemble, so Q9's coverage criteria stay a
-      non-strict xfail. `rehearsal_recovery_budget.py` now prints both phis. **Measured
+      at 16x2 (3 at 32x3) -- an unconverged ensemble, ~~so Q9's coverage criteria stay a
+      non-strict xfail~~ so the coverage criteria are not asked of that budget: they are
+      judged pooled over converged runs (ledger 593). `rehearsal_recovery_budget.py` now prints both phis. **Measured
       at a converging budget** (ledger 591: 64x6 and 64x3 with PESTPP-IES's
       own lambda testing): the base fits the noisy data better than the truth (0.82-0.96x
       its phi), the forecast is covered in 15 of 15 runs and 28-30 of 36 scalar truths sit
       inside their bands -- the unconverged ensemble is confirmed as the cause; the
-      notebook keeps 16x2 for CI and the xfail stays.
+      notebook keeps 16x2 for CI ~~and the xfail stays~~ (the xfail is gone: ledger
+      593).
 
 591. **At a converging PESTPP-IES budget the rehearsal covers its forecast and most of its truths, its recharge bands somewhat narrower than the data say; the notebook keeps its fast budget and the coverage test its non-strict xfail (2026-10-13).**
       The user's Q9 follow-up: run `canonical_08` at a budget where PESTPP-IES converges.
@@ -22030,12 +22038,15 @@ same day, which is the useful part of the result.
       phi but missed the forecast once in 3; 16x2 with lambda testing does not converge
       (base 1.43x the truth's phi). **Chosen:** no library change -- no parameter, noise
       or forecast was found misrouted. The notebook keeps the user's 16x2 single-lambda
-      knobs (the CI budget), `test_rehearsal_posterior_covers_the_truth` stays a
+      knobs (the CI budget), ~~`test_rehearsal_posterior_covers_the_truth` stays a
       non-strict xfail with its reason citing this, and Q9's per-run "every scalar truth
       inside" is NOT reworded -- an exact posterior meets it about half the time (0.9^6,
       some 3 runs of 6), where 1 of 6 here met it with the differences (2 without), the
       double count and the recharge narrowness above both pulling it lower -- it goes back
-      to the user. **For Ten Trails:** lambda
+      to the user.~~ and the user reworded Q9's per-run "every scalar truth inside" (an
+      exact posterior meets it about half the time, 0.9^6; 1 run of 6 here with the
+      differences, 2 without) as POOLED coverage over several converged runs -- the xfail
+      is gone (ledger 593). **For Ten Trails:** lambda
       testing ON (do not copy the notebook's overrides), at least 3 iterations and on while
       phi still falls by more than ~1-2% an iteration, and 64 realizations sufficed for these
       20 adjustable parameters where 32 missed the forecast once in 3 -- more parameters
@@ -22057,8 +22068,58 @@ same day, which is the useful part of the result.
       and the bed leakances; with the levels alone 0.82-0.98 for all. At a converging budget
       that is 28 against 30 of 36 truths inside their bands. **Not changed, the user's
       decision:** Q5's source weight is right for differences used INSTEAD of levels (a
-      datum or screen error), and the rehearsal's declaration observes both; the
+      datum or screen error), and ~~the rehearsal's declaration observes both~~ the
+      rehearsal observes both with each reading counted once since ledger 593
+      (levels at a datum-carrying weight, differences at the rest); the
       differences' docstring and the PEST guide now say it. The ways out are the user's:
       the levels alone where they are trusted; or levels at a weight that carries the datum
       error and differences at `weight=sqrt(w**2 - w_levels**2)`, so the shape is counted
       once; or a refusal of both at full weight.
+
+593. **The rehearsal's recovery is judged by POOLED coverage over several converged runs, scored by one rule, and its notebook counts each head reading once (2026-10-14).**
+      The user's call on ledger 591's open question: not "every scalar truth inside its
+      5-95% band in every run", which an exact posterior meets 0.9^6 = 53% of the time.
+      **Chosen:**
+      - ONE scoring rule in `canonical_rehearsal.recovery`: a band is the normal fitted to
+        the posterior REALIZATIONS' log10 values (the `base` row is not a draw and is in no
+        statistic), so `inside` is `|z| <= 1.645` and the two cannot disagree (before, the
+        band was the ensemble's percentiles with `base` in them and `z` its moments: 64x6
+        seed 6 reported sy at z -1.56 OUTSIDE). Fitted, not percentiles: at 64 members a
+        5th percentile sits between the 3rd and 4th member, and a largest-|z| criterion
+        reaches past the ensemble's range. `forecast_recovery` takes the forecast's range
+        from the realizations too.
+      - `canonical_rehearsal.pooled_recovery(reports)`: pooled over the runs, the truths
+        inside their bands, the largest |z| and the runs whose forecast range holds its
+        truth, each against the threshold an exact posterior fails with probability at
+        most `POOLED_FALSE_FAIL` -- coverage 0.01 (binomial at 0.9), |z| 0.01 (Sidak,
+        which holds for correlated z too), forecast 0.015 (each run missing 2/(N+1)) --
+        computed for the counts given. Six runs of six scalars at 63 realizations: at
+        least 28 of 36, at most 3.63, at least 5 of 6; together 3.1% by independence. The
+        coverage budget is the smallest because a run's z are correlated as its posterior
+        is (rch_wet with sy 0.68-0.71, with rch_dry 0.61-0.62, measured over 12 converged
+        runs): Monte Carlo with those correlations puts the 28 threshold at 1.8% where the
+        binomial says 0.77%, the verdict at about 4%; 29, the binomial's own 2.5% point,
+        would have failed an exact posterior 4.1% of the time alone. NOT built: thresholds
+        computed from each run's correlation -- a notebook report does not carry one; the
+        reproducer measures it (`correlated_false_fail`).
+      - CI keeps the per-run gates at 16x2 (round trips, equilibrium, phi, crisp's gap);
+        the pooled check is the opt-in `test_converged_rehearsals_cover_the_truth_pooled`
+        (`SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1`; 64x3 with lambda testing, seeds 1-6, 12
+        workers). The non-strict xfail is gone.
+      **Measured** (`docs/reproducers/rehearsal_recovery_budget.py`, tables in its
+      docstring; 64x3 with lambda testing, seeds 1-6, noise drawn): the notebook as it
+      stood -- the levels and their differences both at the reading's weight -- FAILS:
+      32 of 36 inside but sy at z +3.73 (seed 3). With each reading counted once -- the
+      levels at `1 / hypot(0.05, DATUM=0.05)`, the differences at `sqrt(0.05**-2 -
+      w_levels**2)` (ledger 592's second way out) -- the same seeds PASS: 33 of 36,
+      largest |z| 2.56 (the same sy), the forecast 6 of 6. **So the notebook -- the
+      template Ten Trails copies -- now declares the split** (a `DATUM` knob, a surgical
+      source edit), and its CI budget still meets every per-run gate (16x2, seeds 2026, 1,
+      2: phi ratio 0.021-0.029, crisp gap 1.01-1.16, round trip 1.1e-05, write-back
+      0.22-0.32). **Stated limits:** the synthetic data carry no datum error, so the split
+      under-weights the mean levels here -- a posterior on the safe side, not an exact
+      one; and a real datum error is SHARED by every reading of a well, so a per-reading
+      `1 / hypot(noise, datum)` counts the datum's error once per reading where it is one
+      error a well -- Ten Trails' head weighting stays the user's to decide (decisions
+      2026-10-14, answer 2). Why 64x3 converges, and the dry-month recharge band's
+      narrowness, are ledger 591's.
