@@ -15,18 +15,19 @@ A config is ``REALSxITERATIONS[+flag...]`` (``16x2``, ``64x6+lambda``); default:
 four unflagged configs of the first table, seeds 1-3. ``+lambda`` turns PESTPP-IES's own
 lambda testing back on (drops the notebook's ``ies_lambda_mults=1.0,
 lambda_scale_fac=1.0``, so its default multipliers and scale factors are tried every
-iteration); ``+nodiff`` observes the levels alone at the reading's weight (no
-``heads.differences``); ``+double`` restores the notebook's declaration before ledger
-593 -- the levels and their differences both at the reading's weight. Each
-flag edits the notebook's SOURCE before it runs and refuses to run unless each of its
+iteration); ``+nodiff`` drops the notebook's ``cal.observe(heads.differences())`` line
+(the levels alone); ``+split`` counts each head reading once -- the levels at ``1 /
+hypot(NOISE["head"], SPLIT_DATUM)``, their differences at ``sqrt(NOISE["head"]**-2 -
+w_levels**2)`` (ledger 592's second way out), where the notebook gives both the reading's
+weight. Each flag edits the notebook's SOURCE before it runs and refuses to run unless each of its
 texts is found exactly once. ``--workers`` overrides the notebook's ``WORKERS``;
 ``--keep`` keeps every run's workspace and its ``report.json`` (a relative path is
 resolved where the script is started); ``--linear`` adds :func:`linear_check` after each
 run; ``--reports DIR`` runs nothing and pools the ``report.json`` files a ``--keep`` run
 left. After the per-run table it prints, for each configuration, the seeds POOLED:
 ``canonical_rehearsal.pooled_recovery``'s verdict and how often an exact posterior fails
-its thresholds -- by the binomial it uses, and with each run's z correlated as its
-posterior is (:func:`correlated_false_fail`). Needs ``mf6`` and ``pestpp-ies``; minutes
+its thresholds -- independently, as it computes them, and with each run's z correlated as
+its posterior is (:func:`correlated_false_fail`). Needs ``mf6`` and ``pestpp-ies``; minutes
 per run.
 
 THE CRITERIA (the user's, Q9; the coverage restated 2026-10-14, ledger 593).
@@ -37,8 +38,9 @@ the equilibrium of the truth's last two cycles (0.05 ft). Stochastic, per run: m
 phi of the last iteration <= 0.2 x the prior's; crisp's conductance closing >= 50% of its
 log gap. Stochastic, POOLED over several converged runs (``pooled_recovery``): the
 fraction of scalar truths inside their posterior 5-95% bands, the largest |z| and the
-runs whose forecast range holds its truth -- six runs: at least 28 of 36, at most 3.63,
-at least 5 of 6. That replaced "every scalar truth inside its band, and the forecast
+runs whose forecast range holds its truth -- six runs at 63 realizations: at least 27 of
+36, at most 3.88, at least 5 of 6 (an exact posterior's ``z`` against a finite ensemble's
+own moments is ``sqrt(1 + 1/n)`` x Student t(n - 1), ledger 594). That replaced "every scalar truth inside its band, and the forecast
 covered, in every run", which an exact posterior meets only 0.9^6 = 53% of the time.
 
 THE BANDS. Since ledger 593 a band is the normal fitted to the posterior
@@ -46,8 +48,8 @@ REALIZATIONS' log10 values (mean +- 1.645 sd; the ``base`` row left out) and ``i
 is ``|z| <= 1.645``. Every table above the POOLED one below was scored by the earlier
 rule -- the ensemble's own 5th/95th percentiles with the ``base`` row in them, and ``z``
 from the same moments -- under which the two could disagree (64x6 seed 6: sy z -1.56
-reported outside). And every table above it ran the notebook's declaration of then: its
-unflagged rows are what ``+double`` is now.
+reported outside). Every unflagged row, here and below, ran the notebook's declaration:
+the levels and their differences both at the reading's weight.
 
 "phi truth" is the phi of the TRUTH's multipliers on the noisy data the run fitted (the
 template run at them), "phi base" the posterior base realization's: when the truth fits
@@ -159,42 +161,41 @@ above; "z" in the outside column. Every run: truth round trip 1.1e-05, write-bac
 0.19-0.30, equilibrium yes, phi ratio 0.012-0.015, crisp gap 0.96-1.01, forecast covered:
 
      config               seed  base/truth  outside the 5-95% band (z)
-     64x3+lambda+double      1        0.93  rch_wet -1.79
-     64x3+lambda+double      2        0.96  -
-     64x3+lambda+double      3        0.90  sy +3.73
-     64x3+lambda+double      4        0.98  -
-     64x3+lambda+double      5        0.92  -
-     64x3+lambda+double      6        0.92  bedleak_north -2.29, sy -1.69
-     64x3+lambda (split)     1        0.92  -
-     64x3+lambda (split)     2        0.96  -
-     64x3+lambda (split)     3        0.90  sy +2.56
-     64x3+lambda (split)     4        0.99  bedleak_north -1.73
-     64x3+lambda (split)     5        0.92  -
-     64x3+lambda (split)     6        0.93  bedleak_north -2.13
+     64x3+lambda             1        0.93  rch_wet -1.79
+     64x3+lambda             2        0.96  -
+     64x3+lambda             3        0.90  sy +3.73
+     64x3+lambda             4        0.98  -
+     64x3+lambda             5        0.92  -
+     64x3+lambda             6        0.92  bedleak_north -2.29, sy -1.69
+     64x3+lambda+split       1        0.92  -
+     64x3+lambda+split       2        0.96  -
+     64x3+lambda+split       3        0.90  sy +2.56
+     64x3+lambda+split       4        0.99  bedleak_north -1.73
+     64x3+lambda+split       5        0.92  -
+     64x3+lambda+split       6        0.93  bedleak_north -2.13
 
-(the ``+double`` rows were measured as the notebook then stood, unflagged, and the split
-ones as ``+split`` -- an edit this script carried until the notebook took it.)
+     pooled              inside (>= 27)  largest |z| (<= 3.88)  forecast (>= 5)  verdict
+     64x3+lambda         32 of 36        3.73 (seed 3, sy)      6 of 6           PASSES
+     64x3+lambda+split   33 of 36        2.56 (seed 3, sy)      6 of 6           PASSES
 
-     pooled              inside (>= 28)  largest |z| (<= 3.63)  forecast (>= 5)  verdict
-     64x3+lambda+double  32 of 36        3.73 (seed 3, sy)      6 of 6           FAILS
-     64x3+lambda (split) 33 of 36        2.56 (seed 3, sy)      6 of 6           PASSES
+(re-pooled with ``--reports`` from the kept ``report.json`` files, each scalar given the
+run's 63 realizations; first scored against a standard normal's thresholds, 28 and 3.63,
+under which the unflagged runs FAILED on that sy -- ledger 594.)
 
-An exact posterior fails these thresholds 3.1% of the time by the binomial and the
-independent tails ``pooled_recovery`` computes (coverage 0.77%, |z| 1.0%, forecast 1.35%
-at 63 realizations), and about 4% with each run's z correlated as its posterior is --
-the rehearsal's carries rch_wet with sy at 0.68-0.71 and with rch_dry at 0.61-0.62,
-which takes the coverage threshold's rate from 0.77% to 1.8% (Monte Carlo, both
-measurements alike); 29, the binomial's 2.5% point, would have failed an exact
-posterior 4.1% of the time on its own. The levels beside their differences at the
-reading's weight fail on the largest |z|: the same seed's sy is +3.73 with the shape
-counted twice and +2.56 with it counted once (ledger 592: that double count widens a
-seasonal parameter's z by 1.15-1.33x). The split -- the levels at ``1 / hypot(0.05,
-DATUM=0.05)`` ft, the differences at ``sqrt(0.05**-2 - w_levels**2)`` -- is the
-notebook's declaration since. The synthetic data carry no datum error, so it
-under-weights the mean levels: a posterior on the safe side. The notebook's CI budget
-with it (16x2, seeds 2026, 1, 2): phi ratio 0.021-0.029, crisp gap 1.01-1.16, round trip
-1.1e-05, write-back 0.22-0.32 -- its per-run gates hold; the pooled verdict fails (3 of
-18 inside, |z| up to 14.6), as an unconverged ensemble must.
+An exact posterior fails these thresholds 2.7% of the time with each run's z independent
+(coverage 0.38%, |z| 1.0%, forecast 1.35% at 63 realizations) and 3.4% with each run's z
+correlated as its posterior is -- the rehearsal's carries rch_wet with sy at 0.68-0.71
+and with rch_dry at 0.61-0.62, which takes the coverage threshold's rate from 0.38% to
+1.0% (``correlated_false_fail``, 100,000 draws, both sets of runs alike). A standard
+normal's thresholds (28, 3.63) fail the same exact posterior 5.8% of the time. Ledger
+592's double count shows in one number: the same seed's sy is +3.73 with the shape counted
+twice and +2.56 with it counted once -- inside the bound either way, so six runs do not
+reject it. The notebook's CI budget (16x2, seeds 2026, 1, 2) with its declaration:
+phi ratio 0.019-0.030, crisp gap 0.98-1.13, round trip 1.1e-05,
+write-back 0.18-0.34, equilibrium yes -- its per-run gates hold (2026-10-14, 4 workers,
+the scoring above); phi base 638-1044 against the truth's 310-352, and the pooled verdict
+fails (3 of 18 inside, |z| up to 18.2 against a bound of 4.59 at 15 realizations), as an
+unconverged ensemble must.
 """
 
 from __future__ import annotations
@@ -219,6 +220,9 @@ NOTEBOOKS = ROOT / "examples" / "mf6" / "notebooks"
 NOTEBOOK = NOTEBOOKS / "canonical_08_recalibration_rehearsal.ipynb"
 CONFIGS = ("16x2", "24x3", "32x3", "48x3")
 SEEDS = (1, 2, 3)
+#: The datum error (ft) ``+split`` gives a level beside its reading's noise. The
+#: synthetic data carry none, so it under-weights the levels: the safe side.
+SPLIT_DATUM = 0.05
 #: What a config's ``+flag`` does to the notebook's SOURCE before it runs: one or more
 #: (old, new) edits. Each must match its cell exactly once, or the run is refused: a
 #: notebook edited since would otherwise be measured without the change the table claims.
@@ -226,20 +230,20 @@ FLAGS = {
     # PESTPP-IES's own lambda testing (its default ies_lambda_mults and
     # lambda_scale_fac): drop the notebook's single-lambda overrides.
     "lambda": (("ies_lambda_mults=1.0, lambda_scale_fac=1.0", ""),),
-    # The levels alone, at the reading's weight 1 / NOISE["head"]: no shape targets.
-    "nodiff": (
-        ('    w_levels = 1.0 / np.hypot(NOISE["head"], DATUM)\n',
-         '    w_levels = 1.0 / NOISE["head"]\n'),
-        ('    w_shape = np.sqrt(NOISE["head"] ** -2 - w_levels**2)\n', ""),
-        ("    cal.observe(heads.differences(weight=w_shape))\n", ""),
-    ),
-    # The notebook's declaration before ledger 593: the levels AND their
-    # differences both at the reading's weight, each reading's noise counted twice in
-    # the shape (ledger 592).
-    "double": (
-        ("case.wells.assign(weight=w_levels)", "case.wells"),
-        ("    cal.observe(heads.differences(weight=w_shape))\n",
-         "    cal.observe(heads.differences())\n"),
+    # The levels alone: drop the hydrographs' shape targets.
+    "nodiff": (("    cal.observe(heads.differences())\n", ""),),
+    # Each head reading counted ONCE (ledger 592's second way out): the levels at a
+    # weight carrying a datum error of SPLIT_DATUM ft beside the reading's noise, their
+    # "mean" differences at the rest of the reading's weight. Measured beside the
+    # notebook's declaration (both at the reading's weight) in the POOLED table.
+    "split": (
+        ("    heads = mf.HeadTargets.from_hydrographs(case.wells, heads_csv, ",
+         f'    w_levels = 1.0 / np.hypot(NOISE["head"], {SPLIT_DATUM!r})\n'
+         '    w_shape = np.sqrt(NOISE["head"] ** -2 - w_levels**2)\n'
+         "    heads = mf.HeadTargets.from_hydrographs(case.wells.assign(weight=w_levels), "
+         "heads_csv, "),
+        ("    cal.observe(heads.differences())\n",
+         "    cal.observe(heads.differences(weight=w_shape))\n"),
     ),
 }
 
@@ -358,28 +362,50 @@ def scalar_correlation(cal, ies, scalars) -> dict:
     return logs.corr().to_dict()
 
 
-def correlated_false_fail(reports, verdict, draws=200_000, seed=0) -> dict:
+def correlated_false_fail(reports, verdict, draws=50_000, seed=0, chunk=5_000) -> dict:
     """How often an exact posterior fails ``verdict``'s thresholds with each run's z
-    correlated as its posterior is (``report["scalar_correlation"]``): Monte Carlo of
-    one multivariate normal per run, the forecast at its exact binomial rate."""
+    correlated as its posterior is (``report["scalar_correlation"]``).
+
+    Monte Carlo of the scoring itself: per run, ``members`` realizations and one truth
+    drawn from one multivariate normal with that correlation, and each scalar's ``z``
+    taken against the realizations' own mean and sd, as :func:`recovery` takes it -- so
+    the finite ensemble's wider ``z`` (ledger 594) is in it, not a standard
+    normal's. Returns the rates of the coverage and largest-|z| criteria, of either, and
+    of the whole verdict with each run's forecast missing at ``2 / (members + 1)``.
+    """
 
     import numpy as np
 
     from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
 
     rng = np.random.default_rng(seed)
-    inside = np.zeros(draws, int)
-    largest = np.zeros(draws)
-    for report in reports:
-        order = list(report["scalars"])
-        corr = np.array([[report["scalar_correlation"][a][b] for b in order] for a in order])
-        z = rng.multivariate_normal(np.zeros(len(order)), corr, size=draws, method="eigh")
-        inside += (np.abs(z) <= rehearsal.Z_BAND).sum(axis=1)
-        largest = np.maximum(largest, np.abs(z).max(axis=1))
-    coverage = float((inside < verdict.inside_min).mean())
-    largest_z = float((largest > verdict.z_max).mean())
-    return {"coverage": coverage, "largest_z": largest_z,
-            "either": float(((inside < verdict.inside_min) | (largest > verdict.z_max)).mean())}
+    fails = {"coverage": 0, "largest_z": 0, "either": 0, "verdict": 0}
+    done = 0
+    while done < draws:
+        size = min(chunk, draws - done)
+        inside = np.zeros(size, int)
+        tail_ok = np.ones(size, bool)
+        covered = np.zeros(size, int)
+        for report in reports:
+            order = list(report["scalars"])
+            members = int(report["scalars"][order[0]]["members"])
+            corr = np.array([[report["scalar_correlation"][a][b] for b in order] for a in order])
+            x = rng.multivariate_normal(np.zeros(len(order)), corr, size=(size, members + 1),
+                                        method="eigh")
+            ensemble, truth = x[:, :members], x[:, members]
+            z = (truth - ensemble.mean(axis=1)) / ensemble.std(axis=1, ddof=1)
+            inside += (np.abs(z) <= rehearsal.Z_BAND).sum(axis=1)
+            tail_ok &= (np.abs(z) <= verdict.z_max).all(axis=1)
+            miss = 2.0 / (int(report["forecast"]["members"]) + 1)
+            covered += rng.random(size) >= miss
+        low = inside < verdict.inside_min
+        far = ~tail_ok
+        fails["coverage"] += int(low.sum())
+        fails["largest_z"] += int(far.sum())
+        fails["either"] += int((low | far).sum())
+        fails["verdict"] += int((low | far | (covered < verdict.forecasts_min)).sum())
+        done += size
+    return {name: count / draws for name, count in fails.items()}
 
 
 LINEAR_STEP = 0.01  # log10 step of the finite-difference Jacobian (2.3 % of a value)
@@ -598,8 +624,8 @@ def main(argv=None) -> None:
 
 def _print_pooled(rows) -> None:
     """Each configuration's runs, seeds pooled: ``pooled_recovery``'s verdict, and how
-    often an exact posterior fails its thresholds -- by the binomial it uses and with
-    each run's z correlated as its posterior is."""
+    often an exact posterior fails its thresholds -- with each run's z independent, as it
+    computes them, and correlated as its posterior is (:func:`correlated_false_fail`)."""
 
     from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
 
@@ -609,8 +635,9 @@ def _print_pooled(rows) -> None:
         correlated = correlated_false_fail(reports, verdict)
         print(f"\npooled {label} ({verdict.runs} runs): "
               f"{'PASSES' if verdict.passed else 'FAILS'}; an exact posterior fails it "
-              f"at most {verdict.false_fail['total']:.3f} (binomial; correlated as measured: "
-              f"coverage {correlated['coverage']:.3f}, largest |z| {correlated['largest_z']:.3f})")
+              f"at most {verdict.false_fail['total']:.3f} (independent; correlated as measured: "
+              f"coverage {correlated['coverage']:.3f}, largest |z| {correlated['largest_z']:.3f}, "
+              f"verdict {correlated['verdict']:.3f})")
         print(verdict.summary().to_string())
 
 

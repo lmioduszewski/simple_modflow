@@ -29,7 +29,8 @@ What is here:
 * :func:`recovery` and :func:`forecast_recovery` -- one run's scalars and forecast
   against the truth, by one rule; :func:`pooled_recovery` -- the verdict on several
   converged runs at once, the user's criterion for whether the truth came back (ledger
-  593).
+  593), judged against what an exact posterior's finite ensemble gives
+  (:func:`z_tail`, :func:`band_coverage`; ledger 594).
 
 It is demo infrastructure like :mod:`~myflopy.modflow.mf6.canonical_calibration`
 and is not exported top-level. It pins its own 21x21 grid and ignores
@@ -57,6 +58,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from rasterio.transform import from_origin
+from scipy import stats
 from shapely.geometry import LineString, Point
 
 from myflopy._logging import get_logger
@@ -1238,16 +1240,77 @@ GAP_CLOSED_MIN = 0.5
 #: scalar's 5-95% band is its posterior log10 mean +- this many log10 sds, and its
 #: truth is inside exactly when ``|z|`` is at most this (ledger 593).
 Z_BAND = NormalDist().inv_cdf(0.95)
-#: The probability an EXACT posterior's 5-95% band holds its truth.
-BAND_COVERAGE = 0.9
 #: How often each pooled criterion may fail an exact, converged posterior, by the
 #: independence model :func:`pooled_recovery` computes it with (ledger 593).
 #: The coverage entry is set low because a run's z values are NOT independent: with
 #: the rehearsal's posterior correlations (rch_wet with Sy 0.68, with rch_dry 0.61,
-#: measured over six converged runs) the same threshold fails an exact posterior about
-#: 2.3x as often as the binomial says -- 1.8% at six runs against its 0.77%, so the three
-#: together fail one about 4% of the time.
+#: measured over six converged runs) the same threshold fails an exact posterior more
+#: often than the independent count says (ledger 594 has the Monte Carlo).
 POOLED_FALSE_FAIL = {"coverage": 0.01, "largest_z": 0.01, "forecast": 0.015}
+
+
+def _z_scale(members: int) -> float:
+    """How much wider than a standard normal an exact posterior's ``z`` is.
+
+    ``z`` measures a truth against the MEAN and SD of ``members`` realizations, not the
+    posterior's own: for an exact posterior the truth is one more draw, so ``z`` is
+    ``sqrt(1 + 1/members)`` times a Student t with ``members - 1`` degrees of freedom
+    (ledger 594). This is that factor; the t is in :func:`z_tail`.
+    """
+
+    return math.sqrt(1.0 + 1.0 / members)
+
+
+def z_tail(z: float, members: int) -> float:
+    """How often an EXACT posterior's ``z`` is at least ``|z|`` away from 0.
+
+    Parameters
+    ----------
+    z : float
+        A truth's ``z`` (:func:`recovery`), the distance from the posterior
+        realizations' log10 mean in their log10 sds. ``NaN`` reads as infinitely far.
+    members : int
+        How many realizations the mean and sd were taken over, at least 2.
+
+    Returns
+    -------
+    float
+        The two-sided tail probability ``P(|Z| >= |z|)`` for ``Z = sqrt(1 + 1/members)
+        * T(members - 1)`` -- the ``z`` of one more draw from the posterior the
+        realizations sample (ledger 594). At 63 realizations ``|z| = 1.645``
+        is 0.108, not the normal's 0.100.
+
+    Raises
+    ------
+    ValueError
+        When ``members`` is below 2 (a sd needs two realizations).
+    """
+
+    if int(members) < 2:
+        raise ValueError(f"a z needs at least 2 realizations, not {members}.")
+    magnitude = math.inf if math.isnan(z) else abs(float(z))
+    return float(2.0 * stats.t.sf(magnitude / _z_scale(int(members)), int(members) - 1))
+
+
+def band_coverage(members: int) -> float:
+    """The probability an EXACT posterior's 5-95% band, fitted to ``members``
+    realizations, holds its truth: ``1 - z_tail(Z_BAND, members)``.
+
+    0.9 only in the limit: 0.892 at 63 realizations, 0.866 at 15 (ledger
+    594), because the band's mean and sd are themselves estimated.
+
+    Parameters
+    ----------
+    members : int
+        How many posterior realizations the band was fitted to, at least 2.
+
+    Returns
+    -------
+    float
+        The band's coverage of a truth drawn from the posterior the realizations sample.
+    """
+
+    return 1.0 - z_tail(Z_BAND, members)
 
 
 def _realizations(ensemble) -> pd.DataFrame:
@@ -1294,7 +1357,9 @@ def recovery(case: RehearsalCase, cal, ies) -> pd.DataFrame:
         truth the posterior mean covered, ``NaN`` where the truth is the start -- and
         ``z``, the truth's distance from the posterior log10 mean in posterior log10
         sds (``+-inf`` when every realization holds one value and the truth another,
-        ``0.0`` when it is that value).
+        ``0.0`` when it is that value), and ``members``, how many posterior
+        realizations the band and ``z`` were taken over -- what :func:`pooled_recovery`
+        needs to know how far an exact posterior's ``z`` strays (:func:`z_tail`).
     """
 
     truth = truth_parameter_values(case, cal)
@@ -1329,7 +1394,7 @@ def recovery(case: RehearsalCase, cal, ies) -> pd.DataFrame:
             "base": float(whole.loc[bases[0], name]) if bases else np.nan,
             "inside": bool(abs(z) <= Z_BAND), "narrowed": bool(spread < prior_spread),
             "gap_closed": float(mean / gap) if gap != 0 else np.nan,
-            "z": float(z),
+            "z": float(z), "members": int(log_post.size),
         })
     return pd.DataFrame(rows).set_index("pargp")
 
@@ -1374,15 +1439,10 @@ def forecast_recovery(ies, simulated: pd.Series, name: str | int = 0) -> dict:
             "members": int(posterior.size), "covered": bool(low <= truth <= high)}
 
 
-def _binomial_cdf(k: int, n: int, p: float) -> float:
-    """``P(X <= k)`` for ``X ~ Binomial(n, p)``, summed exactly."""
-
-    return float(sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k + 1)))
-
-
 def _fewer_than(misses: Sequence[float]) -> list[float]:
-    """``P(covered < m)`` for ``m = 0..len(misses)``: independent runs, each missing with
-    its own probability (a Poisson-binomial, by convolution)."""
+    """``P(covered < m)`` for ``m = 0..len(misses)``: independent trials (a truth, a
+    run's forecast), each missing with its own probability -- a Poisson-binomial, by
+    convolution."""
 
     distribution = [1.0]
     for miss in misses:
@@ -1409,16 +1469,23 @@ class PooledRecovery:
         How many of those sit inside their posterior 5-95% band (``|z| <= Z_BAND``).
     inside_min : int
         The fewest that pass: the largest count an exact posterior falls BELOW with
-        probability at most ``POOLED_FALSE_FAIL["coverage"]`` (binomial, ``values``
-        draws at :data:`BAND_COVERAGE`).
+        probability at most ``POOLED_FALSE_FAIL["coverage"]`` -- each truth inside
+        with its band's own coverage, :func:`band_coverage` of its run's realizations
+        (0.892 at 63, not 0.9: the band's mean and sd are estimated; ledger
+        594).
     largest_z : float
-        The largest ``|z|`` over every scalar of every run.
+        The ``|z|`` furthest out for an exact posterior: the one with the smallest
+        :func:`z_tail` -- the largest ``|z|`` when every run has as many realizations.
     largest_z_at : tuple of (int, str)
         Where it is: the run's position in the reports passed and the parameter group.
     z_max : float
-        The largest ``|z|`` that passes: the bound ``values`` independent standard
-        normals all stay inside with probability ``1 - POOLED_FALSE_FAIL["largest_z"]``
-        (Sidak; by Sidak's inequality correlated ones stay inside at least as often).
+        The largest ``|z|`` that passes at ``largest_z``'s run: the bound each of the
+        ``values`` truths' ``z`` stays inside with probability ``(1 -
+        POOLED_FALSE_FAIL["largest_z"]) ** (1 / values)`` (Sidak), read off the
+        distribution an exact posterior's ``z`` has at that run's realizations
+        (:func:`z_tail`): 3.88 at 63, where a standard normal's would be 3.63. Every
+        ``|z|`` is judged against its own run's bound, and ``largest_z`` is the one
+        nearest failing it.
     forecasts_covered : int
         How many runs' forecast truth is inside their posterior range.
     forecasts_min : int
@@ -1430,9 +1497,9 @@ class PooledRecovery:
         thresholds (``coverage``, ``largest_z``, ``forecast``) and, as their sum, at
         most how often it fails the verdict (``total``). The coverage rate assumes the
         scalars' z are independent; within one run they are correlated through the
-        posterior, which raises it -- about 2.3x on the rehearsal, measured by the
-        reproducer (``correlated_false_fail``; ledger 593) -- and is why its
-        budget is the smallest.
+        posterior, which raises it -- measured by the reproducer's
+        ``correlated_false_fail`` (ledger 594) -- and is why its budget is
+        the smallest.
     passes : dict of str to bool
         Each criterion's verdict: ``coverage`` (``inside >= inside_min``),
         ``largest_z`` (``largest_z <= z_max``), ``forecast``
@@ -1491,10 +1558,15 @@ def pooled_recovery(reports: Sequence[Mapping]) -> PooledRecovery:
     fraction of scalar truths inside their bands, the largest ``|z|``, and how many
     runs' forecast range holds its truth -- each against the threshold an EXACT,
     converged posterior fails with probability at most :data:`POOLED_FALSE_FAIL`'s
-    entry (computed for the counts passed, so it holds for any number of runs). At
-    six runs of six scalars that is at least 28 of 36 inside, every ``|z|`` at most
-    3.63 and the forecast covered in 5 of 6 at 64 realizations: the three fail an exact
-    posterior 3.1% of the time if a run's z were independent, and about 4% with the
+    entry (computed for the counts passed, so it holds for any number of runs and
+    realizations). An exact posterior's ``z`` is measured against ESTIMATED moments --
+    the truth is one more draw beside the realizations -- so it is ``sqrt(1 + 1/n)``
+    times a Student t with ``n - 1`` degrees of freedom, not a standard normal
+    (:func:`z_tail`; ledger 594): a normal null fails an exact posterior
+    4.6% of the time at the thresholds it gives, not the 3.1% it claims. At six runs of
+    six scalars at 63 realizations the thresholds are at least 27 of 36 inside, every
+    ``|z|`` at most 3.88 and the forecast covered in 5 of 6: the three fail an exact
+    posterior 2.7% of the time if a run's z were independent, and 3.4% with the
     correlation the rehearsal's posteriors carry. Run it on runs whose ensembles have
     converged: an unconverged one is over-confident (ledger 590) and fails it as it
     should.
@@ -1505,7 +1577,7 @@ def pooled_recovery(reports: Sequence[Mapping]) -> PooledRecovery:
         One ``rehearsal_report`` per run, as
         ``canonical_08_recalibration_rehearsal.ipynb`` builds it, from independent
         seeds: each needs ``"scalars"`` (parameter group -> a mapping holding
-        ``"z"``, from :func:`recovery`) and ``"forecast"`` (the mapping
+        ``"z"`` and ``"members"``, from :func:`recovery`) and ``"forecast"`` (the mapping
         :func:`forecast_recovery` returns: ``"covered"`` and ``"members"``). A
         report's ``inside`` is re-derived from its ``z`` (``|z| <= Z_BAND``), the one
         rule. A ``z`` that is ``NaN`` is outside.
@@ -1519,17 +1591,19 @@ def pooled_recovery(reports: Sequence[Mapping]) -> PooledRecovery:
     Raises
     ------
     ValueError
-        When ``reports`` is empty, or a report holds no scalars.
+        When ``reports`` is empty, a report holds no scalars, or a scalar's
+        ``"members"`` is below 2.
     KeyError
-        When a report lacks ``"scalars"``, ``"forecast"``, a scalar's ``"z"`` or the
-        forecast's ``"covered"``/``"members"`` -- a report from before ledger
-        593 carries ``forecast_truth``/``forecast_posterior`` instead.
+        When a report lacks ``"scalars"``, ``"forecast"``, a scalar's ``"z"`` or
+        ``"members"`` or the forecast's ``"covered"``/``"members"`` -- a report from
+        before ledger 593 carries ``forecast_truth``/``forecast_posterior``
+        instead, and one from before ledger 594 no scalar ``"members"``.
     """
 
     reports = list(reports)
     if not reports:
         raise ValueError("pooled_recovery needs at least one run's report.")
-    zs: list[tuple[int, str, float]] = []
+    zs: list[tuple[int, str, float, int]] = []
     misses: list[float] = []
     covered = 0
     for index, report in enumerate(reports):
@@ -1541,30 +1615,37 @@ def pooled_recovery(reports: Sequence[Mapping]) -> PooledRecovery:
         if not report["scalars"]:
             raise ValueError(f"report {index} holds no scalar parameters.")
         for group, row in report["scalars"].items():
-            zs.append((index, str(group), float(row["z"])))
+            if "members" not in row:
+                raise KeyError(f"report {index}'s scalar {group!r} has no 'members': take "
+                               "the scalars' columns from recovery() with 'members' "
+                               "(ledger 594).")
+            zs.append((index, str(group), float(row["z"]), int(row["members"])))
         forecast = report["forecast"]
         covered += bool(forecast["covered"])
         misses.append(2.0 / (int(forecast["members"]) + 1))
 
     values = len(zs)
-    magnitudes = [abs(z) if not math.isnan(z) else math.inf for _, _, z in zs]
+    magnitudes = [abs(z) if not math.isnan(z) else math.inf for _, _, z, _ in zs]
+    tails = [z_tail(z, members) for _, _, z, members in zs]
     inside = sum(magnitude <= Z_BAND for magnitude in magnitudes)
     budget = POOLED_FALSE_FAIL
-    inside_min = max(k for k in range(values + 1)
-                     if k == 0 or _binomial_cdf(k - 1, values, BAND_COVERAGE) <= budget["coverage"])
-    coverage_rate = _binomial_cdf(inside_min - 1, values, BAND_COVERAGE) if inside_min else 0.0
+    # Coverage: each truth inside with its own band's coverage (a Poisson-binomial).
+    fewer_inside = _fewer_than([1.0 - band_coverage(members) for *_, members in zs])
+    inside_min = max(k for k, rate in enumerate(fewer_inside) if rate <= budget["coverage"])
+    # Largest |z|: each truth's own tail against one per-value budget (Sidak).
     per_value = 1.0 - (1.0 - budget["largest_z"]) ** (1.0 / values)
-    z_max = NormalDist().inv_cdf(1.0 - per_value / 2.0)
+    worst = min(range(values), key=lambda i: tails[i])
+    members = zs[worst][3]
+    z_max = _z_scale(members) * float(stats.t.isf(per_value / 2.0, members - 1))
     fewer = _fewer_than(misses)
     forecasts_min = max(m for m, rate in enumerate(fewer) if rate <= budget["forecast"])
-    worst = max(range(values), key=lambda i: magnitudes[i])
-    false_fail = {"coverage": coverage_rate, "largest_z": budget["largest_z"],
+    false_fail = {"coverage": fewer_inside[inside_min], "largest_z": budget["largest_z"],
                   "forecast": fewer[forecasts_min]}
     false_fail["total"] = sum(false_fail.values())
     return PooledRecovery(
         runs=len(reports), values=values, inside=inside, inside_min=inside_min,
         largest_z=magnitudes[worst], largest_z_at=(zs[worst][0], zs[worst][1]), z_max=z_max,
         forecasts_covered=covered, forecasts_min=forecasts_min, false_fail=false_fail,
-        passes={"coverage": inside >= inside_min, "largest_z": magnitudes[worst] <= z_max,
+        passes={"coverage": inside >= inside_min, "largest_z": tails[worst] >= per_value,
                 "forecast": covered >= forecasts_min},
     )

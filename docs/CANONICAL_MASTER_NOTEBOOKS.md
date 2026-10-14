@@ -49,9 +49,7 @@ next topic.
    TRUTH in one `mf.Project`, the truth DECLARED through the package-first API. The
    workflow, written once in the API to copy for Ten Trails: dated hydrographs binned in
    average-year mode, the equilibrium check, zoned pilot-point K + month-group recharge
-   + Sy + crisp's conductance + per-lake bed leakance, heads + differences (each reading
-   counted once: the levels carry a datum error, the differences the rest of the
-   reading's weight) + lake stages
+   + Sy + crisp's conductance + per-lake bed leakance, heads + differences + lake stages
    + crisp's baseflow + a one-sided bound, **the truth round trip before any IES**
    (`run_template` at `truth_parameter_values` reproduces the noise-free data), PESTPP-IES,
    recovery against the truth, and the write-back (`ies.calibrated().to_library()`)

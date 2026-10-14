@@ -22,16 +22,18 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
 - the recovery's ONE scoring rule (ledger 593): a scalar's band and its ``z``
   come from the normal fitted to the posterior REALIZATIONS' log10 values (never the
   ``base`` row), so ``inside`` is ``|z| <= Z_BAND``; and the pooled verdict over several
-  runs, whose thresholds an exact posterior fails at most 5% of the time;
+  runs, whose thresholds an exact posterior fails at most 5% of the time -- checked by
+  Monte Carlo of exact posteriors scored as the rehearsal scores them, each ``z`` against
+  a FINITE ensemble's own mean and sd (ledger 594: a standard normal's
+  thresholds failed 4.6%, not the 3.1% they claimed);
 - OPT-IN, the pooled coverage of CONVERGED runs: with
   ``SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1`` the notebook runs at 64 realizations x 3
   iterations with PESTPP-IES's own lambda testing on six seeds (half an hour at 12
   workers) and ``rehearsal.pooled_recovery`` must pass --
   the user's criterion in place of "every scalar truth inside its band in every run",
-  which an exact posterior meets about half the time (0.9^6). Measured: it passes with
-  the notebook's heads counted once (33 of 36 inside, largest |z| 2.56, forecast 6 of 6)
-  and failed with the levels and their differences both at the reading's weight (a Sy z
-  of +3.73).
+  which an exact posterior meets about half the time (0.9^6). Measured with the
+  notebook's declaration (levels and their differences both at the reading's weight):
+  32 of 36 inside, largest |z| 3.73 against a bound of 3.88, forecast 6 of 6.
 """
 
 from __future__ import annotations
@@ -306,7 +308,7 @@ def test_recovery_scores_the_realizations_by_one_rule(monkeypatch):
         assert row["posterior_p95"] == pytest.approx(10 ** (mean + rehearsal.Z_BAND * sd))
         assert row["posterior_p05"] <= row["truth"] <= row["posterior_p95"] or not row["inside"]
     assert row["posterior_mean"] == pytest.approx(10 ** mean)
-    assert row["base"] == 100.0
+    assert row["base"] == 100.0 and row["members"] == 63, "the base row is no member"
     assert row["prior_p95"] == pytest.approx(3.0 * row["posterior_p95"])
     assert not _scored(monkeypatch, prior, posterior, 1.0)["narrowed"], "a wider posterior"
 
@@ -333,60 +335,114 @@ def test_forecast_recovery_reads_the_realizations_range():
 
 
 def _report(zs, covered=True, members=63):
-    return {"scalars": {f"p{i}": {"z": float(z)} for i, z in enumerate(zs)},
+    return {"scalars": {f"p{i}": {"z": float(z), "members": members} for i, z in enumerate(zs)},
             "forecast": {"covered": covered, "members": members}}
+
+
+def _exact_zs(rng, runs, scalars, members):
+    """The ``z`` of exact posteriors as :func:`recovery` scores them: ``members``
+    realizations and one truth, all drawn from one posterior, the truth measured against
+    the realizations' own mean and sd. Shape ``(runs, scalars)``."""
+
+    draws = rng.normal(size=(runs, scalars, members + 1))
+    ensemble, truth = draws[..., :members], draws[..., members]
+    return (truth - ensemble.mean(axis=-1)) / ensemble.std(axis=-1, ddof=1)
+
+
+def test_an_exact_posteriors_z_is_wider_than_a_normal():
+    """Ledger 594: measured against ESTIMATED moments, an exact posterior's
+    ``z`` is ``sqrt(1 + 1/n)`` x Student t(n - 1) -- its band holds the truth 0.892 of the
+    time at 63 realizations, not 0.9, and its 1-in-3600 tail is 3.88, not a normal's 3.63.
+    The pooled thresholds stand on these two numbers."""
+
+    rng = np.random.default_rng(7)
+    for members in (15, 63):
+        z = np.abs(_exact_zs(rng, 4000, 50, members)).ravel()  # 200,000 values
+        assert (z <= rehearsal.Z_BAND).mean() == pytest.approx(
+            rehearsal.band_coverage(members), abs=0.003), members
+        for edge in (2.5, 3.0):
+            assert (z >= edge).mean() == pytest.approx(rehearsal.z_tail(edge, members),
+                                                       rel=0.1), (members, edge)
+    assert rehearsal.band_coverage(63) == pytest.approx(0.8922, abs=1e-4)
+    assert rehearsal.band_coverage(15) == pytest.approx(0.8665, abs=1e-4)
+    assert rehearsal.z_tail(float("nan"), 63) == 0.0
+    with pytest.raises(ValueError, match="at least 2"):
+        rehearsal.z_tail(1.0, 1)
 
 
 def test_pooled_thresholds_and_their_false_fail_rates():
     verdict = rehearsal.pooled_recovery([_report([0.0] * 6)] * 6)
-    # 36 truths at 0.9 each: fewer than 28 inside has probability 0.0077 (binomial), fewer than 29
-    # 0.0235; all 36 |z| <= 3.634 with probability 0.99; 5 of 6 forecasts at 2/64 a miss
-    # (63 realizations).
-    assert (verdict.inside_min, verdict.forecasts_min) == (28, 5)
-    assert verdict.z_max == pytest.approx(3.634, abs=1e-3)
-    assert verdict.false_fail["coverage"] == pytest.approx(0.00767, abs=1e-5)
+    # 36 truths, each inside with its 63-member band's coverage 0.892: fewer than 27 inside has
+    # probability 0.0038, fewer than 28 0.0123 (over the 0.01 budget); all 36 |z| inside 3.884
+    # with probability 0.99 (a normal null would say 3.634, ledger 594); 5 of 6
+    # forecasts at 2/64 a miss.
+    assert (verdict.inside_min, verdict.forecasts_min) == (27, 5)
+    assert verdict.z_max == pytest.approx(3.884, abs=1e-3)
+    assert verdict.false_fail["coverage"] == pytest.approx(0.00381, abs=1e-5)
     assert verdict.false_fail["forecast"] == pytest.approx(0.01347, abs=1e-5)
-    assert verdict.false_fail["total"] < 0.05
+    assert verdict.false_fail["total"] == pytest.approx(0.0273, abs=1e-4)
     assert verdict.passed and verdict.fraction == 1.0
     one = rehearsal.pooled_recovery([_report([0.0] * 6)])
     assert (one.inside_min, one.forecasts_min) == (3, 0), "one run: 3 of 6, any forecast"
+    # Fewer realizations, a wider z: at 15 the bound is 4.96.
+    few = rehearsal.pooled_recovery([_report([0.0] * 6, members=15)] * 6)
+    assert few.z_max == pytest.approx(4.96, abs=0.01) and few.inside_min == 26
 
 
 def test_pooled_verdict_fails_each_criterion_by_name():
     good = [_report([0.0] * 6)] * 6
-    eight_out = [_report([2.0] * 6), _report([2.0, 2.0] + [0.0] * 4)] + good[2:]
-    verdict = rehearsal.pooled_recovery(eight_out)
-    assert verdict.inside == 28 and verdict.passes["coverage"]
-    worse = rehearsal.pooled_recovery([_report([2.0] * 6), _report([2.0] * 3 + [0.0] * 3)]
+    nine_out = [_report([2.0] * 6), _report([2.0] * 3 + [0.0] * 3)] + good[2:]
+    verdict = rehearsal.pooled_recovery(nine_out)
+    assert verdict.inside == 27 and verdict.passes["coverage"]
+    worse = rehearsal.pooled_recovery([_report([2.0] * 6), _report([2.0] * 4 + [0.0] * 2)]
                                       + good[2:])
-    assert worse.inside == 27 and not worse.passes["coverage"] and not worse.passed
-    far = rehearsal.pooled_recovery([_report([0.0] * 5 + [-3.7])] + good[1:])
+    assert worse.inside == 26 and not worse.passes["coverage"] and not worse.passed
+    # The as-written notebook's Sy at +3.73 (ledger 594) is inside the bound.
+    near = rehearsal.pooled_recovery([_report([0.0] * 5 + [3.73])] + good[1:])
+    assert near.passed and near.largest_z == pytest.approx(3.73)
+    far = rehearsal.pooled_recovery([_report([0.0] * 5 + [-3.95])] + good[1:])
     assert far.passes["coverage"] and not far.passes["largest_z"]
-    assert far.largest_z_at == (0, "p5") and far.largest_z == pytest.approx(3.7)
+    assert far.largest_z_at == (0, "p5") and far.largest_z == pytest.approx(3.95)
+    # Judged against its OWN run's realizations: 4.5 at 15 is inside that run's 4.96,
+    # 3.95 at 63 is outside its 3.88 -- the second is the one nearest failing.
+    mixed = rehearsal.pooled_recovery([_report([0.0] * 5 + [4.5], members=15),
+                                       _report([0.0] * 5 + [-3.95])] + good[2:])
+    assert mixed.largest_z_at == (1, "p5") and not mixed.passes["largest_z"]
+    assert rehearsal.pooled_recovery([_report([0.0] * 5 + [4.5], members=15)]
+                                     + good[1:]).passes["largest_z"]
     missed = rehearsal.pooled_recovery([_report([0.0] * 6, covered=False)] * 2 + good[2:])
     assert missed.forecasts_covered == 4 and not missed.passes["forecast"]
     assert rehearsal.pooled_recovery([_report([float("nan")] + [0.0] * 5)] + good[1:]).inside == 35
 
 
 def test_an_exact_posterior_fails_the_pooled_verdict_rarely():
-    """Monte Carlo of exact, converged posteriors: six runs of six independent standard
-    normal z and a forecast missing 2/64 of the time fail the verdict at its stated
-    rate, 0.031 (the reproducer measures the rehearsal's correlated rate, about 0.04)."""
+    """Monte Carlo of exact, converged posteriors scored as the rehearsal scores them --
+    six runs of six independent scalars, each ``z`` against 63 realizations' own mean and
+    sd, a forecast missing 2/64 of the time -- fail the verdict at its stated rate, 0.027
+    (the reproducer's ``correlated_false_fail`` measures 0.034 with the rehearsal's
+    correlations, ledger 594). A standard normal's thresholds failed 0.046."""
 
     rng = np.random.default_rng(11)
     trials = 3000
+    zs = _exact_zs(rng, trials * 6, 6, 63).reshape(trials, 6, 6)
+    covered = rng.random((trials, 6)) >= 2 / 64
     failed = sum(
-        not rehearsal.pooled_recovery([
-            _report(rng.normal(size=6), covered=bool(rng.random() >= 2 / 64)) for _ in range(6)
-        ]).passed
-        for _ in range(trials))
-    assert failed / trials == pytest.approx(0.031, abs=0.01)
+        not rehearsal.pooled_recovery([_report(zs[t, r], covered=bool(covered[t, r]))
+                                       for r in range(6)]).passed
+        for t in range(trials))
+    stated = rehearsal.pooled_recovery([_report([0.0] * 6)] * 6).false_fail["total"]
+    assert failed / trials == pytest.approx(stated, abs=0.008)
+    assert failed / trials < 0.05
 
 
 @pytest.mark.parametrize(("reports", "error", "match"), [
     ([], ValueError, "at least one"),
-    ([{"scalars": {"p": {"z": 0.0}}}], KeyError, "'forecast'"),
+    ([{"scalars": {"p": {"z": 0.0, "members": 9}}}], KeyError, "'forecast'"),
     ([{"scalars": {}, "forecast": {"covered": True, "members": 9}}], ValueError, "no scalar"),
+    ([{"scalars": {"p": {"z": 0.0}}, "forecast": {"covered": True, "members": 9}}], KeyError,
+     "'members'"),
+    ([{"scalars": {"p": {"z": 0.0, "members": 1}}, "forecast": {"covered": True, "members": 1}}],
+     ValueError, "at least 2"),
 ])
 def test_pooled_recovery_refuses(reports, error, match):
     with pytest.raises(error, match=match):

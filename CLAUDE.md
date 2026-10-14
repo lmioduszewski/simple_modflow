@@ -2190,9 +2190,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   largest `|z|`, forecasts covered, each against a threshold an exact posterior fails ~1%
   of the time -- never "every truth inside in every run" (0.9^6 = 53% for an exact one).
   A band is the normal fitted to the posterior REALIZATIONS in log10 (never the `base`
-  row), so `inside` is `|z| <= 1.645` -- one rule. The notebook counts each head reading
-  ONCE (levels at `1/hypot(noise, DATUM)`, differences at the rest of the weight): both at
-  full weight failed the pooled check on a Sy `z` of +3.7.
+  row), so `inside` is `|z| <= 1.645` -- one rule. **An exact posterior's `z` is NOT a
+  standard normal** (ledger 594): it is measured against n realizations' own
+  mean and sd, so it is `sqrt(1 + 1/n)` x Student t(n-1) (`canonical_rehearsal.z_tail`) --
+  at 63 the band covers 0.892 and the 1-in-3600 tail is 3.88, not 3.63; a normal null
+  failed an exact posterior 5.8% of the time where it claimed ~4%.
 
 ### What's missing / next steps for PEST
 > Verify against the code before building — most of the old list is now done
