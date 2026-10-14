@@ -591,13 +591,19 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8268 passed / 4 skipped / 1 xfailed**, 2026-10-13, the last round of the Ten
-  Trails PEST preparation -- ledgers 564-590: difference and bound targets, the parameter/run and
-  observation/model leftovers, and the recalibration rehearsal `canonical_08`, whose
-  `test_rehearsal_posterior_covers_the_truth` is a deliberate non-strict xfail (ledger 590)): serial
-  (`-n0`) **23m45s** and `-n 10` **5m21s**, NOT quiet clocks (load averages ~10.7 and ~6.1 at their
-  starts). The rehearsal's notebook (~88 s, a real PESTPP-IES run) executes once per xdist worker
-  that draws one of its tests. Before it, 8061 passed / 4 skipped (2026-10-12, the second and third
+- Full suite (**8281 passed / 5 skipped**, 2026-10-14, after the rehearsal's recovery became a
+  pooled check -- ledgers 591-594; the fifth skip is the opt-in
+  `test_converged_rehearsals_cover_the_truth_pooled`, ~29 min, run with
+  `SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1`): `-n 10` **5m11s** at a load average of ~6.1 rising to
+  ~13; serial not re-measured (the round touched only the rehearsal, its test, notebook, reproducer
+  and docs). The first `-n 10` run failed one test, `test_sfr_stream_inputs.py`'s canal-diversion
+  case (MF6 6.8's intermittent self-connection segfault; the file passed alone and on the rerun).
+  Before it, 8268 passed / 4 skipped / 1 xfailed (2026-10-13, the last round of the Ten Trails PEST
+  preparation -- ledgers 564-590: difference and bound targets, the parameter/run and
+  observation/model leftovers, and the recalibration rehearsal `canonical_08`, whose coverage test
+  was then a non-strict xfail): serial (`-n0`) 23m45s and `-n 10` 5m21s, NOT quiet clocks (load
+  averages ~10.7 and ~6.1 at their starts). The rehearsal's notebook (~88 s, a real PESTPP-IES run)
+  executes once per xdist worker that draws one of its tests. Before that, 8061 passed / 4 skipped (2026-10-12, the second and third
   rounds -- ledgers 543-563: date-keyed hydrographs, array recharge/storage/monthly multipliers,
   zones that read every layer, the by-value polygon vote, `mf.Basin`, screened head targets on one
   period-end reader, lake/stream feature parameters, the calibrated write-back): serial (`-n0`)
