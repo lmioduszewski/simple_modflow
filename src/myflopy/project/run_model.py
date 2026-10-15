@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from types import MethodType
 
@@ -14,7 +13,12 @@ from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.domain import idomain_from_flopy
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus, grid_view_from_modelgrid
 from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
-from myflopy.modflow.mf6.output_files import _declared_output_path, _model_dir
+from myflopy.modflow.mf6.output_files import (
+    _declared_models,
+    _declared_output_path,
+    _model_dir,
+    recorded_crs,
+)
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
@@ -25,36 +29,6 @@ def _progress(verbosity_level: int, message: str):
 
     if verbosity_level > 0:
         print(f"[LoadedMf6Run] {message}")
-
-
-def _declared_models(workspace: Path) -> list[tuple[str, str]]:
-    """``(type, name)`` for each model in ``mfsim.nam``'s models block, in its order.
-
-    ``<type>  <namefile>  [<name>]``: the name is optional in MF6 and defaults to
-    the name file's stem. An absent or unreadable ``mfsim.nam`` declares nothing.
-    """
-
-    namefile = Path(workspace) / "mfsim.nam"
-    try:
-        lines = namefile.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    models: list[tuple[str, str]] = []
-    in_models = False
-    for line in lines:
-        stripped = line.strip()
-        lowered = stripped.lower()
-        if lowered.startswith("begin") and "models" in lowered:
-            in_models = True
-            continue
-        if lowered.startswith("end") and "models" in lowered:
-            break
-        if not in_models or not stripped or stripped.startswith("#"):
-            continue
-        fields = stripped.split()
-        if len(fields) >= 2:
-            models.append((fields[0].lower(), fields[2] if len(fields) >= 3 else Path(fields[1]).stem))
-    return models
 
 
 def _infer_model_name(workspace: Path) -> str:
@@ -302,11 +276,10 @@ def _recorded_crs(workspace: Path, model_name: str | None) -> str | None:
     """
 
     try:
-        recorded = json.loads((workspace / "run.json").read_text(encoding="utf-8")).get("crs")
         name = model_name or _infer_model_name(workspace)
     except (OSError, ValueError):
         return None
-    return (recorded or {}).get(name)
+    return recorded_crs(workspace, name)
 
 
 def load_mf6_run(

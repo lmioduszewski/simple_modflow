@@ -1417,16 +1417,44 @@ and held inside the old layer's range (`docs/reproducers/field_remap_rim.py`).
 time it would have ended -- and so is a DISU (its nodes stack a column's layers).
 
 **No-value cells.** A DRY head (−1e30) takes the head of the first wet layer below it — the
-water table, below its bottom, so the new model starts it dry too. An INACTIVE cell is a
-gap. A new cell over gaps only, or outside the old model, takes the nearest old value and
-is counted in the warning.
+water table, normally below its bottom, so the new model starts it dry too. An INACTIVE
+cell is a gap. A new cell over gaps only, or outside the old model, takes the nearest old
+value and is counted in the warning.
 
 **The array makes the simulation unsaveable** (`project.save()` skips a simulation holding
-an ndarray, ledger 193). Register it as a library package to keep it --
-`project.add_package("ic_regrid", mf.ic(strt=strt))` and `mf.ref("ic_regrid")` in the model --
-and give the model a grid a save can hold too: a built `grid=new_vor` cannot be serialized
-either, so register it (`project.add_grid("mesh", mf.GridSpec.from_object(new_vor))`) and
-declare `mf.gwf(..., grid=mf.grid_ref("mesh"))`, or keep the `GridSpec` it was resolved from.
+an ndarray, ledger 193) and pins it to the mesh. For heads, declare the RECIPE instead —
+next section. A concentration or temperature array (no recipe yet) is kept by registering
+it as a library package (`project.add_package("ic_regrid", mf.ic(strt=strt))` +
+`mf.ref("ic_regrid")`). Either way the model's grid must save too: a built `grid=new_vor`
+cannot be serialized, so register it (`project.add_grid("mesh",
+mf.GridSpec.from_object(new_vor))` + `mf.gwf(..., grid=mf.grid_ref("mesh"))`) or keep the
+`GridSpec` it was resolved from.
+
+### A run's heads as a recipe — `mf.ic(strt=mf.Heads(old_run))`
+
+```python
+mf.ic(strt=mf.Heads(old_run))                           # last period, layer for layer
+mf.ic(strt=mf.Heads(old_run.model(), per=11, layers=[0, 0, 1, 2]))
+mf.ic(strt=mf.Heads("runs/baseline", method="area"))    # the run's directory
+```
+
+The same read and the same engine as `old.hds.remap`, resolved at BUILD against whatever
+grid the model has (ledger 596) — so `ic` no longer stops the simulation saving (it saves
+once its grid does, above), the model **moves** under `with_grid` (`move_report` reads
+`rebuilt`), and its run **freezes** the carried array.
+
+| step | what happens |
+| --- | --- |
+| declaration (`mf.ic`) | the head file the old model's OC names, the binary grid file MF6 wrote for its discretization (`<dis file>.grb`, e.g. `m.disv.grb`, or its `GRB6 FILEOUT` name), each stress period's length and the CRS are found and stored; both files are hashed; `per` and `layers` are checked against the file — a stopped run, an unsaved or cut-short period end, an unconverged step, an old layer the run lacks, a DISU, `NOGRB`, several GWF models with no `model=` are all refused HERE |
+| build | reads the head file and the grid file — and, where the run's `mfsim.nam` still sits beside them, its period lengths and `mfsim.lst`, so `per` and the convergence check follow the run as it then is — never loading the old simulation; checks `layers=` against the BUILT model's layer count, and leaves cells its idomain removes out of the warning |
+
+`layers=` is one old layer per NEW layer (repeats allowed); `None` requires equal layer
+counts and the refusal suggests a map. It fills `mf.ic(strt=)` of a GWF model only — not a
+per-layer list entry, not a product (a head is a level), not `npf`/`sto` or the `rch`/`evt`
+rates and surfaces. Its digest reads the two files' CONTENT, so a copy of the run digests
+the same; `bundle_sources=True` copies both into the project, and `runs.drift()`'s `source`
+column watches both — for a run already BUILT: the old run edited between the declaration
+and a build is read as it then is, with nothing said.
 
 ### A per-cell array from a polygon map — `mf.Polygons`
 
@@ -1434,7 +1462,7 @@ declare `mf.gwf(..., grid=mf.grid_ref("mesh"))`, or keep the `GridSpec` it was r
 | --- | --- |
 | `mf.npf(k=mf.Polygons(p, column="k"))` | horizontal K, one value per mapped unit |
 | `mf.npf(k22=…, k33=…)` | the other two conductivities |
-| `mf.ic(strt=mf.Polygons(p, column="head"))` | starting heads (from a run's solution: `old.hds.remap(new_vor)`, above) |
+| `mf.ic(strt=mf.Polygons(p, column="head"))` | starting heads (from a run's solution: `mf.Heads(old_run)`, above) |
 | `mf.sto(ss=…, sy=…)` | storage |
 
 ```python

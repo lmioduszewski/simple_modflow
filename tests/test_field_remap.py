@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 
 import myflopy as mf
+from myflopy._numbers import is_no_value
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
 from myflopy.modflow.mf6.grid.remap import (
     DEFAULT_FIELD_METHOD,
@@ -40,7 +41,6 @@ from myflopy.modflow.mf6.grid.remap import (
 )
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.headsplus import DependentVariableFile, HeadsPlus
-from myflopy._numbers import is_no_value
 from myflopy.modflow.mf6.period_end import period_end_record
 
 

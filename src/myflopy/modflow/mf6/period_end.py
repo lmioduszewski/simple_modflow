@@ -601,11 +601,32 @@ def period_records(model: Any) -> list[tuple[float, int | None, float | None]] |
         TDIS, or a TDIS with no period block.
     """
 
-    from flopy.mf6.mfbase import MFDataException
-
     tdis = getattr(getattr(model, "sim", None), "tdis", None)
     if tdis is None:
         return None
+    return tdis_period_records(tdis)
+
+
+def tdis_period_records(tdis: Any) -> list[tuple[float, int | None, float | None]] | None:
+    """Each stress period's ``(perlen, nstp, tsmult)`` from a TDIS PACKAGE, or ``None``.
+
+    :func:`period_records` given the package itself -- what the ``mf.Heads`` recipe holds
+    after loading an old run's TDIS alone, with no model around it. The ONE place a TDIS
+    period block is read (``tests/test_model_config.py`` pins it).
+
+    Parameters
+    ----------
+    tdis : flopy.mf6.ModflowTdis or object
+        A TDIS package, or a double carrying ``perioddata``.
+
+    Returns
+    -------
+    list of tuple of (float, int or None, float or None) or None
+        As :func:`period_records`.
+    """
+
+    from flopy.mf6.mfbase import MFDataException
+
     try:
         data = tdis.perioddata.get_data()
     except (AttributeError, MFDataException):

@@ -186,25 +186,25 @@ review the diff, commit the regenerated files together.
 
 - `myflopy.grid_spec_resolver`
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.heads_recipe`
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_explorer`
 - `myflopy.modflow.mf6.pest.ies` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.voronoiplus`
-- `myflopy.package_api` *(deferred imports: 3)*
 
 ## Layer 7
 
-- `myflopy.cycles`
-- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations`
 - `myflopy.modflow.mf6.simulation.accessors`
-- `myflopy.modflow.usg.convert`
+- `myflopy.package_api` *(deferred imports: 3)*
 - `myflopy.project.group.spatial` *(deferred imports: 1)*
 
 ## Layer 8
 
+- `myflopy.cycles`
+- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.specs`
-- `myflopy.plot`
+- `myflopy.modflow.usg.convert`
 - `myflopy.project.group.conc`
 - `myflopy.project.group.inputs`
 - `myflopy.project.group.results`
@@ -216,34 +216,38 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.gis`
 - `myflopy.modflow.mf6.pest.observations`
-- `myflopy.modflow.mf6.simulation.base` *(deferred imports: 7)*
-- `myflopy.project.group.lak`
+- `myflopy.plot`
 - `myflopy.project.group.sfr`
 - `myflopy.project.group.uzf`
 
 ## Layer 10
 
+- `myflopy.modflow.mf6.pest.project` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.simulation.base` *(deferred imports: 7)*
+- `myflopy.project.group.lak`
+
+## Layer 11
+
 - `myflopy.modflow.calcs.calibration`
 - `myflopy.modflow.mf6.canonical_example`
-- `myflopy.modflow.mf6.pest.project` *(deferred imports: 1)*
 - `myflopy.project.group.packages`
 - `myflopy.project.model_results_diff`
 - `myflopy.project.run_model`
 
-## Layer 11
+## Layer 12
 
 - `myflopy.modflow.mf6.canonical_calibration`
 - `myflopy.modflow.mf6.canonical_transport` *(deferred imports: 1)*
 - `myflopy.project.group.core` *(deferred imports: 1)*
 - `myflopy.workspace` *(deferred imports: 1)*
 
-## Layer 12
+## Layer 13
 
 - `myflopy.modflow.mf6.pest.calibrated`
 - `myflopy.project.group`
 - `myflopy.project.model_group`
 
-## Layer 13
+## Layer 14
 
 - `myflopy.modflow.mf6.canonical_rehearsal`
 - `myflopy.project`

@@ -73,12 +73,13 @@ numbers to the new geometry and reported Normal termination. **Read
 and moves itself, while one declared with `context=` reads `stale` and must be
 re-declared against the new grid.
 
-**Starting the moved model from what the old one solved** is `old.hds.remap(new_vor)`:
-the old run's heads at the end of its last stress period (`per=` for another), carried
-onto the new grid and handed to `mf.ic(strt=...)`. `with_grid(remap=True)` carries the old
-model's INPUT `ic.strt` instead. The array makes the simulation unsaveable until it is
-registered as a library package (`project.add_package(key, mf.ic(strt=...))` +
-`mf.ref(key)`); see `docs/package_api_reference.md`, "Starting heads from a solved run".
+**Starting the moved model from what the old one solved** is
+`mf.ic(strt=mf.Heads(old_run))`: the old run's heads at the end of its last stress period
+(`per=` for another), carried onto whatever grid the build supplies -- so it moves like any
+recipe and no longer stops the simulation saving (a built `grid=` still must be registered,
+`project.add_grid` + `mf.grid_ref`). `old.hds.remap(new_vor)` is the same read as an array, to
+look at or hand on; `with_grid(remap=True)` carries the old model's INPUT `ic.strt`
+instead. See `docs/package_api_reference.md`, "A run's heads as a recipe".
 
 ## Coupled (multi-model) runs
 

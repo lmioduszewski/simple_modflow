@@ -591,9 +591,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8364 passed / 5 skipped**, 2026-10-15, after `model.hds.remap` -- ledger 595):
-  `-n 10` **5m28s** in a detached checkout outside `.claude`, at a load average of ~7 at its
-  start (other sessions' work on the machine); serial not re-measured. Before it,
+- Full suite (**8413 passed / 5 skipped**, 2026-10-15, after the `mf.Heads` recipe -- ledger
+  596): `-n 10` **9m15s** in a detached checkout outside `.claude`, NOT a quiet clock -- a
+  load average of ~22 at its start from other sessions. Before it, 8364 passed / 5 skipped
+  (after `model.hds.remap` -- ledger 595): `-n 10` 5m28s at ~7; serial not re-measured.
+  Before that,
   8281 passed / 5 skipped (2026-10-14, after the rehearsal's recovery became a
   pooled check -- ledgers 591-594; the fifth skip is the opt-in
   `test_converged_rehearsals_cover_the_truth_pooled`, ~29 min, run with
@@ -1638,15 +1640,31 @@ target is refused for the remap itself: it needs real polygons.
 to weight), and `uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt`
 (measured `stale`, not `unverifiable` -- they carry a pin, so re-declaration is their route).
 
-## Starting a model on a new grid from a run's SOLVED heads? `old.hds.remap(new_vor)` (ledger 595)
-`mf.ic(strt=old.hds.remap(new_vor))` -- the heads the old run ENDED with (`per=-1`, the
+## Starting a model on a new grid from a run's SOLVED heads? `mf.Heads(old_run)` (ledgers 595-596)
+**The RECIPE is the spelling to teach: `mf.ic(strt=mf.Heads(old_run, per=, layers=))`**
+(ledger 596) -- resolved at BUILD against whatever grid the model has, so `ic` no longer
+blocks a save (a built `grid=` still must be registered), the model moves (`rebuilt`) and the
+run freezes the carried array. `mf.ic` resolves the RUN at declaration: the OC-declared head
+file and the binary grid file (`output_files.binary_grid_file`: `GRB6 FILEOUT`, `NOGRB`, else
+`<dis file>.grb`), both stored absolute and HASHED -- the bundler, anchor, `built_from` and
+drift reach the grid file through `DataSourceSpec.EXTRA_PATH_FIELDS` -- the TDIS period
+lengths (FloPy's lone-package load, ms not s) and the CRS, and checks `per`, `layers` and a
+cut-short record there. The build (`heads_recipe.resolve_heads`) reads the head and grid
+files, plus the run's TDIS and `mfsim.lst` when its `mfsim.nam` is still beside them, checks
+`layers=` against the BUILT `nlay` and hands the new idomain to the engine (`active=`).
+Allowed in a GWF model's `mf.ic(strt=)` only. **A model's name-file entries resolve against
+the SIMULATION directory** (`output_files._name_file_entry`, MF6's rule): joined onto the
+model's own folder they doubled for every coupled run (`<ws>/flow/flow/flow.disv`), and the
+OC reader fell back to `<model>.hds`, unread. `package_api` moved up one import layer for the
+new module (no new deferred import).
+The eager form: `mf.ic(strt=old.hds.remap(new_vor))` -- the heads the old run ENDED with (`per=-1`, the
 last TDIS period), read at the period's END and checked for that period alone, so an
 explicit earlier `per=` reads a run that stopped later while `-1` refuses one that never
 finished, naming a stopped run as well as `SAVE HEAD LAST`; a step MF6's listing says did
 not converge is refused. Carried onto any BUILT grid; `model.conc`/`model.temp.remap` alike.
 `with_grid(remap=True)` carries the INPUT `ic.strt` instead. One engine,
-`grid/remap.remap_field` (a head file and a grid, no model object -- the lazy
-`mf.ic(strt=mf.Heads(...))` recipe is next and calls it). **`method="linear"` between MF6's
+`grid/remap.remap_field` (the field's numbers and two built grids, no model object) and one
+read, `headsplus.read_saved_field`/`saved_record` -- the recipe calls both. **`method="linear"` between MF6's
 cell centres (`grid.points`, never polygon centroids) is the default, measured** -- away
 from a pumping well, 6.4x closer than the area mean refining and 2.6x coarsening; at the
 well cell neither wins (`docs/reproducers/heads_remap_linear_vs_area.py`). A centre outside
@@ -1662,9 +1680,8 @@ layer map (repeats allowed). Traps: importing any `grid` module from `headsplus`
 level is a CYCLE through `grid/__init__` -> plotting -> `headsplus`, so `remap()` imports the
 engine lazily; the no-value rule lives in `myflopy._numbers` (`is_no_value`/`is_dry`) for
 the same reason. A DISU (stacked nodes: cells sharing a centre, or overlapping) is refused
-in the engine, so a reader with no model cannot slip one through. The array makes a
-simulation unsaveable until registered as a library package -- and a built `grid=` needs
-registering too (`project.add_grid` + `mf.grid_ref`).
+in the engine, so a reader with no model cannot slip one through. The ARRAY makes a
+simulation unsaveable and pins it to its mesh -- which is why the recipe exists.
 
 ## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
 `mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the

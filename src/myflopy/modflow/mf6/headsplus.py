@@ -24,6 +24,7 @@ import flopy.utils.binaryfile as bf
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy._numbers import is_no_value
 from myflopy._optional import require
 from myflopy.modflow.mf6.heads_observations import (
@@ -52,7 +53,6 @@ from myflopy.modflow.mf6.period_end import (
     period_lengths,
     saved_steps,
 )
-from myflopy.run_record import nonconverged_steps
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import (
     HoverSpec,
@@ -61,7 +61,9 @@ from myflopy.modflow.utils.datatypes.hover import (
     head_hover,
     temp_hover,
 )
+from myflopy.run_record import nonconverged_steps
 
+logger = get_logger(__name__)
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
 
@@ -129,6 +131,38 @@ def _exact_kstpkper(kstpkper, saved) -> tuple[int, int]:
     return key
 
 
+def _refuse_a_cut_record(reader, key: tuple[int, int], label: str) -> None:
+    """Refuse a record the file holds the HEADER of but not all the numbers.
+
+    FloPy indexes a file by its record headers, so a run killed -- or still running --
+    while MF6 wrote its last record leaves a record that is listed and cannot be read:
+    measured in the review of ledger 596, a declaration accepted it and the build died in
+    FloPy with a bare ``EOFError``. Checked from the index alone: each layer record of
+    ``key`` must end inside the file.
+    """
+
+    records = reader.recordarray
+    positions = np.asarray(reader.iposarray, dtype=np.int64)
+    width = np.dtype(reader.realtype).itemsize
+    mine = (records["kstp"] - 1 == key[0]) & (records["kper"] - 1 == key[1])
+    ends = positions[mine] + records["ncol"][mine].astype(np.int64) * records["nrow"][mine] * width
+    try:
+        size = Path(reader.filename).stat().st_size
+    except OSError:
+        # The file cannot be measured (gone since it was opened): nothing to compare
+        # against, so the read itself is what will say so.
+        logger.debug("cannot size %s; the cut-record check is skipped", reader.filename)
+        return
+    if ends.size and int(ends.max()) > size:
+        raise ValueError(
+            f"The {label} file {Path(reader.filename).name} stops inside the record for time "
+            f"step {key[0]} of stress period {key[1]} (zero-based): it holds that record's "
+            f"header but not its numbers ({int(ends.max()) - size:,} bytes short). The run "
+            "did not finish writing it -- still running, or stopped -- so read its listing "
+            "file (mfsim.lst), and read a period it finished (per=...)."
+        )
+
+
 def _run_directory(output_path) -> Path | None:
     """The simulation directory holding ``mfsim.lst`` for a field file, or ``None``.
 
@@ -143,22 +177,21 @@ def _run_directory(output_path) -> Path | None:
     return None
 
 
-def read_saved_field(
+def saved_record(
     reader,
     *,
     per: int = -1,
     kstpkper: tuple[int, int] | None = None,
     perlen=None,
-    ncpl: int,
     label: str = "head",
     run_dir=None,
-) -> tuple[np.ndarray, tuple[int, int], str]:
-    """The ``(nlay, ncpl)`` numbers one record of a field file holds, and which record.
+) -> tuple[tuple[int, int], str]:
+    """Which record of a field file :func:`read_saved_field` reads, and how to name it.
 
-    The read ``model.hds.remap`` makes, and the lazy recipe after it: the record that ENDS
-    stress period ``per`` (:func:`~myflopy.modflow.mf6.period_end.period_end_record`, that
-    period alone), or an exact ``kstpkper``. The file's own numbers come back, MODFLOW's
-    no-value markers included.
+    The record that ENDS stress period ``per``
+    (:func:`~myflopy.modflow.mf6.period_end.period_end_record`, that period alone), or an
+    exact ``kstpkper``; refused when it is a step MF6 did not converge on. Reads the file's
+    record headers only, so the ``mf.Heads`` recipe checks ``per`` at declaration with it.
 
     Parameters
     ----------
@@ -173,8 +206,6 @@ def read_saved_field(
     perlen : sequence of float, optional
         Each period's TDIS length. Default ``None``: no TDIS, so the period's last saved
         step is taken unchecked, and the description says so.
-    ncpl : int
-        Cells per layer, for the reshape.
     label : str, default "head"
         The file's field (``"head"``, ``"concentration"``, ``"temperature"``): names the
         file and the output-control word in a refusal.
@@ -186,9 +217,9 @@ def read_saved_field(
 
     Returns
     -------
-    tuple of (numpy.ndarray, tuple of (int, int), str)
-        The ``(nlay, ncpl)`` floats, the zero-based ``(kstp, kper)`` read, and a
-        description of that time for a message.
+    tuple of (tuple of (int, int), str)
+        The zero-based ``(kstp, kper)`` to read, and a description of that time for a
+        message.
 
     Raises
     ------
@@ -213,6 +244,7 @@ def read_saved_field(
             else f"the last saved step of stress period {key[1]} (no TDIS to check that it "
             "ends the period)"
         )
+    _refuse_a_cut_record(reader, key, label)
     if run_dir is not None and key in nonconverged_steps(run_dir):
         raise ValueError(
             f"Time step {key[0]} of stress period {key[1]} (zero-based) is a step the "
@@ -221,6 +253,59 @@ def read_saved_field(
             "failed run writes its last step that way, and one told to CONTINUE writes "
             "them mid-run. Read a period the run solved (per=...), or rerun the model."
         )
+    return key, when
+
+
+def read_saved_field(
+    reader,
+    *,
+    per: int = -1,
+    kstpkper: tuple[int, int] | None = None,
+    perlen=None,
+    ncpl: int,
+    label: str = "head",
+    run_dir=None,
+) -> tuple[np.ndarray, tuple[int, int], str]:
+    """The ``(nlay, ncpl)`` numbers one record of a field file holds, and which record.
+
+    The read ``model.hds.remap`` makes, and the ``mf.Heads`` recipe after it:
+    :func:`saved_record` picks the record, and its numbers come back as the file holds
+    them, MODFLOW's no-value markers included.
+
+    Parameters
+    ----------
+    reader : flopy.utils.HeadFile
+        An open reader of the field file (a :class:`DependentVariableFile` is one).
+    per : int, default -1
+        As :func:`saved_record`.
+    kstpkper : tuple of (int, int), optional
+        As :func:`saved_record`. Default ``None``.
+    perlen : sequence of float, optional
+        As :func:`saved_record`. Default ``None``.
+    ncpl : int
+        Cells per layer, for the reshape.
+    label : str, default "head"
+        As :func:`saved_record`.
+    run_dir : str or pathlib.Path, optional
+        As :func:`saved_record`. Default ``None``.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, tuple of (int, int), str)
+        The ``(nlay, ncpl)`` floats, the zero-based ``(kstp, kper)`` read, and a
+        description of that time for a message.
+
+    Raises
+    ------
+    TypeError
+        As :func:`saved_record`.
+    ValueError
+        As :func:`saved_record`.
+    """
+
+    key, when = saved_record(
+        reader, per=per, kstpkper=kstpkper, perlen=perlen, label=label, run_dir=run_dir
+    )
     raw = reader.get_data(kstpkper=key)
     return (
         np.asarray(_as_layer_cell_heads(raw, nlay=int(reader.nlay), ncpl=int(ncpl)), dtype=float),
@@ -714,10 +799,14 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
 
         The array is EAGER: a simulation holding it builds and runs, but ``project.save()``
         skips it (an array cannot be serialized, ledger 193) and the array names its cells
-        by position, so it does not follow a later ``with_grid``. To save one, register it
-        as a library package (``project.add_package(key, mf.ic(strt=...))`` +
-        ``mf.ref(key)``) -- and register a built grid too (``project.add_grid`` +
-        ``grid=mf.grid_ref(key)``), which a saved simulation cannot hold either.
+        by position, so it does not follow a later ``with_grid``. For HEADS the recipe
+        avoids both -- ``mf.ic(strt=mf.Heads(old_run, per=..., layers=...))`` is this same
+        read and this same engine, resolved at build against whatever grid the model has
+        (ledger 596). A concentration or temperature array (no recipe yet) is kept by
+        registering it as a library package (``project.add_package(key,
+        mf.ic(strt=...))`` + ``mf.ref(key)``); either way a built ``grid=`` must be
+        registered too (``project.add_grid`` + ``grid=mf.grid_ref(key)``) for the
+        simulation to save.
 
         Parameters
         ----------

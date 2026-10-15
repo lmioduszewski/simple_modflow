@@ -1240,7 +1240,7 @@ flow = mf.gwf(
                 top=layers.top, botm=layers.botm, idomain=layers.idomain,
                 length_units="FEET"),
         mf.ic(strt=150.0),                  # or a previous run's heads on this grid:
-                                            # mf.ic(strt=old.hds.remap(vor))
+                                            # mf.ic(strt=mf.Heads(old_run))
         mf.npf(k=[25.0, 0.05, 40.0], k33=..., icelltype=1, save_flows=True),
         mf.sto(steady_state={0: True}),
 

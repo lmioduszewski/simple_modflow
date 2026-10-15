@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 595 entries (600 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 596 entries (601 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 596 | A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed... | 2026-10-15 |
 | 595 | A SOLVED field is carried to another grid by `model.hds.remap(grid)`; linear between cell centres is the de... | 2026-10-15 |
 | 594 | The pooled thresholds are read off an exact posterior's FINITE-ensemble z, and the rehearsal notebook keeps... | 2026-10-14 |
 | 593 | The rehearsal's recovery is judged by POOLED coverage over several converged runs, scored by one rule | 2026-10-14 |
@@ -22233,3 +22234,70 @@ same day, which is the useful part of the result.
       workspace meshes into the cwd; and `with_grid` on a model declared `grid=<built
       grid>` reads a per-cell array `unchanged` where `context=ModelContext(grid=...)` reads
       it `unverifiable` (ledger 295's detection keys on the context's grid).
+
+596. **A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed at the declaration (2026-10-15).**
+      The user's call: build the recipe straight after `model.hds.remap` (ledger 595), whose
+      array makes a simulation unsaveable (ledger 193) and pins it to its mesh. The recipe is
+      that read and that engine -- `headsplus.read_saved_field`/`saved_record` and
+      `grid/remap.remap_field` -- resolved against whatever grid the build supplies, so its
+      `ic` no longer stops a save (a built `grid=` must still be registered), the model MOVES
+      (`rebuilt`) and the run FREEZES the carried array, as `mf.Polygons`/`mf.RasterValues`.
+      **Chosen:**
+      - `mf.Heads(run)` takes a `Run`, a model read from one, or the run's directory, and
+        `mf.ic` resolves it at DECLARATION (ledger 293's rule for every recipe path): the
+        head file the model's OC names, the binary grid file (`output_files.binary_grid_file`:
+        `GRB6 FILEOUT`, refused under `NOGRB`, else `<dis file>.grb`), each period's length
+        (FloPy's lone TDIS load, 2-40 ms against 1-3 s for the simulation, measured by the
+        scouting, read through `period_end.tdis_period_records` -- the one TDIS reader,
+        which `tests/test_model_config.py` pins) and the CRS (given, else the model's grid's, else `run.json`'s, else the
+        default). `per`, `layers` and the record itself are checked there: a stopped run, a
+        missing or CUT-SHORT period end (a header with no numbers -- a run killed mid-write;
+        FloPy then died with a bare `EOFError`), an unconverged step and an old layer the run
+        lacks are refused at the call. `grid_path`/`perlen`/the hashes are filled by `mf.ic`
+        and REFUSED beside a run -- given, they once made the recipe skip its own resolution.
+      - BOTH files are hashed and the digest reads the hashes in place of the paths: a copy of
+        the run digests the same, a different grid file does not. The TDIS is NOT hashed:
+        FloPy stamps a time in every text file it writes (two identical runs' TDIS files
+        differ, measured by the scouting); the lengths are digested as numbers instead.
+      - The build reads the head file and the grid file, never the old simulation -- and,
+        where the run's `mfsim.nam` still sits beside them, its TDIS (so `per`, `-1` above
+        all, is counted on the run as the head file now is: a run re-run with more periods
+        had its old last period read as its last) and `mfsim.lst` (the convergence check). A
+        bundled copy, with no `mfsim.nam`, uses the stored lengths. The layer map is checked
+        against the BUILT model and the new idomain reaches the engine as `active=`; a
+        domain that does not fit the built grid is refused by name. The scouting measured
+        the build ~1.7 s on Ten Trails against ~3.4 s through `load_mf6_run`; the review,
+        under other load, 0.9-1.1 s for the two files and 2.7-3.2 s with the remap.
+      - **A model's name-file entries resolve against the SIMULATION directory**
+        (`output_files._name_file_entry`, MF6's rule), and its name file is where
+        `mfsim.nam` says (`_model_name_file`). Joined onto the model's own folder, every
+        coupled run's entries doubled (`<ws>/flow/flow/flow.disv`) -- the recipe refused
+        every coupled run, and, older, `_name_file_oc` found no OC there, so the PEST build
+        and the target readers took `<model>.hds` WITHOUT reading the OC's `HEAD FILEOUT`
+        (ledger 576's trap). This changes what those read on a coupled run: the declared
+        file now. `_declared_models` (now beside them) reads `mfsim.nam` with undecodable
+        bytes replaced, as the other readers did.
+      - The path walkers walk `DataSourceSpec.EXTRA_PATH_FIELDS` beside `path`, so the
+        bundler, the build anchor, `source_paths`, `built_from` and `drift()` carry the grid
+        file with no wiring of their own.
+      - Refused: anywhere but a GWF model's `mf.ic(strt=)` -- other array slots, the areal
+        and LIST forms of `rch`/`evt` at declaration, a GWT/GWE `ic` at build -- in a
+        per-layer list, in a product, multiplied, and in `options` (ledger 542, now naming
+        `mf.Heads`).
+      - `package_api` sits one import layer higher (the new `heads_recipe` module is below
+        it), and with it every module above; no deferred import was added.
+      A 10-agent adversarial review confirmed every item above that says "refused", "cut",
+      "coupled", "GRB6", "re-run" or "domain" as a defect of the first version, among 39
+      findings (several one defect seen through different lenses); all are fixed and
+      pinned, and 24 mutants run against the tests, every
+      non-equivalent one caught.
+      **NOT built:** `mf.Concentrations`/`mf.Temperatures` -- MF6 writes no `.grb` for a GWT
+      or GWE model, so their grid is the GWF partner's, found through the exchange, and
+      `_declared_field_output` has no `"temperature"` kind yet; `kstpkper=` on the recipe; a
+      DIS model RECEIVING the heads (every recipe resolves against a DISV grid,
+      `_lazy_resolution_context`); a model folder deeper than one level below the head file
+      for the build's convergence check (`_run_directory` looks two levels). The old run
+      edited between the declaration and a build is read as it then is with nothing said,
+      and `drift()` -- which compares against what a BUILT run read -- says `ok`; edited
+      after a build, `edited`. Found and not fixed: `model.hds` builds a new reader on every
+      access and never closes it (a `ResourceWarning` per access).

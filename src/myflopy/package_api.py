@@ -77,6 +77,7 @@ from myflopy.grid_identity import (
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
 from myflopy.modflow.mf6.grid.geometry import cell_shares, top_active_layer
 from myflopy.modflow.mf6.grid.surfaces import check_gaps
+from myflopy.modflow.mf6.heads_recipe import resolve_heads, stamp_heads
 from myflopy.modflow.mf6.lakes import (
     LAKBuilder,
     LakeConnection,
@@ -90,7 +91,7 @@ from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
-from myflopy.sources import ArrayProduct, BoundarySource, Polygons, RasterValues
+from myflopy.sources import ArrayProduct, BoundarySource, Heads, Polygons, RasterValues
 from myflopy.specs import (
     _PUBLISHED_BY_DISV,
     _PUBLISHED_BY_KEY,
@@ -1290,7 +1291,7 @@ _RECIPE_FLAGS: dict[str, frozenset[str]] = {
     "sto": frozenset({"iconvert"}),
 }
 
-_RECIPE_TYPES = (RasterValues, Polygons, ArrayProduct)
+_RECIPE_TYPES = (RasterValues, Polygons, ArrayProduct, Heads)
 
 
 def _is_recipe(value: Any) -> bool:
@@ -1316,7 +1317,38 @@ def _recipe_noun(value: Any) -> str:
         RasterValues: "mf.RasterValues(...)",
         Polygons: "mf.Polygons(...)",
         ArrayProduct: "a product of recipes",
+        Heads: "mf.Heads(...)",
     }[type(value)]
+
+
+def _holds_heads(value: Any) -> bool:
+    """Whether ``value`` is, or a list/tuple holds, a :class:`~myflopy.sources.Heads`."""
+
+    return isinstance(value, Heads) or (
+        isinstance(value, (list, tuple)) and any(isinstance(item, Heads) for item in value)
+    )
+
+
+def _refuse_heads_outside_strt(verb: str, key: str, value: Any) -> None:
+    """``mf.Heads`` fills a GWF model's starting heads, ``mf.ic(strt=...)``, alone.
+
+    A head is not a conductivity, a storage coefficient or a recharge rate, and the
+    recipe is one array for every layer -- its ``layers=`` is the per-layer map, so a
+    per-layer LIST holding one is a second spelling of it.
+    """
+
+    if not _holds_heads(value):
+        return
+    if isinstance(value, (list, tuple)):
+        raise TypeError(
+            f"{verb}({key}=[..., mf.Heads(...), ...]) is refused: mf.Heads fills every "
+            "layer itself, one old layer per new one -- give it alone and name the map, "
+            "mf.ic(strt=mf.Heads(run, layers=[...]))."
+        )
+    raise TypeError(
+        f"{verb}({key}=mf.Heads(...)) is refused: a run's heads are a model's STARTING "
+        "heads, mf.ic(strt=mf.Heads(...)), and fill nothing else."
+    )
 
 
 def _layered_factors(value: Any) -> list:
@@ -1380,6 +1412,10 @@ def _split_array_recipes(helper: str, values: dict) -> tuple[dict, dict]:
         if not _carries_recipe(value):
             options[key] = value
             continue
+        if _holds_heads(value) and (
+            (helper, key) != ("ic", "strt") or isinstance(value, (list, tuple))
+        ):
+            _refuse_heads_outside_strt(f"mf.{helper}", key, value)
         noun = _recipe_noun(value)
         if key in flags:
             raise TypeError(
@@ -1468,6 +1504,10 @@ def _stamped_recipe(recipe: Any) -> Any:
         return type(recipe)(_stamped_recipe(item) for item in recipe)
     if isinstance(recipe, ArrayProduct):
         return ArrayProduct(factors=tuple(_stamped_recipe(f) for f in recipe.factors))
+    if isinstance(recipe, Heads):
+        # A whole run, not one file: its head file, its grid file, its periods and its
+        # CRS are found and hashed here (ledger 596).
+        return stamp_heads(recipe)
     if not isinstance(recipe, (RasterValues, Polygons)):
         return recipe
     path = Path(recipe.path)
@@ -1508,17 +1548,26 @@ def _build_recipe_arrays(builder, model, *, _spec, **values):
     discretization = _built_discretization(model)
     nlay = getattr(getattr(discretization, "nlay", None), "get_data", lambda: None)()
     cache = _recipe_cache(model)
-    resolved = {
-        key: (
-            resolve_array_recipe(
+    resolved = {}
+    for key, value in values.items():
+        if isinstance(value, Heads):
+            kind = str(getattr(model, "model_type", "")).lower()
+            if not kind.startswith("gwf"):
+                raise TypeError(
+                    f"{_spec.name}.{key}=mf.Heads(...) is refused: this is a "
+                    f"{kind[:3].upper() or 'non-GWF'} model, whose starting values are not "
+                    "heads. mf.Heads fills a GWF model's mf.ic(strt=...)."
+                )
+            resolved[key] = resolve_heads(
+                value, context.grid, nlay=int(nlay or 1), domain=context.domain
+            )
+        elif _carries_recipe(value):
+            resolved[key] = resolve_array_recipe(
                 value, context.grid, nlay=int(nlay or 1),
                 parameter=f"{_spec.name}.{key}", cache=cache,
             )
-            if _carries_recipe(value)
-            else value
-        )
-        for key, value in values.items()
-    }
+        else:
+            resolved[key] = value
     package = builder(model, **resolved)
     # Record an EAGER spec holding the resolved arrays, so the run freezes numbers
     # rather than this recipe. It must go in `_myflopy_resolved` -- the attribute
@@ -3210,6 +3259,10 @@ def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
         or the build raises). A list holding a recipe refuses an array entry
         (``TypeError``), and a ``Surface``/``LayerStack`` -- an elevation -- is refused
         here, alone or in a list.
+        For a GWF model, ``mf.Heads(old_run)`` starts it from the heads another run
+        ENDED with, carried onto this model's grid at build (ledger 596): the run's
+        files are found and hashed HERE, its layer map is checked against the built
+        model, and it is refused in a list, in a product and on a GWT/GWE model.
         For GWF a sensible head (near the water table) helps Newton /
         under-relaxation runs converge.
     name : str, default "ic"
@@ -3225,6 +3278,7 @@ def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
     --------
     >>> mf.ic(strt=9.0)                 # uniform
     >>> mf.ic(strt=starting_heads)      # per-cell / per-layer array
+    >>> mf.ic(strt=mf.Heads(old_run))   # another run's heads, on this model's grid
     """
 
     return _array_package_spec("ic", name, build_ic, {"strt": strt, **options})
@@ -5201,6 +5255,7 @@ class _RCHPackage:
                 "mf.rch requires either stress_period_data=, or the builder "
                 "arguments nper= and recharge= (plus context= to resolve eagerly)."
             )
+        _refuse_heads_outside_strt("mf.rch", "recharge", recharge)
         if context is None:
             # LAZY: the same declaration, resolved against whatever grid the build
             # supplies. The trigger is exactly the declaration that RAISED before, which
@@ -5721,6 +5776,8 @@ class _EVTPackage:
                 "mf.evt requires either stress_period_data=, or the builder "
                 "arguments nper=, rate= and depth= (plus context= to resolve eagerly)."
             )
+        for field, value in (("surface", surface), ("rate", rate), ("depth", depth)):
+            _refuse_heads_outside_strt("mf.evt", field, value)
         if context is None:
             if nseg != 1:
                 raise ValueError(
@@ -8472,6 +8529,7 @@ def _check_areal_recipes(verb: str, recipes: dict) -> None:
     for key, value in recipes.items():
         items = value.values() if isinstance(value, dict) else [value]
         for item in items:
+            _refuse_heads_outside_strt(verb, key, item)
             if isinstance(item, (list, tuple)) and _carries_recipe(item):
                 raise TypeError(
                     f"{verb}({key}=[...]): a per-layer list means nothing here -- {key} "

@@ -86,6 +86,7 @@ from myflopy.grid_identity import (
 from myflopy.sources import (
     ArrayProduct,
     DataSourceSpec,
+    Heads,
     LiteralSource,
     Polygons,
     RasterValues,
@@ -961,7 +962,8 @@ def repoint_source_paths(
     ----------
     value : DataSourceSpec, ArrayProduct, Surface, LayerStack, Spread, CellSurfaceOffset, dict, list, tuple, or any other object
         What to walk. A :class:`~myflopy.sources.DataSourceSpec` has its ``path``
-        transformed. An :class:`~myflopy.sources.ArrayProduct` has each factor walked
+        transformed, and each further path field its class names in
+        ``EXTRA_PATH_FIELDS`` (``Heads.grid_path``) -- each walked as a source. An :class:`~myflopy.sources.ArrayProduct` has each factor walked
         as a source, ``honor_external`` included, and is rebuilt when one moved. A
         token-bearing object (one with a ``_SPEC_TOKEN``) is written
         down with its own ``to_dict()``, every ``path``/``contours``/
@@ -974,7 +976,8 @@ def repoint_source_paths(
     transform : callable
         ``transform(path, *, role, notes)`` returns the path to store (a ``str`` or
         ``Path``), or ``None`` to leave the path alone. ``path`` is the source's own
-        ``Path`` for a ``DataSourceSpec`` and a ``PurePath`` inside a token payload.
+        ``Path`` (or an ``EXTRA_PATH_FIELDS`` one) for a ``DataSourceSpec`` and a
+        ``PurePath`` inside a token payload.
         ``role`` is ``"source"`` (a ``DataSourceSpec``), ``"surface"`` (a file a
         surface READS) or ``"write_target"`` (``Surface.out``, the GRASS cache it
         WRITES); see :data:`SURFACE_WRITE_KEYS` for why the last is apart. ``notes``
@@ -1029,13 +1032,23 @@ def repoint_source_paths(
     if isinstance(value, DataSourceSpec):
         if honor_external and value.external:
             return value
-        stored = transform(value.path, role="source", notes=notes)
-        if stored is None or str(stored) == str(value.path):
+        # `path`, and any further file a source names (`EXTRA_PATH_FIELDS`: an
+        # `mf.Heads` recipe reads a head file AND the run's binary grid file), each a
+        # source -- so the bundler copies, the anchor joins and `source_paths` lists all.
+        changes = {}
+        for name in ("path", *getattr(type(value), "EXTRA_PATH_FIELDS", ())):
+            current = getattr(value, name)
+            if current is None:
+                continue
+            stored = transform(Path(current), role="source", notes=notes)
+            if stored is not None and str(stored) != str(current):
+                changes[name] = stored
+        if not changes:
             return value
         # `external` means "never anchor to the project root". Only the bundler gets
         # here with it set, and only by copying the file inside -- which is what makes
         # the flag false. The anchor returned above without touching it.
-        return replace(value, path=stored, external=False)
+        return replace(value, **changes, external=False)
     if isinstance(value, ArrayProduct):
         # Its factors are sources, walked as sources: the bundler copies a factor's
         # raster, the anchor joins a relative one to the project root and honours
@@ -2085,9 +2098,10 @@ def _check_options(name: str, builder, options: dict[str, Any]) -> None:
 
 
 def _is_array_recipe(value: Any) -> bool:
-    """Whether ``value`` is ONE array recipe: ``mf.RasterValues``, ``mf.Polygons`` or a product."""
+    """Whether ``value`` is ONE array recipe: ``mf.RasterValues``, ``mf.Polygons``, a product,
+    or ``mf.Heads``."""
 
-    return isinstance(value, (RasterValues, Polygons, ArrayProduct))
+    return isinstance(value, (RasterValues, Polygons, ArrayProduct, Heads))
 
 
 def _refuse_recipe_options(name: str, options: dict[str, Any]) -> None:
@@ -2114,6 +2128,13 @@ def _refuse_recipe_options(name: str, options: dict[str, Any]) -> None:
             items = list(value.values())
         else:
             items = (value,)
+        if isinstance(value, Heads) or any(isinstance(item, Heads) for item in items):
+            raise TypeError(
+                f"{name}: option {key!r} holds mf.Heads(...), which is resolved at BUILD from "
+                "a package's recipe inputs -- never from its options -- and fills one slot: "
+                "a GWF model's starting heads, mf.ic(strt=mf.Heads(...)), declared through "
+                "mf.ic and given alone."
+            )
         if _is_array_recipe(value) or any(_is_array_recipe(item) for item in items):
             raise TypeError(
                 f"{name}: option {key!r} holds an array recipe (mf.RasterValues, "

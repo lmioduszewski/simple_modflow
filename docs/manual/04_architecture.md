@@ -310,9 +310,11 @@ every package before anything is built, and `run.resolution` is the record after
 > [Chapter 12, §12.5](12_projects_runs.md).
 
 > **To start the moved model from the heads the old one SOLVED**,
-> `mf.ic(strt=old.hds.remap(new_vor))` -- the old run's heads at the end of a stress
-> period, carried onto the new grid (`with_grid(remap=True)` carries the old INPUT
-> `ic.strt`). See `docs/package_api_reference.md`, "Starting heads from a solved run".
+> `mf.ic(strt=mf.Heads(old_run))` -- the old run's heads at the end of a stress period,
+> carried onto the new grid at build, so the model moves like any recipe and `ic` no longer
+> stops it saving
+> (`old.hds.remap(new_vor)` is the same as an array; `with_grid(remap=True)` carries the old
+> INPUT `ic.strt`). See `docs/package_api_reference.md`, "A run's heads as a recipe".
 
 ---
 

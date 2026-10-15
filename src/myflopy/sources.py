@@ -66,6 +66,11 @@ class DataSourceSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     kind: ClassVar[str] = "DataSourceSpec"
+    #: Path fields BESIDE ``path`` that a subclass reads as sources too -- walked by
+    #: ``specs.repoint_source_paths``, so the bundler copies, the build-time anchor joins,
+    #: ``source_paths`` lists and the run's provenance hashes each (``Heads`` names its
+    #: run's binary grid file). Empty here.
+    EXTRA_PATH_FIELDS: ClassVar[tuple[str, ...]] = ()
 
     def __post_init__(self) -> None:
         """Coerce ``path`` to a :class:`~pathlib.Path` (on this frozen dataclass)."""
@@ -1424,6 +1429,282 @@ class RasterValues(DataSourceSpec):
         )
 
 
+#: How a solved field crosses between meshes, as ``Heads(method=)`` takes it. Restated from
+#: ``myflopy.modflow.mf6.grid.remap.FIELD_METHODS``, which this module cannot import (it is
+#: the bottom of the import layering); a test holds the two together.
+FIELD_METHODS: tuple[str, ...] = ("linear", "area")
+
+#: What a new cell with no old value under it means, as ``Heads(uncovered=)`` takes it.
+#: Restated from ``myflopy.modflow.mf6.grid.remap.UNCOVERED_MODES`` for the same reason.
+FIELD_UNCOVERED: tuple[str, ...] = ("nearest", "raise")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Heads(DataSourceSpec):
+    """A finished run's HEADS as a model's starting heads, resolved at build, as plain data.
+
+    The recipe behind ``mf.ic(strt=mf.Heads(old_run))``: the heads ``old_run`` ended
+    stress period ``per`` with, carried onto whatever grid the build supplies by the same
+    engine and the same read as ``model.hds.remap`` -- so its ``ic`` no longer stops a
+    model starting from another run's solution SAVING (an ``ndarray`` is refused by
+    ``to_dict``, ledger 193; a built ``grid=`` must still be registered), it MOVES under
+    ``sim.with_grid`` (``move_report`` reads ``rebuilt``), and its run freezes the array
+    the build carried (ledger 251). See ledger 596.
+
+    Give it the run: a :class:`~myflopy.workspace.Run`, a model read from one
+    (``run.model()``, ``mf.load_mf6_run(ws)``), or the run's directory. ``mf.ic``
+    resolves it at DECLARATION, as every recipe's path is (ledger 293): the head file
+    the model's output control names, the binary grid file MF6 wrote for its
+    discretization (``<dis file>.grb``, e.g. ``m.disv.grb``, or the name its
+    ``GRB6 FILEOUT`` gives), each stress period's length and the CRS are found and stored,
+    both files are hashed, and ``per`` and ``layers`` are checked against the file -- so a
+    stopped run, a period whose end was not saved or was cut short, a step MF6 did not
+    converge on or an old layer the run does not have is refused at the declaration, not
+    at a later build. The build reads the head file and the grid file -- and, where the
+    run's ``mfsim.nam`` still sits beside them, its period lengths and ``mfsim.lst``, so
+    ``per`` and the convergence check follow the run as it then is -- and never loads the
+    old simulation.
+
+    Accepted in ``mf.ic(strt=)`` of a GWF model only: a concentration or a temperature
+    is not a head, and the other array slots are not starting values. Not in a
+    per-layer list (``layers=`` is that map) and not in a product (a head is a level;
+    scaling it moves the datum).
+
+    Parameters
+    ----------
+    path : Run, model, pathlib.Path or str
+        The finished run. A ``Run`` (anything with a ``workspace`` and no
+        ``model_type``) names its directory; a model (anything with a ``model_type``,
+        ``workspace`` and ``name``) names its folder and itself as ``model``; a path is
+        the run directory, holding ``mfsim.nam``. After ``mf.ic`` resolves it, the head
+        file, stored absolute.
+    external : bool, default False
+        As :class:`DataSourceSpec`. ``mf.ic`` stores absolute paths, so it never acts.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`: free-form annotations, carried not read.
+    model : str, optional
+        The GWF model whose heads to read. Default ``None``: the model given as
+        ``path``, else the run's only GWF model -- a run with several is refused at
+        declaration, naming them.
+    per : int, default -1
+        The stress period, zero-based, read at its END and checked for that period
+        alone (as ``model.hds.remap``); a negative counts back from the last the old
+        simulation declares. A Python or numpy integer; a ``bool`` is refused.
+    layers : int or sequence of int, optional
+        The OLD layer each layer of the NEW model reads, zero-based (a negative counts
+        up from the bottom), repeats allowed: one entry per new layer, checked against
+        the built model's layer count. An int fills a ONE-layer model; for more,
+        ``layers=[k] * nlay``. Default ``None``: layer for layer, which the build refuses
+        when the two models' layer counts differ.
+    method : {"linear", "area"}, default "linear"
+        As ``model.hds.remap``: between cell centres, or the area-weighted mean.
+    uncovered : {"nearest", "raise"}, default "nearest"
+        As ``model.hds.remap``. A cell inactive in the new model is never counted.
+    crs : str, optional
+        The old run's CRS. Default ``None``: the model's own when ``path`` is a model,
+        else the one the run recorded in ``run.json``, else the library default
+        (EPSG:2927) -- stored at declaration, so the build reads no manifest.
+    grid_path : pathlib.Path or str, optional
+        The old run's binary grid file. Filled in by ``mf.ic``, as a saved recipe holds it;
+        given beside a run, a model or a run directory it is refused (``TypeError``).
+    perlen : sequence of float, optional
+        Each old stress period's length, which says how many there are and where each
+        ENDS. Filled in by ``mf.ic`` from the old run's TDIS; refused beside a run.
+    source_sha : str, optional
+        The head file's content hash, stamped by ``mf.ic``; the digest reads it in place
+        of the path (ledger 293). Refused beside a run.
+    grid_sha : str, optional
+        The binary grid file's content hash, stamped by ``mf.ic``. Refused beside a run.
+
+    Raises
+    ------
+    TypeError
+        ``path`` is not a run, a model or a path; ``per`` or a layer is not an integer;
+        ``layers`` is neither an index nor a sequence; a stamped field is given beside a
+        run.
+    ValueError
+        ``method``/``uncovered`` is not one of its choices; ``layers`` is empty; a
+        ``perlen`` value is not a finite number.
+
+    Examples
+    --------
+    >>> mf.ic(strt=mf.Heads(old_run))                       # last period, layer for layer
+    >>> mf.ic(strt=mf.Heads(old_run.model(), per=11, layers=[0, 0, 1, 2]))
+    """
+
+    #: See :attr:`Polygons.__array_ufunc__`.
+    __array_ufunc__: ClassVar[None] = None
+
+    model: str | None = None
+    per: int = -1
+    layers: int | tuple[int, ...] | None = None
+    method: str = "linear"
+    uncovered: str = "nearest"
+    crs: str | None = None
+    grid_path: Path | str | None = None
+    perlen: tuple[float, ...] | None = None
+    source_sha: str | None = None
+    grid_sha: str | None = None
+
+    kind: ClassVar[str] = "HeadsSource"
+    #: See :attr:`DataSourceSpec.EXTRA_PATH_FIELDS`: the run's binary grid file.
+    EXTRA_PATH_FIELDS: ClassVar[tuple[str, ...]] = ("grid_path",)
+
+    def __post_init__(self) -> None:
+        """Take the run from what was given, and refuse what cannot be used, at the call."""
+
+        import numbers
+
+        given = self.path
+        from_a_run = not isinstance(given, (str, Path)) or Path(given).is_dir()
+        stamped = [
+            name for name in ("grid_path", "perlen", "source_sha", "grid_sha")
+            if getattr(self, name) is not None
+        ]
+        if from_a_run and stamped:
+            raise TypeError(
+                "mf.Heads(" + ", ".join(f"{name}=..." for name in stamped) + "): "
+                + ("these are" if len(stamped) > 1 else "that is")
+                + " filled in by mf.ic from the run's own files -- give the run alone."
+            )
+        if not isinstance(given, (str, Path)):
+            if hasattr(given, "model_type") and hasattr(given, "workspace"):
+                if self.model is None:
+                    object.__setattr__(self, "model", str(given.name))
+                if self.crs is None and getattr(getattr(given, "vor", None), "crs", None):
+                    object.__setattr__(self, "crs", given.vor.crs)
+                object.__setattr__(self, "path", given.workspace)
+            elif hasattr(given, "workspace"):
+                object.__setattr__(self, "path", given.workspace)
+            else:
+                raise TypeError(
+                    f"mf.Heads({given!r}): give the finished run -- a Run, a model read "
+                    "from one (run.model(), mf.load_mf6_run(ws)), or the run's directory."
+                )
+        DataSourceSpec.__post_init__(self)
+        per = self.per
+        if isinstance(per, bool) or not isinstance(per, numbers.Integral):
+            raise TypeError(f"mf.Heads(per={per!r}): a stress period is an integer.")
+        object.__setattr__(self, "per", int(per))
+        layers = self.layers
+        if layers is not None:
+            def _layer(value):
+                if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+                    raise TypeError(
+                        f"mf.Heads(layers={layers!r}): layers are zero-based integers, one "
+                        "OLD layer per layer of the new model."
+                    )
+                return int(value)
+
+            if isinstance(layers, numbers.Integral):
+                object.__setattr__(self, "layers", _layer(layers))
+            elif isinstance(layers, (str, bytes)) or not hasattr(layers, "__iter__"):
+                raise TypeError(
+                    f"mf.Heads(layers={layers!r}): an old layer index or a sequence of them."
+                )
+            else:
+                rows = tuple(_layer(value) for value in layers)
+                if not rows:
+                    raise ValueError("mf.Heads(layers=[]): name one old layer per new layer.")
+                object.__setattr__(self, "layers", rows)
+        for name, allowed in (("method", FIELD_METHODS), ("uncovered", FIELD_UNCOVERED)):
+            if getattr(self, name) not in allowed:
+                raise ValueError(
+                    f"mf.Heads({name}={getattr(self, name)!r}) is not one of "
+                    + ", ".join(repr(word) for word in allowed) + "."
+                )
+        if self.crs is not None and not isinstance(self.crs, str):
+            to_string = getattr(self.crs, "to_string", None)
+            object.__setattr__(self, "crs", to_string() if to_string else str(self.crs))
+        if self.grid_path is not None:
+            object.__setattr__(self, "grid_path", Path(self.grid_path))
+        if self.perlen is not None:
+            object.__setattr__(
+                self, "perlen",
+                tuple(_finite_number(value, "mf.Heads(perlen=...)") for value in self.perlen),
+            )
+
+    @property
+    def resolved(self) -> bool:
+        """Whether ``mf.ic`` has found the run's files (``path`` is then the head file).
+
+        True for a recipe ``mf.ic`` stamped and for one rebuilt from its payload; the
+        fields it reads cannot be given beside a run (``TypeError``), so it cannot be
+        faked by half.
+        """
+
+        return self.grid_path is not None and self.perlen is not None and self.model is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding every field that is not a default.
+
+        Defaults are omitted so that adding a defaulted field later cannot move an
+        existing package's digest (ledger 273).
+        """
+
+        payload = DataSourceSpec.to_dict(self)
+        for name, default in (
+            ("model", None), ("per", -1), ("layers", None), ("method", "linear"),
+            ("uncovered", "nearest"), ("crs", None), ("grid_path", None), ("perlen", None),
+            ("source_sha", None), ("grid_sha", None),
+        ):
+            value = getattr(self, name)
+            if value == default and type(value) is type(default):
+                continue
+            if name == "grid_path":
+                value = _path_text(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            payload[name] = value
+        return payload
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The declaration with the files' CONTENT standing in for their LOCATION.
+
+        :meth:`Polygons.digest_payload`'s rule (ledger 293), for both files: each path is
+        dropped when its hash is present, so a byte-identical copy of the run digests the
+        same, and falls back to the path when the file could not be read.
+        """
+
+        payload = Heads.to_dict(self)
+        if payload.get("source_sha") is not None:
+            payload.pop("path", None)
+        if payload.get("grid_sha") is not None:
+            payload.pop("grid_path", None)
+        return payload
+
+    def __mul__(self, other: Any) -> Any:
+        """Refused: a head is a LEVEL, and scaling it moves the datum."""
+
+        raise TypeError(
+            "mf.Heads(...) cannot be multiplied: a head is a level, and scaling one moves "
+            "the datum. Give mf.ic(strt=mf.Heads(...)) alone."
+        )
+
+    __rmul__ = __mul__
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> Heads:
+        """Rebuild a :class:`Heads` from a payload dict."""
+
+        layers = data.get("layers")
+        return cls(
+            path=data["path"],
+            model=data.get("model"),
+            per=data.get("per", -1),
+            layers=tuple(layers) if isinstance(layers, list) else layers,
+            method=data.get("method", "linear"),
+            uncovered=data.get("uncovered", "nearest"),
+            crs=data.get("crs"),
+            grid_path=data.get("grid_path"),
+            perlen=data.get("perlen"),
+            source_sha=data.get("source_sha"),
+            grid_sha=data.get("grid_sha"),
+            external=bool(data.get("external", False)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ArrayProduct:
     """The cell-by-cell PRODUCT of array recipes and numbers, as plain data.
@@ -1573,6 +1854,11 @@ def _product_number(factor: Any) -> float:
             "to carry a calibrated per-cell array to a new mesh use "
             "sim.with_grid(grid, remap=True)."
         )
+    if isinstance(factor, Heads):
+        raise TypeError(
+            "mf.Heads(...) cannot be a factor of an array recipe: a head is a level, and "
+            "scaling it moves the datum. Give mf.ic(strt=mf.Heads(...)) alone."
+        )
     token = getattr(type(factor), "_SPEC_TOKEN", None)
     if token in ("$surface", "$layer_stack"):
         raise TypeError(
@@ -1595,6 +1881,7 @@ _SOURCE_TYPES: dict[str, type[Any]] = {
     BoundarySource.kind: BoundarySource,
     Polygons.kind: Polygons,
     RasterValues.kind: RasterValues,
+    Heads.kind: Heads,
     RasterSource.kind: RasterSource,
     LiteralSource.kind: LiteralSource,
 }
@@ -1655,6 +1942,9 @@ def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
 __all__ = [
     "ArrayProduct",
     "BoundarySource",
+    "FIELD_METHODS",
+    "FIELD_UNCOVERED",
+    "Heads",
     "POLYGON_RULES",
     "Polygons",
     "RASTER_GAPS",
