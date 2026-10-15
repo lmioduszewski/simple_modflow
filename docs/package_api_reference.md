@@ -637,8 +637,12 @@ release-group boundnames; without them it names the fix and offers
   Full table + traps in `docs/model_building_cheatsheet.md`.
 - `GridSpec.resolve(project_root=, workspace=, build=, return_triangle=)` — turns a
   grid *recipe* into a grid *object*. `project_root` anchors relative source paths;
-  `workspace` is where Triangle's `_triangle.*` files land (one directory per grid);
-  `build=False` returns the prepared-but-unmeshed `TriangleGrid` for inspection;
+  `workspace` is where Triangle's `_triangle.*` files land (one directory per grid) and
+  meshing NEEDS one -- named here or as the spec's `model_ws` option, else `ValueError`
+  naming `workspace=` rather than a write into the working directory (ledger 599; a
+  `GridSpec.python` needs `workspace=` or `project_root=` the same way);
+  `build=False` writes nothing, needs none, and returns the prepared-but-unmeshed
+  `TriangleGrid` for inspection;
   `return_triangle=True` returns `(vor, tri)`. Full reference in the docstring.
   Note the CRS falls back to `"EPSG:2927"` when the spec names none.
 - Grids: `mf.VoronoiGridPlus`, `mf.TriangleGrid`, `mf.GridSpec`; sources:
@@ -1383,6 +1387,13 @@ moved = sim.with_grid(finer_grid, remap=True, rule="harmonic", uncovered="raise"
 Carries per-cell arrays across by area overlay, so `move_report()` reads **`remapped`**
 instead of `unverifiable` and the build accepts them. Serves `npf` `k`/`k22`/`k33` and
 `ic.strt`/`sto.ss`/`sto.sy` (ledger 300).
+
+The OLD mesh is the one the model was declared on, however it was declared --
+`mf.gwf(..., grid=<built grid>)` or `context=mf.ModelContext(grid=...)`; `with_grid` and
+`move_report` also resolve a DEFERRED one (ledger 597), while `coverage_on` and
+`run.resolution` read only a mesh already in hand and measure nothing on a deferred grid
+(ledger 599). A `GridSpec` given as the NEW grid is meshed for the overlay in a temporary
+directory, and again at build.
 
 | argument | meaning |
 | --- | --- |

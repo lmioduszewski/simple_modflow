@@ -307,6 +307,9 @@ one resolved at the call (ledger 597):
 - ⚠️ **`on=` can strand a coupled sibling.** The default moves every model that has a
   grid, because MF6 requires `gwfgwt`/`gwfgwe`/`gwfprt` models to share a
   discretization and cannot detect a same-size violation.
+- **`coverage_on` and `run.resolution` read the mesh the model HOLDS** -- its
+  `grid=<built grid>` or its `context=ModelContext(grid=...)`, the same either way
+  (ledger 599); `with_grid` and `move_report` resolve a deferred one as well (ledger 597).
 
 > **To move a model's boundary conditions to a new grid**, declare them LAZILY — omit
 > `context=` and they resolve against whatever grid the build supplies. That covers the

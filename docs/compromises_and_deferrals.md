@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 598 entries (603 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 599 entries (604 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 599 | `coverage_on` and `Run.resolution` read a model's `grid=` too, and `GridSpec.resolve()` writes only where i... | 2026-10-15 |
 | 598 | `model.hds`/`.conc`/`.temp` read the file the OC declares, are ONE reader per model while that file is unch... | 2026-10-15 |
 | 597 | A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARE... | 2026-10-15 |
 | 596 | A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed... | 2026-10-15 |
@@ -22448,3 +22449,49 @@ same day, which is the useful part of the result.
       `FileNotFoundError` names. A loaded run's budget reader (`_bud`) has the same shape:
       kept on the model, never invalidated nor closed -- not touched here. Legacy
       `mp3du/legacy_prt.py` still names `<model>.hds` (a frozen tier).
+
+599. **`coverage_on` and `Run.resolution` read a model's `grid=` too, and `GridSpec.resolve()` writes only where it is told (2026-10-15).**
+      The rest of the two defects ledger 595's review found and left (ledger 597 landed the
+      old-mesh half for `with_grid`, `move_report` and `remap=True` through
+      `_declared_mesh`, with `mf.ref`s and deferred grids). Measured before and after by
+      `docs/reproducers/with_grid_old_mesh_spellings.py` (a 4 x 7 -> 7 x 4 move, ncpl 28
+      both, a lazy `mf.disv`, `ic.strt` a `(2, 28)` array).
+      **`specs._mesh_in_hand` is the mesh IN HAND** -- a held `grid=<built grid>` first, as
+      at build, where it REPLACES `context.grid`, else the context -- and resolves nothing.
+      It is what the calls that measure without resolving read: `ModelSpec.coverage_on`
+      (which refused a `grid=` model), `SimulationSpec.coverage_on` (which left one OUT,
+      silently) and `Run.resolution` (which had been handed NO mesh, so it read `unchanged`
+      where `move_report` read `unverifiable`, on the context spelling too -- ledger 303's
+      rule: one classifier, the same inputs). `_declared_mesh` reads it for every grid
+      already in hand and resolves only a deferred one, so the two cannot disagree about a
+      built mesh. NOT done: `Run.resolution` does not resolve a DEFERRED grid, so on a
+      `grid_ref`/recipe model its table can still read `unchanged` where
+      `move_report(library=project)` reads `unverifiable` -- it has the run's resolved
+      packages but not the project the ref names.
+      **Judgment call: a report read AFTER a move measures arrays against the NEW mesh.**
+      A moved spec holds `grid=<new>` and is indistinguishable from a model declared there,
+      so an array re-declared after the move, or named in `grid_free=` and not named again,
+      reads `unverifiable` though the build accepts it -- what a hand-typed cellid has
+      always read there. Accepted: it is what a FURTHER move would do, one rule for arrays
+      and cellids, and a stamped package still reports the verdict that refuses its build.
+      **`GridSpec.resolve()` with no directory named REFUSES, naming `workspace=`** (the
+      user's rule: raise naming the spelling, never guess). It meshed into `<cwd>/_triangle`,
+      shared by every grid resolved from that directory. A temporary directory was the
+      alternative and was NOT taken for the public call: the `_triangle.*` files are the
+      documented way to read what Triangle was asked for, and deleting them on return is a
+      second silent choice. Still accepted: `build=False` (writes nothing; the cheatsheet's
+      inspect call) and a spec's own `model_ws`/`workspace` option. A `GridSpec.python`
+      with neither `workspace=` nor `project_root=` is refused the same way -- it CREATED
+      `<cwd>/_grid/<name>` for its builder. Every documented meshing call already passed
+      `workspace=`. The library's own callers name one: `with_grid(remap=True)` and
+      `coverage_on` given a recipe mesh it in a `TemporaryDirectory` (only its polygons
+      are wanted; the model keeps the recipe), and a build whose context names no grid
+      workspace -- `build_flopy()` bare -- uses the FloPy simulation's own
+      `<sim_path>/_grid/<model>`, the documented layout. The polygon helper's refusal names
+      its caller (`with_grid(remap=True) needs ...`, not "coverage needs ...").
+      **Not done:** a remap onto a recipe carries the arrays onto one meshing of it and the
+      build meshes it again; nothing checks the two agree (`REMAPPED_FROM` records the OLD
+      mesh only). Measured deterministic -- one pin over three meshings at ncpl 1,178 and
+      3,054 with a refinement -- on one machine and one Triangle build, not across them.
+      Landed from a background session's branch (written as "596" against an older
+      `myflopy`), integrated onto ledgers 596-598 and renumbered.

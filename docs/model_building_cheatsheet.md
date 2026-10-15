@@ -631,9 +631,11 @@ vor = project.grids["base"].resolve(
 `project_root` anchors **every relative path in the recipe** — source paths,
 `idomain_path`, `rasters` — so a spec written with project-relative paths stays
 portable. Omit it and they resolve against the current working directory instead.
-`workspace` is where Triangle's `_triangle.*` files are written; give each grid
-its own directory, because the file names are fixed and two grids sharing one
-overwrite each other's meshes. Reading `_triangle.0.poly` there is the honest way
+`workspace` is where Triangle's `_triangle.*` files are written, and meshing needs
+one: with none named (here or as the spec's `model_ws` option) `resolve()` raises
+naming `workspace=` instead of writing into the working directory (ledger 599). Give
+each grid its own directory, because the file names are fixed and two grids sharing
+one overwrite each other's meshes. Reading `_triangle.0.poly` there is the honest way
 to see what Triangle was actually asked for — its region section lists every
 refinement point and the maximum area attached to it.
 
@@ -1615,8 +1617,9 @@ line profile).
    that isn't on `PATH`.
 2. **`mf.Contours` needs a region** — `region_vector=` or `region_raster=`.
 3. **`boundary=` wants a `ShapeSource`,** not a path string.
-4. **`GridSpec.resolve` is keyword-only**: `resolve(workspace=...)`, not
-   `resolve(path)`.
+4. **`GridSpec.resolve` is keyword-only, and meshing needs `workspace=`**:
+   `resolve(workspace=...)`, not `resolve(path)` -- and not bare `resolve()`, which
+   raises naming it (`build=False` alone writes nothing and needs none).
 5. **Build the grid eagerly.** Deferred `GridSpec` composes with disv + simple BCs
    only — `mf.sfr`/`mf.lak` resolve cells at declaration; `mf.uzf` and the `.gpkg`
    helpers do too WITH `context=`, and resolve at build without it.

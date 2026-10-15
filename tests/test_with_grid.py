@@ -728,3 +728,170 @@ def test_coverage_REFUSES_a_model_with_no_grid(tmp_path):
 
     with pytest.raises(ValueError, match="no grid"):
         deferred.coverage_on(grid)
+
+
+# --- the old mesh is the one the model HOLDS, however it was declared (ledger 599) --
+
+
+_SPELLINGS = {
+    "grid=<built grid>": lambda grid, packages: mf.gwf(
+        "m", grid=grid, packages=packages
+    ),
+    "grid=GridSpec.from_object": lambda grid, packages: mf.gwf(
+        "m", grid=mf.GridSpec.from_object(grid), packages=packages
+    ),
+    "context=ModelContext(grid=)": lambda grid, packages: mf.gwf(
+        "m", context=ModelContext(grid=grid), packages=packages
+    ),
+}
+
+
+def _declared(spelling, grid, *, k=1.0, strt=90.0):
+    """One model on `grid`, its mesh given the way `spelling` names."""
+
+    packages = [mf.disv(_stack()), mf.npf(k=k), mf.ic(strt=strt),
+                mf.oc(head_filerecord="m.hds")]
+    return mf.simulation(
+        _SPELLINGS[spelling](grid, packages),
+        name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    )
+
+
+def _same_footprint(nlay=2):
+    """A fine mesh and a strictly coarser one over the SAME 1,200 ft square."""
+
+    fine = rectangular_voronoi(
+        CanonicalModelConfig(nrow=12, ncol=12, nlay=nlay, nper=1, cell_size=100.0)
+    )
+    coarse = rectangular_voronoi(
+        CanonicalModelConfig(nrow=6, ncol=6, nlay=nlay, nper=1, cell_size=200.0)
+    )
+    return fine, coarse
+
+
+@pytest.mark.parametrize("spelling", list(_SPELLINGS))
+def test_a_per_cell_array_is_refused_HOWEVER_the_grid_was_declared(spelling, tmp_path):
+    """`grid=<built grid>` is the spelling `package_api_reference.md` teaches.
+
+    Measured before: declared that way, an `(nlay, ncpl)` `strt` read `unchanged --
+    names no cells` across a same-size move and the build COMPLETED with the old mesh's
+    values, where `context=ModelContext(grid=...)` read `unverifiable` and refused.
+    `with_grid` took the old cell count -- and the stamp's pin -- from the context only.
+    """
+
+    a, b = _two_meshes()
+    strt = np.linspace(80.0, 95.0, a.ncpl * 2).reshape(2, a.ncpl)
+    sim = _declared(spelling, a, strt=strt)
+
+    before = {row["package"]: row["how"] for row in sim.move_report()}
+    moved = sim.with_grid(b)
+    after = {row["package"]: row["how"] for row in moved.move_report()}
+
+    assert before["ic"] == after["ic"] == "unverifiable", (before, after)
+    ic = next(p for p in moved.models[0].packages if p.name == "ic")
+    assert MOVED_FROM in (ic.metadata or {}), "stamped, so the BUILD refuses it"
+    with pytest.raises(ValueError, match=r"'ic' was moved to this grid by `with_grid`"):
+        moved.build_flopy(tmp_path / "ws")
+
+
+def test_the_three_spellings_report_IDENTICALLY():
+    """Assert the AGREEMENT, not one expected verdict: every row, before and after."""
+
+    a, b = _two_meshes()
+    k = np.ones((2, a.ncpl))
+    reports = {
+        spelling: (
+            _declared(spelling, a, k=k).move_report(),
+            _declared(spelling, a, k=k).with_grid(b).move_report(),
+        )
+        for spelling in _SPELLINGS
+    }
+    reference = reports["context=ModelContext(grid=)"]
+    for spelling, report in reports.items():
+        assert report == reference, spelling
+
+
+@pytest.mark.filterwarnings("ignore:Run 'r' built but its frozen snapshot")
+@pytest.mark.parametrize("spelling", list(_SPELLINGS))
+def test_run_resolution_agrees_with_the_report(spelling, tmp_path):
+    """The run table is the third caller of `package_moves` and was handed no mesh.
+
+    So it said `unchanged` about a per-cell array the spec's own `move_report` called
+    `unverifiable` -- on the context spelling too, which this caught alongside.
+    """
+
+    a, _b = _two_meshes()
+    sim = _declared(spelling, a, strt=np.full((2, a.ncpl), 90.0))
+    report = {row["package"]: (row["how"], row["why"]) for row in sim.move_report()}
+
+    run = mf.Project(tmp_path / "proj", name="p").prepare_run("r", sim)
+    resolution = {row["package"]: (row["how"], row["why"]) for row in run.resolution}
+
+    assert resolution == report
+    assert report["ic"][0] == "unverifiable", "the guard: the array is really seen"
+
+
+def test_remap_carries_a_grid_declared_model_as_it_does_a_context_declared_one(tmp_path):
+    """`remap=True` refused a `grid=` model: "this model's context has no grid"."""
+
+    fine, coarse = _same_footprint()
+    strt = np.linspace(80.0, 95.0, fine.ncpl * 2).reshape(2, fine.ncpl)
+    carried = {}
+    for number, spelling in enumerate(_SPELLINGS):
+        moved = _declared(spelling, fine, strt=strt).with_grid(coarse, remap=True)
+        verdicts = {row["package"]: row["how"] for row in moved.move_report()}
+        assert verdicts["ic"] == "remapped", (spelling, verdicts)
+        built = moved.build_flopy(tmp_path / f"ws{number}")
+        carried[spelling] = built.simulation.get_model("m").get_package("ic").strt.array
+
+    reference = carried["context=ModelContext(grid=)"]
+    assert reference.shape == (2, coarse.ncpl)
+    for spelling, values in carried.items():
+        np.testing.assert_array_equal(values, reference, err_msg=spelling)
+
+
+def test_coverage_measures_a_grid_declared_model():
+    """The model-level call refused it; the simulation-level one LEFT IT OUT, silently."""
+
+    fine, coarse = _same_footprint(nlay=1)
+    grown = rectangular_voronoi(
+        CanonicalModelConfig(nrow=6, ncol=8, nlay=1, nper=1, cell_size=200.0)
+    )
+    areas = {}
+    for spelling in _SPELLINGS:
+        sim = _declared(spelling, coarse)
+        assert sim.models[0].coverage_on(grown).uncovered_area > 0
+        report = sim.coverage_on(grown)
+        assert set(report) == {"m"}, spelling
+        areas[spelling] = report["m"].uncovered_area
+    assert len(set(areas.values())) == 1, areas
+
+
+def test_a_DEFERRED_grid_is_in_no_hand_and_move_report_resolves_it_writing_nothing(
+    boundary, tmp_path, monkeypatch
+):
+    """A recipe is no mesh IN HAND (`coverage_on`/`Run.resolution` measure nothing on it,
+    ledger 599); `move_report` RESOLVES it at the call (ledger 597, the user's decision)
+    -- in a temporary directory, so classifying writes nothing where the caller is."""
+
+    from myflopy.specs import _mesh_in_hand
+
+    monkeypatch.chdir(tmp_path)
+    before = sorted(tmp_path.iterdir())
+    model = mf.gwf("m", grid=_grid_spec(boundary, 40_000.0),
+                   packages=[mf.npf(k=np.ones(28))])
+
+    assert _mesh_in_hand(model) is None
+    assert model.move_report()[0]["how"] == "unverifiable"
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_the_built_grid_outranks_the_context_grid_as_the_build_does():
+    """`ModelSpec.build` resolves `grid=` and REPLACES `context.grid` with it."""
+
+    from myflopy.specs import _mesh_in_hand
+
+    a, b = _two_meshes()
+    model = mf.gwf("m", grid=b, context=ModelContext(grid=a))
+
+    assert _mesh_in_hand(model) is b

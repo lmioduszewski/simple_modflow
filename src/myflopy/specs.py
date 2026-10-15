@@ -1306,23 +1306,56 @@ def _carry_grid(original: Any, rebuilt: Any) -> Any:
 _RECIPE_OWNED_OPTIONS = frozenset({"stress_period_data", "boundnames"})
 
 
-def _polygons_of(grid: Any) -> Any:
+def _polygons_of(grid: Any, *, verb: str) -> Any:
     """The cell polygons of whatever a caller passed as a grid.
 
     A built grid, a `GridSpec` (resolved), or a `GridRef` are all things a caller
-    reasonably has in hand at a move; only the first carries polygons already.
+    reasonably has in hand at a move; only the first carries polygons already. A
+    `GridSpec` is meshed in a TEMPORARY directory that is gone on return: only its
+    polygons are wanted, and the recipe itself is what the model keeps and the build
+    meshes again in the run's own `_grid/` -- `GridSpec.resolve` refuses to pick a
+    directory nobody named (ledger 599). ``verb`` names the caller in the refusal.
     """
 
     polys = getattr(grid, "gdf_vorPolys", None)
     if polys is not None:
         return polys
     if isinstance(grid, GridSpec):
-        return grid.resolve().gdf_vorPolys
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="myflopy-grid-") as scratch:
+            return grid.resolve(workspace=scratch).gdf_vorPolys
     raise TypeError(
-        f"coverage needs a built grid or a GridSpec, not {type(grid).__name__}. A "
+        f"{verb} needs a built grid or a GridSpec, not {type(grid).__name__}. A "
         "`mf.grid_ref(key)` names a library entry and is resolved at build, so pass "
         "`project.grid(key)` instead."
     )
+
+
+def _mesh_in_hand(model: Any) -> Any:
+    """The BUILT mesh a model holds at this call, or ``None``: the one rule for "the old grid".
+
+    ``grid=<built grid>`` -- stored as :meth:`GridSpec.from_object` -- is what the build
+    resolves the model onto, REPLACING ``context.grid``, so it comes first;
+    ``context=ModelContext(grid=...)`` is the other spelling of the same thing. Reading
+    the context alone made a per-cell array on a model declared ``grid=`` read
+    ``unchanged`` across a move -- it BUILT, on the old mesh's values -- where the same
+    array declared through the context read ``unverifiable`` (ledger 599). A DEFERRED
+    grid (a recipe, a pickle path, a ``grid_ref``) has no mesh until the build, so the
+    context's grid is what is left, as before; with neither there is nothing to measure
+    a payload against (ledger 295's recorded limit).
+
+    The callers that measure WITHOUT resolving anything -- both ``coverage_on``\\ s and
+    ``Run.resolution`` -- read it here; :func:`_declared_mesh`, behind ``with_grid``,
+    ``move_report`` and ``remap=True``, reads it for every grid already in hand and
+    resolves only a deferred one (ledger 597), so the two cannot disagree about a built
+    mesh (ledger 303).
+    """
+
+    grid = getattr(model, "grid", None)
+    if isinstance(grid, GridSpec) and grid.method == "object" and grid.obj is not None:
+        return grid.obj
+    return getattr(getattr(model, "context", None), "grid", None)
 
 
 def _relazified(package: Any) -> Any:
@@ -1486,8 +1519,10 @@ def _declared_mesh(model: Any, library: Any, *, verb: str) -> Any:
     """
 
     grid = getattr(model, "grid", None)
-    if grid is None:
-        return getattr(getattr(model, "context", None), "grid", None)
+    if grid is None or (isinstance(grid, GridSpec) and grid.method == "object"):
+        # A mesh already IN HAND -- the one rule `coverage_on` and `Run.resolution` read
+        # too; only a deferred grid needs resolving below.
+        return _mesh_in_hand(model)
     if isinstance(grid, GridRef):
         if library is None:
             raise ValueError(
@@ -4008,13 +4043,18 @@ class GridSpec:
 
             Resolution order, first hit wins: this argument, then
             ``triangle_options['model_ws'|'workspace']``, then
-            ``options['model_ws'|'workspace']``, then ``<cwd>/_triangle``. Give
-            each grid its own directory -- the file names are fixed, so two
-            grids sharing a workspace overwrite each other's meshes.
+            ``options['model_ws'|'workspace']``. With none of them, meshing
+            raises ``ValueError`` naming ``workspace=`` rather than writing into
+            the current working directory; ``build=False`` writes nothing and
+            is accepted, its ``TriangleGrid`` carrying ``<cwd>/_triangle`` for a
+            mesh you build from it yourself. Give each grid its own directory --
+            the file names are fixed, so two grids sharing a workspace overwrite
+            each other's meshes.
 
             For a :meth:`python` spec this is instead the directory handed to
-            the builder as ``workspace=``, defaulting to
-            ``<project_root>/_grid/<name>``.
+            the builder as ``workspace=`` (and created), defaulting to
+            ``<project_root>/_grid/<name>``; with neither it nor
+            ``project_root`` it raises ``ValueError``.
         build : bool, default True
             Whether to actually mesh. ``True`` runs Triangle and returns the
             finished ``VoronoiGridPlus``.
@@ -4053,7 +4093,8 @@ class GridSpec:
         ------
         ValueError
             An ``object`` spec holding no grid, a ``pickle`` spec with no path,
-            or ``return_triangle=True`` on a :meth:`python` spec.
+            ``return_triangle=True`` on a :meth:`python` spec, or no directory
+            named for the files resolving writes (see ``workspace``).
         NotImplementedError
             A method this does not wire. ``GridSpec.structured`` and
             ``GridSpec.from_geopackage`` construct but do not resolve -- wrap an
@@ -4694,9 +4735,10 @@ class SpecBuildContext:
         as a ``Path``. Default ``None``.
     simulation_workspace : Path or str, optional
         The simulation's run directory. When ``grid_workspace`` is unset,
-        deferred grids are built under ``<simulation_workspace>/_grid/<model>``.
-        :meth:`SimulationSpec.build_flopy` fills it from its workspace when
-        unset. Stored as a ``Path``. Default ``None``.
+        deferred grids are built under ``<simulation_workspace>/_grid/<model>``
+        -- and with this unset too, under the FloPy simulation's own
+        ``sim_path`` the same way. :meth:`SimulationSpec.build_flopy` fills it
+        from its workspace when unset. Stored as a ``Path``. Default ``None``.
     grid_workspace : Path or str, optional
         The directory deferred grids are built under, one subdirectory per
         model (``<grid_workspace>/<model>``); takes precedence over
@@ -5392,8 +5434,9 @@ class ModelSpec:
             The new mesh, stored as the model's ``grid`` (a bare built grid is
             wrapped with :meth:`GridSpec.from_object`) and resolved at build.
             ``remap=True`` needs real cell polygons, so there it must be a built
-            grid or a :class:`GridSpec` (resolved on the spot, without a project
-            root); a :class:`GridRef` raises ``TypeError``.
+            grid or a :class:`GridSpec` (resolved on the spot in a temporary
+            directory, without a project root, and meshed again at build); a
+            :class:`GridRef` raises ``TypeError``.
         grid_free : sequence of str, optional
             Package names (a ref's library key) the caller asserts are
             mesh-independent: they read ``unchanged`` and are not stamped.
@@ -5546,8 +5589,8 @@ class ModelSpec:
                 "`context=ModelContext(grid=...)`, or one whose route does not resolve. "
                 "Move it without `remap=`, or declare the grid it was built on."
             )
-        old_polys = _polygons_of(old_grid)
-        new_polys = _polygons_of(grid)
+        old_polys = _polygons_of(old_grid, verb="with_grid(remap=True)")
+        new_polys = _polygons_of(grid, verb="with_grid(remap=True)")
         carried = []
         for package in packages:
             if isinstance(package, PackageSpec):
@@ -5576,17 +5619,19 @@ class ModelSpec:
         anything, and on a perfectly nesting refinement `coverage < 1` flags a third of
         the cells as short by 4e-15 of themselves.
 
-        Raises rather than guessing when this model carries no grid to compare against:
-        a DEFERRED-grid model has nothing to overlay, and answering "nothing is covered"
-        would be indistinguishable from a real total miss.
+        The model's mesh is its ``grid=<built grid>``, else ``context.grid``. Raises
+        rather than guessing when it holds neither: a DEFERRED-grid model has nothing to
+        overlay, and answering "nothing is covered" would be indistinguishable from a
+        real total miss.
 
         Parameters
         ----------
         grid : grid object or GridSpec
             The candidate new mesh: a built grid carrying ``gdf_vorPolys``, or a
-            :class:`GridSpec`, which is resolved here (no project root, so
-            relative sources resolve against the current working directory). A
-            :class:`GridRef` raises ``TypeError`` -- pass ``project.grid(key)``.
+            :class:`GridSpec`, which is resolved here in a temporary directory
+            removed on return (no project root, so relative sources resolve
+            against the current working directory). A :class:`GridRef` raises
+            ``TypeError`` -- pass ``project.grid(key)``.
 
         Returns
         -------
@@ -5598,7 +5643,8 @@ class ModelSpec:
         Raises
         ------
         ValueError
-            When ``context.grid`` is ``None``.
+            When the model holds no built grid -- neither ``grid=<built grid>``
+            nor ``context.grid``.
         """
 
         # DEFERRED, and measured worth it: hoisting this works, but it pushes `specs`
@@ -5607,14 +5653,15 @@ class ModelSpec:
         # almost nothing needs geometry from.
         from myflopy.modflow.mf6.grid.geometry import cell_coverage
 
-        old = getattr(self.context, "grid", None)
+        old = _mesh_in_hand(self)
         if old is None:
             raise ValueError(
-                f"Model {self.name!r} carries no grid, so there is nothing to measure "
-                "coverage against. Declare it with `context=ModelContext(grid=...)`, or "
-                "resolve its GridSpec first -- a deferred grid has no mesh until build."
+                f"Model {self.name!r} carries no grid to measure coverage against -- "
+                "neither a built `grid=` nor `context=ModelContext(grid=...)`. Declare "
+                "one, or resolve its GridSpec first -- a deferred grid has no mesh "
+                "until build."
             )
-        return cell_coverage(old.gdf_vorPolys, _polygons_of(grid))
+        return cell_coverage(old.gdf_vorPolys, _polygons_of(grid, verb="coverage_on"))
 
     def move_report(
         self,
@@ -5679,8 +5726,10 @@ class ModelSpec:
         build_context : SpecBuildContext, optional
             The project libraries and locations: needed to resolve an
             ``mf.ref``/``mf.grid_ref`` entry, to anchor relative source paths to
-            the project root, and to place a deferred grid's working files.
-            ``None`` uses an empty one, so a ref raises. Default ``None``.
+            the project root, and to place a deferred grid's working files --
+            when it names no directory for them, the FloPy simulation's own
+            ``<sim_path>/_grid/<model>``. ``None`` uses an empty one, so a ref
+            raises. Default ``None``.
 
         Returns
         -------
@@ -5714,9 +5763,17 @@ class ModelSpec:
             grid_spec = self.grid
             if isinstance(grid_spec, GridRef):
                 grid_spec = build_context.grid_spec(grid_spec.key)
+            grid_workspace = build_context.model_grid_workspace(self.name)
+            if grid_workspace is None and getattr(simulation, "sim_path", None) is not None:
+                # No run directory was named, so the simulation's OWN -- FloPy's
+                # `sim_ws`, the cwd by its default -- under the documented
+                # `<simulation_workspace>/_grid/<model>`. `GridSpec.resolve` refuses to
+                # choose a directory itself (ledger 599); it used to choose
+                # `<cwd>/_triangle`, shared by every model.
+                grid_workspace = Path(simulation.sim_path) / "_grid" / self.name
             grid = grid_spec.resolve(
                 project_root=build_context.project_root,
-                workspace=build_context.model_grid_workspace(self.name),
+                workspace=grid_workspace,
                 build=build_context.build_grids,
             )
             context = replace(context, grid=grid)
@@ -6850,17 +6907,17 @@ class SimulationSpec:
         Returns
         -------
         dict of str to CoverageReport
-            Keyed by model name. A model whose ``context.grid`` is ``None`` is
-            left out rather than raising (unlike :meth:`ModelSpec.coverage_on`),
-            so a deferred-grid model -- even one named by ``on`` -- yields no
-            entry.
+            Keyed by model name. A model holding no built grid (neither
+            ``grid=<built grid>`` nor ``context.grid``) is left out rather than
+            raising (unlike :meth:`ModelSpec.coverage_on`), so a deferred-grid
+            model -- even one named by ``on`` -- yields no entry.
         """
 
         models = [self.model(on)] if on is not None else list(self.models)
         return {
             model.name: model.coverage_on(grid)
             for model in models
-            if getattr(model.context, "grid", None) is not None
+            if _mesh_in_hand(model) is not None
         }
 
     def _replace_grid_compat(
@@ -6993,7 +7050,8 @@ class SimulationSpec:
             recorded as the build context's ``simulation_workspace`` (where
             deferred grids are built, ``<workspace>/_grid/<model>``). ``None``
             falls back to ``self.workspace``; with neither, ``options`` decides
-            ``sim_ws``. Default ``None``.
+            ``sim_ws`` (FloPy's default is the current working directory) and
+            the grids go under it the same way. Default ``None``.
         build_context : SpecBuildContext, optional
             Project libraries (for ``mf.ref``/``mf.grid_ref``) and the project
             root (for relative source paths). ``None`` uses an empty one, so a

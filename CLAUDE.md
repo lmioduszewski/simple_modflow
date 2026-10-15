@@ -921,6 +921,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   same on any mesh, so guessing from "is it a sequence" would refuse a correct move),
   and `with_grid` supplies the count from the OLD grid it STILL HOLDS at the call site
   -- it does not mutate, so the mesh is gone from the RESULT and present at the CALL.
+  **The calls that measure WITHOUT resolving read the mesh IN HAND, `specs._mesh_in_hand`**
+  (ledger 599): `grid=<built grid>` first, as at build, else `context.grid` -- both
+  `coverage_on`s (the simulation one silently LEFT OUT a `grid=` model) and
+  `Run.resolution`, which had been handed no mesh at all and said `unchanged` where
+  `move_report` said `unverifiable`. `_declared_mesh` (ledger 597) reads it for every grid
+  already in hand and resolves only a deferred one, so the two agree about a built mesh;
+  `Run.resolution` does not resolve a deferred grid.
   The shared rule is `grid_identity.column_count` / `cellwise_options`, in import layer
   1 because three callers need it; it tells a scalar and a per-layer list from a flat
   `ncpl` list, an `(nlay, ncpl)` array and a NESTED per-layer list of per-cell lists.
@@ -1503,7 +1510,10 @@ copies now, and a result given a `grid=` of another cell count is refused at the
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
-  `mf.GridSpec.voronoi(...).resolve(workspace)`), put it in `ModelContext(grid=vor, domain=idomain)`,
+  `mf.GridSpec.voronoi(...).resolve(workspace=...)` -- **meshing with no workspace named
+  RAISES naming it** rather than writing `<cwd>/_triangle`, ledger 599; the library's
+  own polygon-only resolves use a temporary directory and a build `<sim_path>/_grid/<model>`),
+  put it in `ModelContext(grid=vor, domain=idomain)`,
   then declare packages. **Required today** for `mf.sfr`/`mf.lak` because they resolve cells
   eagerly at declaration. **`mf.uzf` no longer needs it** (ledger 304): omit `context=` and
   it resolves at BUILD from the domain -- it never used the grid for anything but its own

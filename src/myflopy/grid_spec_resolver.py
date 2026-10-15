@@ -566,10 +566,28 @@ def _resolve_voronoi(
         triangle_options,
         "model_ws",
         "workspace",
-        default=_option(
-            options, "model_ws", "workspace", default=Path.cwd() / "_triangle"
-        ),
+        default=_option(options, "model_ws", "workspace"),
     )
+    if model_ws is None:
+        if build:
+            # Refused, not defaulted: meshing writes Triangle's `_triangle.*` files, and
+            # the old default put them in `<cwd>/_triangle` -- a side effect in whatever
+            # directory the process happened to start in, where a second grid overwrote
+            # the first. A temporary directory was the other option and was not taken:
+            # those files are the documented way to see what Triangle was asked for, and
+            # deleting them on return would be a second silent choice (ledger 599). The
+            # library's own callers that need only polygons DO mesh in one
+            # (`specs._polygons_of`), and the build names `<sim_path>/_grid/<model>`.
+            raise ValueError(
+                f"GridSpec {spec.name!r}: meshing writes Triangle's working files "
+                "(`_triangle.0.poly`, `_triangle.1.node`, ...) and no directory was "
+                "named for them. Pass one: `spec.resolve(workspace=...)` -- each grid "
+                "its own, since the file names are fixed. `build=False` writes nothing "
+                "and needs none."
+            )
+        # `build=False` writes nothing; the prepared TriangleGrid needs SOME workspace,
+        # and it is used only if the caller meshes it themselves.
+        model_ws = Path.cwd() / "_triangle"
     triangle_options.pop("model_ws", None)
     triangle_options.pop("workspace", None)
     region_point_tolerance = triangle_options.pop(
@@ -653,6 +671,15 @@ def _resolve_python(
         raise ValueError(f"Grid builder script is not a file: {script}")
 
     _validate_inputs(spec.inputs, root)
+    if workspace is None and project_root is None:
+        # The same rule as a Voronoi spec's: the builder is handed a workspace and it is
+        # CREATED here, and with no project root the default `<root>/_grid/<name>` is the
+        # current working directory's (ledger 599).
+        raise ValueError(
+            f"GridSpec {spec.name!r}: its builder is handed a workspace directory, which "
+            "is created, and none was named. Pass `spec.resolve(workspace=...)`, or "
+            "`project_root=` for the default `<project_root>/_grid/<name>`."
+        )
     grid_workspace = (
         Path(workspace) if workspace is not None else root / "_grid" / spec.name
     )

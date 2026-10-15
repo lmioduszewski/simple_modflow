@@ -414,8 +414,8 @@ def _field_grid(grid, *, verb: str, side: str):
         )
     elif kind == "GridSpec" or hasattr(grid, "resolve"):
         hint = (
-            "a grid RECIPE; build it first, spec.resolve(workspace=...) -- resolving it "
-            "here would mesh into the working directory"
+            "a grid RECIPE; build it first, spec.resolve(workspace=...), and give the "
+            "new model that same grid -- the values are carried onto one exact mesh"
         )
     elif hasattr(grid, "vor"):
         hint = "a model; pass its grid, model.vor"
