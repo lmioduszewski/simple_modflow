@@ -591,7 +591,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8281 passed / 5 skipped**, 2026-10-14, after the rehearsal's recovery became a
+- Full suite (**8364 passed / 5 skipped**, 2026-10-15, after `model.hds.remap` -- ledger 595):
+  `-n 10` **5m28s** in a detached checkout outside `.claude`, at a load average of ~7 at its
+  start (other sessions' work on the machine); serial not re-measured. Before it,
+  8281 passed / 5 skipped (2026-10-14, after the rehearsal's recovery became a
   pooled check -- ledgers 591-594; the fifth skip is the opt-in
   `test_converged_rehearsals_cover_the_truth_pooled`, ~29 min, run with
   `SIMPLE_MODFLOW_REHEARSAL_COVERAGE=1`): `-n 10` **5m11s** at a load average of ~6.1 rising to
@@ -1176,8 +1179,10 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `griddata` fills only the CONVEX HULL of its input points, and those points are the
   source grid's CELL CENTROIDS -- so a raster interpolated from one model is blank in
   a rim half a cell wide around the whole footprint, and a different grid's boundary
-  cells land in it. For remapping between grids the real answer is an area overlay on
-  the source cells' POLYGONS (Phase 2), not a raster round trip. A raster covering NO
+  cells land in it. For remapping between grids the real answer is not a raster round
+  trip: an INPUT array moves by area overlay on the source cells' POLYGONS
+  (`with_grid(remap=True)`, ledger 300) and a SOLVED field by `model.hds.remap` (ledger
+  595). A raster covering NO
   cell raises with both extents and both CRSs -- but only when they are actually
   disjoint; all-no-data where they overlap is a blank raster, not a misplaced one.
   `vor.get_raster_vals_at_centroids` forwards `method=`/`nodata=`/`gaps=` now; it
@@ -1632,6 +1637,34 @@ target is refused for the remap itself: it needs real polygons.
 (the values move the digest, the stamp does not), hand-typed list BCs (no per-cell values
 to weight), and `uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt`
 (measured `stale`, not `unverifiable` -- they carry a pin, so re-declaration is their route).
+
+## Starting a model on a new grid from a run's SOLVED heads? `old.hds.remap(new_vor)` (ledger 595)
+`mf.ic(strt=old.hds.remap(new_vor))` -- the heads the old run ENDED with (`per=-1`, the
+last TDIS period), read at the period's END and checked for that period alone, so an
+explicit earlier `per=` reads a run that stopped later while `-1` refuses one that never
+finished, naming a stopped run as well as `SAVE HEAD LAST`; a step MF6's listing says did
+not converge is refused. Carried onto any BUILT grid; `model.conc`/`model.temp.remap` alike.
+`with_grid(remap=True)` carries the INPUT `ic.strt` instead. One engine,
+`grid/remap.remap_field` (a head file and a grid, no model object -- the lazy
+`mf.ic(strt=mf.Heads(...))` recipe is next and calls it). **`method="linear"` between MF6's
+cell centres (`grid.points`, never polygon centroids) is the default, measured** -- away
+from a pumping well, 6.4x closer than the area mean refining and 2.6x coarsening; at the
+well cell neither wins (`docs/reproducers/heads_remap_linear_vs_area.py`). A centre outside
+the old hull or in a NON-LOCAL triangle (an edge joining cells sharing no vertex: a gap, or
+boundary cells a jittered mesh's edge clipped apart) takes the value of the valid old cell
+covering most of it -- never one across the gap -- along that cell's least-squares
+gradient (a direction its neighbours barely span is dropped), CLAMPED TO THE OLD LAYER'S
+RANGE (unclamped, a concentration went negative; clamped to the fitted cells, a plane's rim
+was as bad as the area mean -- `docs/reproducers/field_remap_rim.py`). A DRY head takes the water table below it; an
+inactive cell is a gap; a new cell over gaps only or outside the old model takes the
+nearest value with ONE warning (`uncovered="raise"` refuses). `layers=` is the new->old
+layer map (repeats allowed). Traps: importing any `grid` module from `headsplus` at module
+level is a CYCLE through `grid/__init__` -> plotting -> `headsplus`, so `remap()` imports the
+engine lazily; the no-value rule lives in `myflopy._numbers` (`is_no_value`/`is_dry`) for
+the same reason. A DISU (stacked nodes: cells sharing a centre, or overlapping) is refused
+in the engine, so a reader with no model cannot slip one through. The array makes a
+simulation unsaveable until registered as a library package -- and a built `grid=` needs
+registering too (`project.add_grid` + `mf.grid_ref`).
 
 ## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
 `mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the

@@ -309,6 +309,11 @@ every package before anything is built, and `run.resolution` is the record after
 > `context=` also resolves at declaration and must be re-declared. See
 > [Chapter 12, §12.5](12_projects_runs.md).
 
+> **To start the moved model from the heads the old one SOLVED**,
+> `mf.ic(strt=old.hds.remap(new_vor))` -- the old run's heads at the end of a stress
+> period, carried onto the new grid (`with_grid(remap=True)` carries the old INPUT
+> `ic.strt`). See `docs/package_api_reference.md`, "Starting heads from a solved run".
+
 ---
 
 ## 4.7 The build lifecycle

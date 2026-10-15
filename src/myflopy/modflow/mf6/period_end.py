@@ -310,6 +310,106 @@ def period_end_steps(
     return ends
 
 
+def period_end_record(
+    saved: Iterable[Sequence],
+    per: int,
+    *,
+    perlen: Sequence[float] | None = None,
+    file: str = "the output file",
+    saves: str = "HEAD",
+) -> tuple[int, int]:
+    """The ONE saved record that ends stress period ``per``, checking that period alone.
+
+    :func:`period_end_steps` for a reader that wants one period and not the file: what a
+    solved field carried to another grid is read at (``model.hds.remap``). It differs from
+    the whole-file check :meth:`~myflopy.modflow.mf6.headsplus.DependentVariableFile.get`
+    makes in two ways, both measured on a real run that STOPPED in its second period
+    (Ten Trails converted from USG, 72 periods declared, ``SAVE HEAD ALL``):
+
+    * only ``per`` is checked, so a period the run finished reads even though a later one
+      is short -- the whole-file check refused the file outright;
+    * a period short of its end that is also the LAST the file reached names both causes,
+      since the whole-file check's advice to ``SAVE HEAD LAST`` was wrong there: that
+      output control already said ``ALL``, and the run had stopped.
+
+    Parameters
+    ----------
+    saved : iterable of tuple
+        The file's saved times, zero-based, in file order: ``(kstp, kper, pertim)`` as
+        :func:`saved_steps` returns them. Bare ``(kstp, kper)`` pairs are accepted only
+        when ``perlen`` is ``None``.
+    per : int
+        The stress period, zero-based; a negative one counts from the LAST stress
+        period, so ``-1`` is the last. A Python or numpy integer; a ``bool`` is refused.
+    perlen : sequence of float, optional
+        Each stress period's length from the simulation's TDIS (:func:`period_lengths`),
+        which says how many periods there are -- so ``-1`` is the last period MF6 was
+        asked to run, not the last one the file reached -- and against which the record
+        must END its period. Default ``None``: the number of periods is the file's own
+        (one past its last period) and the period's last saved step is taken unchecked,
+        the route for a reader opened from a path with no model behind it.
+    file : str, default "the output file"
+        What the file is, for the refusals (``"the head file"``).
+    saves : str, default "HEAD"
+        The output-control word that schedules the file (``"HEAD"``,
+        ``"CONCENTRATION"``, ``"TEMPERATURE"``), for the fix a refusal names.
+
+    Returns
+    -------
+    tuple of (int, int)
+        ``(kstp, kper)``, zero-based, the record to read.
+
+    Raises
+    ------
+    TypeError
+        ``per`` is not an integer, or is a ``bool``.
+    ValueError
+        ``per`` is outside the stress periods; the file saved nothing in ``per`` (naming
+        the file's last record, and both causes: a run that stopped before the period, or
+        output control saving nothing there); or, with ``perlen``, the period's last saved
+        step does not end it (see :func:`period_end_steps`).
+
+    Examples
+    --------
+    >>> period_end_record(saved_steps(reader), -1, perlen=[10.0, 10.0], file="the head file")
+    (2, 1)
+    """
+
+    saved = [tuple(item) for item in saved]
+    if isinstance(per, (bool, np.bool_)) or not isinstance(per, (int, np.integer)):
+        raise TypeError(f"per must be an integer stress period (zero-based), got {per!r}.")
+    if not saved:
+        raise ValueError(f"{file} holds no saved record at all.")
+    last_kper = max(int(item[1]) for item in saved)
+    nper = len(perlen) if perlen is not None else last_kper + 1
+    try:
+        kper = range(nper)[int(per)]
+    except IndexError:
+        raise ValueError(
+            f"per={int(per)} is not a stress period: the simulation has {nper} "
+            f"(zero-based 0..{nper - 1}, or a negative counting back from the last)."
+        ) from None
+    mine = [item for item in saved if int(item[1]) == kper]
+    if not mine:
+        kstp_last, kper_last = int(saved[-1][0]), int(saved[-1][1])
+        raise ValueError(
+            f"{file} saved no record in stress period {kper} (zero-based, of {nper}); "
+            f"its last record is time step {kstp_last} of stress period {kper_last} "
+            f"(zero-based: kstpkper=({kstp_last}, {kper_last})). Either the "
+            "run stopped before that period -- read its listing file, mfsim.lst -- or "
+            f"output control saved nothing in it: SAVE {saves} LAST in the model's "
+            "output control."
+        )
+    fix = None
+    if kper == last_kper:
+        fix = (
+            f"Save each period's last step: SAVE {saves} LAST (or ALL) in the model's "
+            f"output control -- or, since {file} ends in this period, the run may have "
+            "stopped inside it: read its listing file, mfsim.lst."
+        )
+    return period_end_steps(mine, perlen=perlen, file=file, saves=saves, fix=fix)[kper]
+
+
 #: What a continuous-observation file short of a period's end means, for the refusal.
 _OBSERVATION_FIX = (
     "MF6 writes a continuous observation at the end of EVERY time step, whatever output "

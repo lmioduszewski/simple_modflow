@@ -468,6 +468,7 @@ unless noted.
 | Call | Purpose |
 |---|---|
 | `model.hds.array(layer=)`, `model.hds.kstpkper` | Heads. |
+| `model.hds.remap(new_vor)` | The heads on another grid -- starting heads there: `mf.ic(strt=...)`. |
 | `HeadTargets / LakeStageTargets / Sfr*Targets / DrnFlowTargets / RivFlowTargets` | Observation targets (`compare/stats`). |
 | `model.plot.map(layer=)`, `plot.animate(frames)`, `export_*_slider_html(...)` | Maps, animations, standalone sliders. |
 | `model.pest(name).parameterize / observe / forecast / build / run_ies` | Calibration. |

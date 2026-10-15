@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 594 entries (599 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 595 entries (600 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 595 | A SOLVED field is carried to another grid by `model.hds.remap(grid)`; linear between cell centres is the de... | 2026-10-15 |
 | 594 | The pooled thresholds are read off an exact posterior's FINITE-ensemble z, and the rehearsal notebook keeps... | 2026-10-14 |
 | 593 | The rehearsal's recovery is judged by POOLED coverage over several converged runs, scored by one rule | 2026-10-14 |
 | 592 | Levels and their differences observed together at the source weight count each reading's noise twice in the... | 2026-10-13 |
@@ -22137,3 +22138,98 @@ same day, which is the useful part of the result.
       count each reading once is the user's call, with Ten Trails' head weighting. At the
       CI budget (16x2, seeds 2026/1/2) every per-run gate holds with the declaration, and
       the opt-in pooled test passes with it (30 min at 12 workers).
+
+595. **A SOLVED field is carried to another grid by `model.hds.remap(grid)`; linear between cell centres is the default, measured (2026-10-15).**
+      The user's spelling and calls (`remap`, not `resample`; a warning is the report;
+      the method first, the lazy `mf.Heads` recipe next). Nothing carried a run's OUTPUT
+      to another mesh: `with_grid(remap=True)` (ledger 300) carries the INPUT `ic.strt`,
+      and the 2026-09-10 decision "starting heads on a new grid: interpolate, prefer the old
+      run's solved heads, report the drift" had never been built -- the last hand-made
+      copy left one NaN cell (ledger 248). On `DependentVariableFile`, so
+      `model.conc`/`model.temp` take it too; one engine, `grid/remap.remap_field` (the
+      field's numbers and the two built grids, no model object) and one read,
+      `headsplus.read_saved_field`, for the recipe to call.
+      **Chosen:**
+      - `method="linear"`: barycentric between the OLD cells' MF6 centres (`grid.points`)
+        read at the NEW centres. Measured (`docs/reproducers/heads_remap_linear_vs_area.py`,
+        layer 2, well on a node): away from the well 6.4x closer than the area mean to the
+        finer mesh's own solution refining, 2.6x coarsening; 57x and 150x on an analytic
+        field; at the well cell neither wins (both 0.8-3.4 ft off). `"area"` stays
+        (`with_grid`'s rule). On polygon centroids instead of MF6's centres the mean error
+        was 1.5-6.1x higher refining a jittered mesh and 3.6-4.9x coarsening, a plane no
+        longer exact (`field_remap_rim.py`, part 3).
+      - Only LOCAL Delaunay simplices interpolate: every edge joins cells sharing a vertex.
+        A centre outside the hull of the valid old centres (38 of 144 on a jittered mesh;
+        none on a `GridSpec.voronoi` mesh, whose boundary generators lie ON the boundary)
+        or in a non-local simplex (a notch, a hole, an inactive strip -- or boundary cells
+        a jittered mesh's edge clipped apart) takes the value of the VALID OLD CELL COVERING
+        MOST OF IT, moved along that cell's least-squares gradient, clamped to the old
+        layer's range. Measured (`field_remap_rim.py`): the area mean there was off by 2.79
+        on a plane; unclamped, a front went to -0.055 from a field whose least value was
+        4.7e-9; clamped to the fitted cells, a plane's rim cost as much as the area mean
+        (2.782) where the layer clamp clips only the extreme corners (mean 0.338 against
+        0.380) and was never the worse on four fields. Without the local test 6 of 36 cells
+        straddling an inactive strip read 17.2-18.0 between sides of 10 and 20. The review
+        found the first anchor -- the NEAREST valid centre anywhere -- took a value from
+        across the strip (20.0 for a cell over the 10 side), and a gradient fitted to
+        nearly collinear neighbours read jitter as slope: a direction the neighbours span
+        less than a tenth as widely as the other is now dropped, the gradient kept along
+        the one they do span. On one band of valid cells (`field_remap_rim.py`, part 4)
+        the worst error fell from 22.8 to 2.0 (the area mean 2.5), and the mean error is
+        below the area mean's on all three bands measured.
+      - No-value cells: a DRY head (-1e30) takes the first wet layer BELOW it -- the water
+        table, normally below its bottom so the new model starts it dry (MF6's IC
+        documentation); without rewetting MF6 can keep a cell dry over water that has
+        risen past its bottom, and that cell starts wet, where the water now is. Logged at
+        INFO, not warned: it is the designed rule. Inactive (+1e30) is a gap; a dry
+        concentration or temperature is a gap. Under NEWTON MF6 writes a dry cell's head
+        as a number below its bottom, carried as is (no -1e30 in three real Ten Trails
+        runs). The rule moved to `myflopy._numbers` (`is_no_value`/`is_dry`).
+      - A new cell with no valid old cell under it (outside the old model, or over gaps
+        only) is `uncovered`: `"nearest"` (default, the nearest valid old CENTRE in that
+        layer, ONE warning through both channels with the counts, area and farthest
+        distance) or `"raise"`. The result holds no NaN; a requested layer holding no
+        value at all is refused naming `layers=`. The engine's `active=` (for the recipe:
+        the new model's idomain) keeps a cell no row keeps active out of the counts.
+      - `per=` is the END of the period by `get()`'s rule, but checked for THAT period
+        alone (`period_end.period_end_record`), with `-1` the last period the TDIS
+        declares and any negative counting back (unlike `array()`). Measured on Ten Trails
+        converted from USG, which stopped in period 1 of 72 under `SAVE HEAD ALL`:
+        `get()`'s whole-file check refused the file and told the user to `SAVE HEAD LAST`;
+        an explicit `per=0` reads, and a period the file stops in names a stopped run as
+        well. A reader with no model takes the last saved step and the warning says so.
+        `kstpkper=` reads an exact record unchecked, two integers or a `TypeError`.
+      - A step MF6's `mfsim.lst` says did not converge (`run_record.nonconverged_steps`,
+        "Solution Group N did not converge for stress period P and time step K") is
+        refused: a failed run saves its last step at the time it would have ended, and the
+        review read it as the solution; IMS `CONTINUE` saves such steps mid-run.
+      - `layers=` is one OLD layer per output row, repeats allowed: the new->old layer map
+        of 2026-09-10. It cannot check the new model's layer count (a 2-D grid has none).
+      - `grid` must be a BUILT grid (polygons, `points`, `iverts`); a `GridSpec` (would
+        mesh into the cwd), a `grid_ref`, a model, a FloPy grid or a GeoDataFrame is
+        refused naming the spelling. A DISU is refused in the ENGINE -- cells sharing a
+        centre, or old cells overlapping one another -- because a reader opened from a
+        path has no model to ask, and one did remap a two-layer DISU as one layer.
+      - `refuse_a_different_frame` now RETURNS the overlay it computes, and `remap_arrays`
+        uses it: the overlay is the dominant cost (0.85-0.95 s at 6k -> 20k cells) and was
+        computed twice. `_nearest_old_value` became `_nearest_values` on coordinates;
+        `with_grid` still passes polygon centroids, unchanged. And `with_grid(remap=True)`
+        now reads an input `strt`'s no-value numbers by the same rule: the review measured
+        a -1e30 averaged into 9 new cells (magnitudes 2.9e28 to 1e30).
+      **Deferred import, +1 on the ratchet:** `headsplus` imports the engine inside
+      `remap()`. Importing any `grid` module runs `grid/__init__.py`, which imports the
+      plotting stack and through it `headsplus` -- measured, an `ImportError` at module
+      level. The signature carries literal defaults, held to the engine's by a test.
+      **NOT built:** a report object (the user: a warning is enough); filling a gap over
+      an inactive cell from the layer below rather than the nearest cell in its layer
+      (a pinched layer's column holds a closer value; the agreed rule is nearest-in-layer);
+      a check of how GWT/GWE write a cell that is dry in the flow model (no run on disk has
+      one); switching `with_grid(remap=True)`'s `ic.strt` to linear (one rule for moving
+      heads, its own change). The array is EAGER: `project.save()` skips a simulation
+      holding it (ledger 193), and a built `grid=` too, until `mf.Heads` lands. Found and
+      not fixed here: the reader's `nper`/`numstp` are one short, `get_kstpkper()` is
+      offset by one after `__init__` overwrites `self.kstpkper`, and the reader opens
+      `<model>.hds` rather than the file output control names; `GridSpec.resolve()` with no
+      workspace meshes into the cwd; and `with_grid` on a model declared `grid=<built
+      grid>` reads a per-cell array `unchanged` where `context=ModelContext(grid=...)` reads
+      it `unverifiable` (ledger 295's detection keys on the context's grid).

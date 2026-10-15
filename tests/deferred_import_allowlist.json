@@ -8,7 +8,7 @@
  "myflopy.modflow.mf6.grid.plotting": 1,
  "myflopy.modflow.mf6.grid.triangle": 1,
  "myflopy.modflow.mf6.grid.voronoi": 4,
- "myflopy.modflow.mf6.headsplus": 2,
+ "myflopy.modflow.mf6.headsplus": 3,
  "myflopy.modflow.mf6.lakes": 1,
  "myflopy.modflow.mf6.observations.heads": 4,
  "myflopy.modflow.mf6.observations.lake": 1,

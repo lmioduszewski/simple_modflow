@@ -70,10 +70,14 @@ Anything new that draws an interpolated surface draws that, never `.surface`.
 
 **A cell with no value is `|value| >= 1e29`, of EITHER sign** (ledger 315). MF6
 writes +1e30 for an inactive cell and -1e30 for a DRY one, and no real head comes
-near either, so the test is the magnitude: `headsplus._is_sentinel`, which
-`get()`, `array()`, `to_xugrid()`, the head surface, `model.region_heads` and
-`hds.get_obs_heads` share (the last two read the raw numbers until ledger 495; a
-region mean averaged them in). A calibration TARGET is not a view and keeps them
+near either, so the test is the magnitude: `myflopy._numbers.is_no_value` (re-exported
+as `headsplus._is_sentinel`, and moved to the bottom of the import layering so a grid
+module can reach it), which `get()`, `array()`, `to_xugrid()`, `remap()`, the head
+surface, `model.region_heads` and `hds.get_obs_heads` share (the last two read the raw
+numbers until ledger 495; a region mean averaged them in). Of these, `remap()` alone
+tells the two signs apart (`is_dry`): a DRY head takes the water table below it, an
+inactive cell is a gap. The mounding map, below, is the other place a dry cell differs
+from an inactive one. A calibration TARGET is not a view and keeps them
 (ledgers 351, 355). A cutoff on one side
 keeps the other. The surface cut at `> 10_000`, which kept a dry cell as a sample
 (a crater to -1e30 under every interpolator) and erased real heads above 10,000 ft.
@@ -622,7 +626,9 @@ works without knowing which class produced it.
 
 The model-level **dependent-variable readers** follow the same spatial-noun verb
 set: `model.hds` (GWF heads), `model.conc` (GWT concentration), `model.temp` (GWE
-temperature) all share `get/summary/array/map/section/mosaic/animate`, built from one
+temperature) all share `get/summary/array/map/section/mosaic/animate`, plus `remap(grid)`
+(the field carried onto another grid as starting values -- a DATA verb, returning an
+array, so it is not one of the picture verbs), built from one
 `DependentVariableFile` base (`headsplus.py`) — add a new dependent variable by
 subclassing it and setting `value_name`/`store_column`/`_binary_text`/`_choro_type`,
 not by cloning the reader. The choropleth reads whichever field the map's `type`

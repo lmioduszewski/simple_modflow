@@ -73,6 +73,13 @@ numbers to the new geometry and reported Normal termination. **Read
 and moves itself, while one declared with `context=` reads `stale` and must be
 re-declared against the new grid.
 
+**Starting the moved model from what the old one solved** is `old.hds.remap(new_vor)`:
+the old run's heads at the end of its last stress period (`per=` for another), carried
+onto the new grid and handed to `mf.ic(strt=...)`. `with_grid(remap=True)` carries the old
+model's INPUT `ic.strt` instead. The array makes the simulation unsaveable until it is
+registered as a library package (`project.add_package(key, mf.ic(strt=...))` +
+`mf.ref(key)`); see `docs/package_api_reference.md`, "Starting heads from a solved run".
+
 ## Coupled (multi-model) runs
 
 When a simulation has more than one model — for example GWF coupled to GWT,

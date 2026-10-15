@@ -1239,7 +1239,8 @@ flow = mf.gwf(
                 vertices=gp["vertices"], cell2d=gp["cell2d"],
                 top=layers.top, botm=layers.botm, idomain=layers.idomain,
                 length_units="FEET"),
-        mf.ic(strt=150.0),
+        mf.ic(strt=150.0),                  # or a previous run's heads on this grid:
+                                            # mf.ic(strt=old.hds.remap(vor))
         mf.npf(k=[25.0, 0.05, 40.0], k33=..., icelltype=1, save_flows=True),
         mf.sto(steady_state={0: True}),
 
@@ -1584,6 +1585,7 @@ model = run.model("valley")
 
 model.hds.array(layer=0)                 # numpy
 model.ghb.results.q.get()       # a DataFrame
+model.hds.remap(new_vor)                 # the heads on ANOTHER grid: mf.ic(strt=...) there
 
 model.plot.map(layer=0, contours=True)   # six verbs, four scopes
 model.plot.section(cells=[12, 40, 88])   # cross-section: cells by layer, water level on top

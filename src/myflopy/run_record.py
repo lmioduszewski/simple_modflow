@@ -283,6 +283,49 @@ def read_listing_outcome(
     )
 
 
+#: MF6's line for a time step its solution did not converge on, one-based. Written to
+#: ``mfsim.lst`` whether the run then stops (the default) or carries on (IMS ``CONTINUE``),
+#: so it names every unconverged step either way.
+_NOT_CONVERGED = re.compile(
+    r"Solution Group \d+ did not converge for stress period (\d+) and time step (\d+)"
+)
+
+
+def nonconverged_steps(workspace: Path | str) -> set[tuple[int, int]]:
+    """Every time step MF6 reports its solution did NOT converge on, from ``mfsim.lst``.
+
+    A run that fails stops after writing the output of the step that failed -- at the time
+    that step would have ended -- and a run told to ``CONTINUE`` past a failure carries on
+    with such steps inside it. Either way the numbers saved for those steps are not a
+    solution, and MF6 says which steps they were, one line each.
+
+    Parameters
+    ----------
+    workspace : str or pathlib.Path
+        The MF6 run directory; the listing read is ``workspace / "mfsim.lst"``.
+
+    Returns
+    -------
+    set of tuple of (int, int)
+        ``(kstp, kper)``, zero-based. Empty when every step converged, and when there is no
+        listing to read (a run with no listing says nothing either way).
+    """
+
+    listing = Path(workspace) / _LISTING_NAME
+    found: set[tuple[int, int]] = set()
+    try:
+        with listing.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if "did not converge" not in line:
+                    continue
+                match = _NOT_CONVERGED.search(line)
+                if match:
+                    found.add((int(match.group(2)) - 1, int(match.group(1)) - 1))
+    except OSError:
+        return set()
+    return found
+
+
 def utc_now() -> str:
     """Return an ISO-8601 UTC timestamp, matching the run manifest's format."""
 

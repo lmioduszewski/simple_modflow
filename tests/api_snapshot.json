@@ -759,6 +759,14 @@
       "backend:KEYWORD_ONLY='plotly'",
       "trace_kwargs:VAR_KEYWORD=<required>"
     ],
+    "DependentVariableFile.remap": [
+      "grid:POSITIONAL_OR_KEYWORD=<required>",
+      "per:KEYWORD_ONLY=-1",
+      "layers:KEYWORD_ONLY=None",
+      "method:KEYWORD_ONLY='linear'",
+      "uncovered:KEYWORD_ONLY='nearest'",
+      "kstpkper:KEYWORD_ONLY=None"
+    ],
     "DependentVariableFile.summary": [],
     "DependentVariableFile.to_xugrid": [
       "layers:KEYWORD_ONLY=None",

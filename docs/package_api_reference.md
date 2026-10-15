@@ -1382,13 +1382,59 @@ Integer flags (`icelltype`, `iconvert`, `irch`, `ievt`) and everything extensive
 refused by name. Two meshes in different coordinate systems are refused before anything is
 carried; a unit rescale under the same declared CRS is the known blind spot.
 
+### Starting heads from a solved run — `old.hds.remap(new_vor)`
+
+```python
+strt = old.hds.remap(new_vor)                          # every layer, end of the last period
+strt = old.hds.remap(new_vor, per=3)                   # end of stress period 3
+strt = old.hds.remap(new_vor, layers=[0, 0, 1, 2])     # 4 new layers from 3 old
+model = mf.gwf("m", grid=new_vor, packages=[..., mf.ic(strt=strt), ...])
+```
+
+`with_grid(remap=True)` carries a model's INPUT `ic.strt`; `remap` carries what a run
+SOLVED — the heads it ended with — onto any built grid (a `VoronoiGridPlus`: what
+`GridSpec.resolve()` returns, or another model's `model.vor`). `model.conc.remap` and
+`model.temp.remap` do the same for a transport or energy model's starting field. It
+returns an `(nlay, ncpl)` array with a number in every cell.
+
+| argument | meaning |
+| --- | --- |
+| `per` | the stress period, read at its END (default `-1`, the last the simulation declares); a period short of its end is refused naming `SAVE HEAD LAST` — or, when the file stops in it, a run that stopped |
+| `layers` | the OLD layer each output row reads; repeats allowed, so it is the new→old layer map when the layer count changes. Default: every layer |
+| `method` | `"linear"` (default) between cell centres, or `"area"` (the area-weighted mean, `with_grid`'s rule) |
+| `uncovered` | a new cell with no old value under it: `"nearest"` (default, one warning with the counts) or `"raise"` |
+| `kstpkper` | an exact `(kstp, kper)` instead, unchecked — for a run that did not save a period's end |
+
+**Linear is the default, measured** (`docs/reproducers/heads_remap_linear_vs_area.py`): away
+from a pumping well it was 6.4× closer than the area mean to the finer mesh's own solution
+refining and 2.6× coarsening, because the area mean paints every new cell inside an old one
+with that old cell's value; at the well cell itself neither wins. Where a new centre lies
+outside the old centres' hull or in a triangle reaching past their neighbourhood, linear
+takes the value of the old cell covering most of it, moved along that cell's own gradient
+and held inside the old layer's range (`docs/reproducers/field_remap_rim.py`).
+
+**A step MF6 did not converge on is refused** -- a failed run saves its last step at the
+time it would have ended -- and so is a DISU (its nodes stack a column's layers).
+
+**No-value cells.** A DRY head (−1e30) takes the head of the first wet layer below it — the
+water table, below its bottom, so the new model starts it dry too. An INACTIVE cell is a
+gap. A new cell over gaps only, or outside the old model, takes the nearest old value and
+is counted in the warning.
+
+**The array makes the simulation unsaveable** (`project.save()` skips a simulation holding
+an ndarray, ledger 193). Register it as a library package to keep it --
+`project.add_package("ic_regrid", mf.ic(strt=strt))` and `mf.ref("ic_regrid")` in the model --
+and give the model a grid a save can hold too: a built `grid=new_vor` cannot be serialized
+either, so register it (`project.add_grid("mesh", mf.GridSpec.from_object(new_vor))`) and
+declare `mf.gwf(..., grid=mf.grid_ref("mesh"))`, or keep the `GridSpec` it was resolved from.
+
 ### A per-cell array from a polygon map — `mf.Polygons`
 
 | call | fills |
 | --- | --- |
 | `mf.npf(k=mf.Polygons(p, column="k"))` | horizontal K, one value per mapped unit |
 | `mf.npf(k22=…, k33=…)` | the other two conductivities |
-| `mf.ic(strt=mf.Polygons(p, column="head"))` | starting heads |
+| `mf.ic(strt=mf.Polygons(p, column="head"))` | starting heads (from a run's solution: `old.hds.remap(new_vor)`, above) |
 | `mf.sto(ss=…, sy=…)` | storage |
 
 ```python
@@ -1830,9 +1876,11 @@ per-cell field to slice) and `travel_time`/`endpoints`/`capture` refuse `animate
 The raw MF6 track table is `results.track_records`. Full detail in §A above.
 
 **Model-level reads:** `model.hds` (GWF heads explorer — `get`/`summary`/`array`/
-`map`/`section`/`mosaic`/`animate`), and its transport twins **`model.conc`** (GWT
-concentration) and **`model.temp`** (GWE temperature) — the same dependent-variable
-grammar, reading the `.ucn` binary via the shared `DependentVariableFile` base. The
+`map`/`section`/`mosaic`/`animate`, and `remap(grid)`, which carries the field onto another
+grid as starting values — see "Starting heads from a solved run" above), and its transport
+twins **`model.conc`** (GWT concentration) and **`model.temp`** (GWE temperature) — the
+same dependent-variable grammar, reading the `.ucn` binary via the shared
+`DependentVariableFile` base. The
 readers are **kind-gated**: `.hds` on a transport model (or `.conc` on a flow model)
 raises a clear error. `model.outputs.<pkg>.bud` (raw budget accessor),
 `model.targets.<family>` (`compare`/`stats`/`calibration_plot`), `model.pest_runs`.

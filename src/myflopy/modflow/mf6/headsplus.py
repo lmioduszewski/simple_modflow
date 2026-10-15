@@ -24,6 +24,7 @@ import flopy.utils.binaryfile as bf
 import numpy as np
 import pandas as pd
 
+from myflopy._numbers import is_no_value
 from myflopy._optional import require
 from myflopy.modflow.mf6.heads_observations import (
     get_obs_cells as _get_obs_cells,
@@ -43,7 +44,15 @@ from myflopy.modflow.mf6.package_plotting import (
     refuse_noun_parameters,
     resolve_noun_hover,
 )
-from myflopy.modflow.mf6.period_end import at_period_end, last_saved_step, period_ends
+from myflopy.modflow.mf6.period_end import (
+    at_period_end,
+    last_saved_step,
+    period_end_record,
+    period_ends,
+    period_lengths,
+    saved_steps,
+)
+from myflopy.run_record import nonconverged_steps
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import (
     HoverSpec,
@@ -56,17 +65,10 @@ from myflopy.modflow.utils.datatypes.hover import (
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
 
-def _is_sentinel(values) -> np.ndarray:
-    """True where ``values`` is one of MODFLOW's no-value sentinels: ``|value| >= 1e29``.
-
-    MF6 writes a cell with no value as a number, not NaN: +1e30 for an inactive
-    cell and -1e30 for a DRY one. No real head, concentration or temperature
-    comes near either, so the test is the magnitude, and it has to take BOTH
-    signs. A head surface cut at ``> 10_000`` instead, which kept every dry cell
-    as a crater to -1e30 and erased every real head above 10,000 ft (ledger 315).
-    """
-
-    return np.abs(np.asarray(values, dtype=float)) >= 1.0e29
+#: True where a value is one of MODFLOW's no-value markers (``|value| >= 1e29``). The
+#: rule is :func:`myflopy._numbers.is_no_value`; this name is kept for the modules
+#: that import it from here.
+_is_sentinel = is_no_value
 
 
 def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
@@ -106,6 +108,127 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
     )
 
 
+def _exact_kstpkper(kstpkper, saved) -> tuple[int, int]:
+    """``kstpkper`` as a saved ``(kstp, kper)``, refused when it is not two integers or not saved."""
+
+    import numbers
+
+    if isinstance(kstpkper, (str, bytes)) or not hasattr(kstpkper, "__len__") or len(kstpkper) != 2:
+        raise TypeError(
+            f"kstpkper must be two zero-based integers, (kstp, kper); got {kstpkper!r}."
+        )
+    for value in kstpkper:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, numbers.Integral):
+            raise TypeError(
+                f"kstpkper must be two zero-based integers, (kstp, kper); got {kstpkper!r}."
+            )
+    key = (int(kstpkper[0]), int(kstpkper[1]))
+    available = [(int(item[0]), int(item[1])) for item in saved]
+    if key not in available:
+        raise ValueError(f"kstpkper {key} is unavailable. Available: {available}")
+    return key
+
+
+def _run_directory(output_path) -> Path | None:
+    """The simulation directory holding ``mfsim.lst`` for a field file, or ``None``.
+
+    The file sits in its model's output folder, which is the simulation's own directory
+    or, for a model of a coupled run, a subdirectory of it.
+    """
+
+    folder = Path(output_path).resolve().parent
+    for candidate in (folder, folder.parent):
+        if (candidate / "mfsim.lst").is_file():
+            return candidate
+    return None
+
+
+def read_saved_field(
+    reader,
+    *,
+    per: int = -1,
+    kstpkper: tuple[int, int] | None = None,
+    perlen=None,
+    ncpl: int,
+    label: str = "head",
+    run_dir=None,
+) -> tuple[np.ndarray, tuple[int, int], str]:
+    """The ``(nlay, ncpl)`` numbers one record of a field file holds, and which record.
+
+    The read ``model.hds.remap`` makes, and the lazy recipe after it: the record that ENDS
+    stress period ``per`` (:func:`~myflopy.modflow.mf6.period_end.period_end_record`, that
+    period alone), or an exact ``kstpkper``. The file's own numbers come back, MODFLOW's
+    no-value markers included.
+
+    Parameters
+    ----------
+    reader : flopy.utils.HeadFile
+        An open reader of the field file (a :class:`DependentVariableFile` is one).
+    per : int, default -1
+        The stress period, zero-based; a negative one counts back from the last.
+        Ignored when ``kstpkper`` is given.
+    kstpkper : tuple of (int, int), optional
+        An exact zero-based saved time instead, unchecked against the period's end.
+        Default ``None``.
+    perlen : sequence of float, optional
+        Each period's TDIS length. Default ``None``: no TDIS, so the period's last saved
+        step is taken unchecked, and the description says so.
+    ncpl : int
+        Cells per layer, for the reshape.
+    label : str, default "head"
+        The file's field (``"head"``, ``"concentration"``, ``"temperature"``): names the
+        file and the output-control word in a refusal.
+    run_dir : str or pathlib.Path, optional
+        The simulation directory, whose ``mfsim.lst`` names every time step the solution
+        did NOT converge on (:func:`~myflopy.run_record.nonconverged_steps`): MF6 saves
+        such a step's numbers -- a failed run its last step, one told to ``CONTINUE``
+        steps mid-run -- and reading one is refused. Default ``None``: not checked.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, tuple of (int, int), str)
+        The ``(nlay, ncpl)`` floats, the zero-based ``(kstp, kper)`` read, and a
+        description of that time for a message.
+
+    Raises
+    ------
+    TypeError
+        ``per`` or ``kstpkper`` is not made of integers.
+    ValueError
+        As :func:`~myflopy.modflow.mf6.period_end.period_end_record`; a ``kstpkper`` the
+        file did not save; or the record is a step the run did not converge on.
+    """
+
+    saved = saved_steps(reader)
+    if kstpkper is not None:
+        key = _exact_kstpkper(kstpkper, saved)
+        when = f"time step {key[0]} of stress period {key[1]} (zero-based)"
+    else:
+        key = period_end_record(
+            saved, per, perlen=perlen, file=f"the {label} file", saves=label.upper()
+        )
+        when = (
+            f"the end of stress period {key[1]}"
+            if perlen is not None
+            else f"the last saved step of stress period {key[1]} (no TDIS to check that it "
+            "ends the period)"
+        )
+    if run_dir is not None and key in nonconverged_steps(run_dir):
+        raise ValueError(
+            f"Time step {key[0]} of stress period {key[1]} (zero-based) is a step the "
+            f"run did NOT converge on: {Path(run_dir) / 'mfsim.lst'} says so, and MF6 "
+            f"still saves such a step's {label}s, at the time it would have ended -- a "
+            "failed run writes its last step that way, and one told to CONTINUE writes "
+            "them mid-run. Read a period the run solved (per=...), or rerun the model."
+        )
+    raw = reader.get_data(kstpkper=key)
+    return (
+        np.asarray(_as_layer_cell_heads(raw, nlay=int(reader.nlay), ncpl=int(ncpl)), dtype=float),
+        key,
+        when,
+    )
+
+
 class DependentVariableFile(LineProfileView, bf.HeadFile):
     """A per-cell dependent-variable output reader (heads / concentration / temperature).
 
@@ -128,6 +251,10 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
     _summary_label = "value"
     #: ``Choro`` type key so the map reads this field from the model
     _choro_type = "hds"
+    #: Whether :meth:`remap` gives a DRY cell (-1e30) the value of the first wet layer
+    #: below it -- the water table. A head's; a dry cell holds no concentration or
+    #: temperature at all.
+    _dry_takes_water_table = False
 
     def __init__(
             self,
@@ -541,6 +668,172 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         if masked:
             values[_is_sentinel(values)] = np.nan
         return values
+
+    def remap(
+        self,
+        grid,
+        *,
+        per: int = -1,
+        layers: int | list[int] | None = None,
+        method: str = "linear",
+        uncovered: str = "nearest",
+        kstpkper: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        """Carry this run's solved field onto ANOTHER grid -- starting values for a model there.
+
+        ``mf.ic(strt=old.hds.remap(new_vor))`` starts a model on ``new_vor`` from the heads
+        this run ENDED with (``model.conc.remap`` / ``model.temp.remap`` the same for a
+        transport or energy model's starting concentration or temperature). It reads the
+        field at the END of stress period ``per``, carries each requested layer onto
+        ``grid`` and returns an array with a number in every cell.
+
+        **What the file holds no number for.** An inactive cell (+1e30) is a gap. A DRY head
+        (-1e30) takes the head of the first wet layer below it in its column -- the water
+        table, normally below the dry cell's bottom, so the new model starts that cell dry
+        too (MF6's IC documentation: a head below the cell bottom starts the cell dry);
+        without rewetting MF6 can keep a cell dry after the water below has risen past its
+        bottom, and that cell then starts wet, where the water now is. A dry concentration
+        or temperature is a gap. Under NEWTON MF6 writes a dry cell's head as an ordinary
+        number below its bottom, and that number is carried as it is.
+
+        **A step that did not converge** is saved too -- a failed run's last step, at the
+        time it would have ended, and under IMS ``CONTINUE`` steps mid-run; ``mfsim.lst``
+        names each, and reading one is refused.
+
+        **How a value crosses.** ``"linear"`` (default) interpolates between the old cells'
+        centres -- the points MF6 solved the field at -- onto each new cell's centre; where
+        a new centre lies outside the old centres' hull, or in a triangle reaching past
+        their neighbourhood (across an inactive strip or a notch), it takes the value of the
+        old cell covering most of it, moved along that cell's own gradient -- never across
+        the gap, and never outside the range the old layer holds, so a concentration cannot
+        come back negative.
+        ``"area"`` takes the area-weighted mean of the old cells under each new cell: the
+        rule ``with_grid(remap=True)`` carries an input ``ic.strt`` by. A new cell with NO old
+        cell holding a value under it -- outside the old model, or over cells with none --
+        is ``uncovered``.
+
+        The array is EAGER: a simulation holding it builds and runs, but ``project.save()``
+        skips it (an array cannot be serialized, ledger 193) and the array names its cells
+        by position, so it does not follow a later ``with_grid``. To save one, register it
+        as a library package (``project.add_package(key, mf.ic(strt=...))`` +
+        ``mf.ref(key)``) -- and register a built grid too (``project.add_grid`` +
+        ``grid=mf.grid_ref(key)``), which a saved simulation cannot hold either.
+
+        Parameters
+        ----------
+        grid : VoronoiGridPlus
+            The BUILT grid to carry the field onto, in this model's CRS: what
+            ``GridSpec.resolve()`` returns, ``model.vor`` of another model, or
+            ``mf.load_mf6_run(ws).vor``. A ``GridSpec``, a ``grid_ref``, a model, a FloPy
+            grid or a GeoDataFrame raises ``TypeError`` naming the spelling that gives a
+            built grid; a grid in another CRS, or sharing no area with this one, raises
+            ``ValueError``.
+        per : int, default -1
+            The stress period, zero-based, read at its END -- the step whose time into the
+            period is the period's TDIS length, by the rule :meth:`get` reads (ledger 336),
+            but checked for THIS period only. A negative period counts back from the last
+            the simulation DECLARES, so ``-1`` (default) is the last stress period, not
+            the last one the file reached. A period whose end the file does not hold is
+            refused naming ``SAVE HEAD LAST`` (``CONCENTRATION``, ``TEMPERATURE``) -- and,
+            when it is the last period the file reached, a run that stopped inside it. A
+            period the file holds nothing for is refused naming the file's last record. A
+            reader opened from a path with no model takes the period's last saved step,
+            unchecked, and the warning says so. Ignored when ``kstpkper`` is given.
+        layers : int or sequence of int, optional
+            The OLD layer each output row reads, zero-based (a negative counts up from the
+            bottom). Repeats are allowed, so a sequence is the new->old layer map when the
+            new model has another layer count: ``[0, 0, 1, 2]`` fills four layers from three.
+            An int returns one ``(ncpl,)`` row. Default ``None``: every layer, in order --
+            right only when the new model has the same number of layers, which this cannot
+            check (``grid`` has no layers).
+        method : {"linear", "area"}, default "linear"
+            ``"linear"`` interpolates between cell centres; ``"area"`` takes the
+            area-weighted mean of the old cells under each new cell. Away from a pumping
+            well, linear measured 6.4x closer than the area mean to a finer mesh's own
+            solved heads (refining; 2.6x coarsening), and 57x closer on a field with a known
+            answer; at the well cell neither wins
+            (``docs/reproducers/heads_remap_linear_vs_area.py``). The area mean keeps a
+            field's area average over each new cell, which can matter for a concentration
+            when coarsening.
+        uncovered : {"nearest", "raise"}, default "nearest"
+            A new cell no old cell holding a value reaches: ``"nearest"`` takes the value of
+            the nearest such old cell in its layer and warns ONCE per call, naming how many
+            cells lie outside the old model, how many sat over cells with no value, and the
+            farthest fill distance; ``"raise"`` refuses with ``RemapRefused`` (a
+            ``ValueError``) naming the counts. The same word and default as
+            ``with_grid(remap=True)``.
+        kstpkper : tuple of (int, int), optional
+            An exact zero-based ``(kstp, kper)`` to read instead, unchecked against the
+            period's end -- for a run whose output control did not save it. Two integers
+            (a ``bool``, a float or a string is refused with ``TypeError``); a time the
+            file did not save raises ``ValueError`` listing the saved ones. Default
+            ``None``: ``per`` decides.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(len(layers), grid.ncpl)`` floats -- every layer when ``layers`` is ``None``
+            -- or ``(grid.ncpl,)`` for an int ``layers``, in this field's units. Finite in
+            every cell: ``mf.ic(strt=...)`` takes it as it is.
+
+        Raises
+        ------
+        TypeError
+            ``grid`` is not a built grid; ``per``, ``kstpkper`` or a layer is not made of
+            integers.
+        ValueError
+            ``method``/``uncovered`` is not one of its choices (checked first); the model
+            is DISU (MF6 writes its nodes as one layer, so a layer has no plan-view cells
+            of its own) -- refused through the model, or, for a reader with none, because
+            the grid's cells overlap; the period or layer is out of range, or the period's
+            end is missing (above); the record is a step the run did not converge on; the
+            grids' CRSs differ or they share no area; ``RemapRefused`` under
+            ``uncovered="raise"`` or when a requested layer holds no value anywhere.
+
+        Examples
+        --------
+        >>> strt = old.hds.remap(new_vor)                       # every layer, last period
+        >>> strt = old.hds.remap(new_vor, per=3)                # end of period 3
+        >>> strt = old.hds.remap(new_vor, layers=[0, 0, 1, 2])  # 4 new layers from 3 old
+        >>> ic = mf.ic(strt=strt)
+        """
+
+        # Deferred, not at module level: importing any `grid` module runs the package's
+        # __init__, which imports the plotting stack and through it this module -- a
+        # cycle (measured: ImportError on `_is_sentinel`). The literal defaults above are
+        # the engine's DEFAULT_FIELD_METHOD / DEFAULT_UNCOVERED, held equal by a test.
+        from myflopy.modflow.mf6.grid.remap import check_field_choices, remap_field
+
+        verb = f"{self._noun_path()}.remap"
+        check_field_choices(method, uncovered)
+        if self.model is not None and getattr(self.model, "grid_type", None) == "disu":
+            raise ValueError(
+                f"{verb}: this model is DISU, and MF6 writes a DISU's nodes as one layer, "
+                "so its cells have no plan-view layer to carry. Carry a DIS or DISV model's "
+                "field."
+            )
+        raw, _, when = read_saved_field(
+            self,
+            per=per,
+            kstpkper=kstpkper,
+            perlen=period_lengths(self.model),
+            ncpl=int(self.vor.ncpl),
+            label=self._binary_text,
+            run_dir=_run_directory(self.output_path),
+        )
+        field, _ = remap_field(
+            raw,
+            self.vor,
+            grid,
+            layers=layers,
+            method=method,
+            uncovered=uncovered,
+            water_table=self._dry_takes_water_table,
+            label=self._binary_text,
+            verb=verb,
+            when=when,
+        )
+        return field
 
     def to_xugrid(
         self,
@@ -1061,6 +1354,7 @@ class HeadsPlus(DependentVariableFile):
     _binary_text = "head"
     _summary_label = "hds"
     _choro_type = "hds"
+    _dry_takes_water_table = True
 
     def __init__(
             self,
