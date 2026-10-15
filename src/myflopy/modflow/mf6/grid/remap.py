@@ -36,10 +36,13 @@ from myflopy.modflow.mf6.grid.geometry import (
 
 logger = get_logger(__name__)
 
-#: Per-cell arrays remapped with the plain area-weighted mean. Each is a quantity whose
-#: value does not scale with the cell holding it and which may legitimately be zero or
-#: negative -- a head especially -- so the geometric and harmonic rules, which take a
-#: logarithm and a reciprocal, are not offered for them.
+#: Per-cell arrays carried without a conductivity rule. Each is a quantity whose value does
+#: not scale with the cell holding it and which may legitimately be zero or negative -- a
+#: head especially -- so the geometric and harmonic rules, which take a logarithm and a
+#: reciprocal, are not offered for them. ``ss``/``sy`` take the plain area-weighted mean;
+#: ``strt`` -- a HEAD field -- is carried as a solved field is, :func:`remap_field`
+#: linear between cell centres (ledger 600), so a starting head moves by one rule
+#: whether it came from a model's input or a run's output.
 INTENSIVE_ARRAYS: frozenset[str] = frozenset({"strt", "ss", "sy"})
 
 #: Conductivities. These are the reason ``rule=`` exists: the correct average depends on
@@ -144,8 +147,15 @@ def remap_arrays(
     uncovered: str = DEFAULT_UNCOVERED,
     domain=None,
     verb: str = "with_grid(remap=True)",
+    old_grid=None,
+    new_grid=None,
 ) -> tuple[dict, dict]:
     """Return ``(new options, report)`` with every per-cell array on the new mesh.
+
+    ``strt`` is carried by :func:`remap_field` (linear between cell centres), which needs
+    the two meshes' centres and vertex rings -- ``old_grid``/``new_grid``, anything with
+    ``gdf_vorPolys``, ``points`` and ``iverts`` -- and warns about what it filled itself;
+    its fills are counted in the report's ``strt_filled``, not ``filled``.
 
     ``cellwise`` names the options that hold one value per cell, as
     :func:`myflopy.grid_identity.cellwise_options` decides it -- this does not re-derive
@@ -203,19 +213,38 @@ def remap_arrays(
         source = np.asarray(options[name], dtype=float)
         layers = source if source.ndim == 2 else source.reshape(1, -1)
         if name == "strt":
-            # A starting head may hold MF6's no-value numbers -- one copied from a run's
-            # output does -- and an area mean averaged a -1e30 into every new cell over it.
-            # The rule `remap_field` uses: a dry cell takes the water table below it, an
-            # inactive one is a gap, and a gap is masked from the weights like an
-            # inactive cell.
-            layers, _ = no_value_to_nan(layers, water_table=True)
+            # A HEAD field: carried as a solved field is (ledger 600), linear between cell
+            # centres, by the engine `model.hds.remap` uses -- one rule for moving heads.
+            # A dry starting head (MF6's -1e30, as one copied from a run's output holds)
+            # takes the water table below it, an inactive one is a gap, and so is a cell
+            # the OLD domain removed (its starting head is arbitrary).
+            if old_grid is None or new_grid is None:
+                raise TypeError(
+                    f"{verb}: {package}.strt is carried between cell centres, which needs "
+                    "both meshes (old_grid=, new_grid=), not their polygons alone."
+                )
+            marked = np.array(layers, dtype=float)
+            for index in range(marked.shape[0]):
+                kept = _active_mask(idomain, index, overlay.n_old)
+                if kept is not None:
+                    # Removed cells first, as INACTIVE markers, so a dry cell above one
+                    # never takes its arbitrary starting head for the water table.
+                    marked[index, ~kept] = 1.0e30
+            field, _ = no_value_to_nan(marked, water_table=True)
+            carried_field, field_report = remap_field(
+                field, old_grid, new_grid, method=DEFAULT_FIELD_METHOD,
+                uncovered=uncovered, water_table=False,
+                label=f"starting head ({package}.strt)", verb=verb,
+            )
+            report["strt_filled"] = field_report["outside"] + sum(
+                field_report["no_value_under"].values()
+            )
+            moved[name] = carried_field if source.ndim == 2 else carried_field[0]
+            continue
         chosen = rule if name in CONDUCTIVITY_ARRAYS else "mean"
         carried = []
         for index, layer_values in enumerate(layers):
             active = _active_mask(idomain, index, overlay.n_old)
-            if name == "strt" and not np.isfinite(layer_values).all():
-                finite = np.isfinite(layer_values)
-                active = finite if active is None else (active & finite)
             painted, reached = overlay.reduce(layer_values, rule=chosen, active=active)
             if name in CONDUCTIVITY_ARRAYS:
                 _note_spread(overlay, layer_values, active, report, name, index)

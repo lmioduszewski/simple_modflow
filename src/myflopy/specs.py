@@ -1306,30 +1306,47 @@ def _carry_grid(original: Any, rebuilt: Any) -> Any:
 _RECIPE_OWNED_OPTIONS = frozenset({"stress_period_data", "boundnames"})
 
 
-def _polygons_of(grid: Any, *, verb: str) -> Any:
-    """The cell polygons of whatever a caller passed as a grid.
+def _mesh_parts(grid: Any, *, verb: str) -> Any:
+    """A built grid's cell polygons, MF6 cell centres and vertex rings, from whatever was passed.
 
     A built grid, a `GridSpec` (resolved), or a `GridRef` are all things a caller
-    reasonably has in hand at a move; only the first carries polygons already. A
-    `GridSpec` is meshed in a TEMPORARY directory that is gone on return: only its
-    polygons are wanted, and the recipe itself is what the model keeps and the build
-    meshes again in the run's own `_grid/` -- `GridSpec.resolve` refuses to pick a
-    directory nobody named (ledger 599). ``verb`` names the caller in the refusal.
+    reasonably has in hand at a move; only the first carries its mesh already. A
+    `GridSpec` is meshed in a TEMPORARY directory that is gone on return, so what is
+    wanted -- the polygons, the centres (``points``) and the rings (``iverts``), which a
+    solved field is interpolated on (ledger 600) -- is copied out first; the recipe
+    itself is what the model keeps and the build meshes again in the run's own `_grid/`
+    -- `GridSpec.resolve` refuses to pick a directory nobody named (ledger 599). ``verb``
+    names the caller in the refusal.
     """
 
-    polys = getattr(grid, "gdf_vorPolys", None)
-    if polys is not None:
-        return polys
+    if all(hasattr(grid, name) for name in ("gdf_vorPolys", "points", "iverts")):
+        return grid
     if isinstance(grid, GridSpec):
         import tempfile
+        from types import SimpleNamespace
 
         with tempfile.TemporaryDirectory(prefix="myflopy-grid-") as scratch:
-            return grid.resolve(workspace=scratch).gdf_vorPolys
+            built = grid.resolve(workspace=scratch)
+            return SimpleNamespace(
+                gdf_vorPolys=built.gdf_vorPolys,
+                points=built.points,
+                iverts=[list(ring) for ring in built.iverts],
+                crs=getattr(built, "crs", None),
+                ncpl=built.ncpl,
+            )
+    if getattr(grid, "gdf_vorPolys", None) is not None:
+        return grid                  # polygons alone: enough for an area overlay
     raise TypeError(
         f"{verb} needs a built grid or a GridSpec, not {type(grid).__name__}. A "
         "`mf.grid_ref(key)` names a library entry and is resolved at build, so pass "
         "`project.grid(key)` instead."
     )
+
+
+def _polygons_of(grid: Any, *, verb: str) -> Any:
+    """The cell polygons of whatever a caller passed as a grid (:func:`_mesh_parts`)."""
+
+    return _mesh_parts(grid, verb=verb).gdf_vorPolys
 
 
 def _mesh_in_hand(model: Any) -> Any:
@@ -1613,7 +1630,10 @@ def _remap_choices(
     return rule, uncovered
 
 
-def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, uncovered):
+def _remapped_package(
+    package, *, old_polys, new_polys, ncpl, domain, rule, uncovered, old_grid=None,
+    new_grid=None,
+):
     """Carry one package's per-cell arrays onto the new mesh, or leave it alone.
 
     Returns ``(package, remapped)``. A package is a candidate only when
@@ -1666,10 +1686,12 @@ def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, unco
         rule=rule,
         uncovered=uncovered,
         domain=domain,
+        old_grid=old_grid,
+        new_grid=new_grid,
     )
     stamp = {
         "was": grid_pin_of_polygons(old_polys, ncpl),
-        "filled": report["filled"],
+        "filled": report["filled"] + report.get("strt_filled", 0),
         "filled_area": report["filled_area"],
         "rule": rule,
     }
@@ -5455,8 +5477,10 @@ class ModelSpec:
         rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
-            ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
-            mean. Any other value raises ``ValueError`` at the call, whether or
+            ``"majority"``; ``ss``/``sy`` always take the area-weighted mean, and
+            ``strt`` -- a head field -- is carried linear between cell centres, as
+            ``model.hds.remap`` carries one (ledger 600). Any other value raises
+            ``ValueError`` at the call, whether or
             not a package has an array to carry. Given without ``remap=True`` it
             raises ``ValueError`` naming ``remap=True``. Default ``None``:
             ``"geometric"`` under ``remap=True``.
@@ -5589,8 +5613,9 @@ class ModelSpec:
                 "`context=ModelContext(grid=...)`, or one whose route does not resolve. "
                 "Move it without `remap=`, or declare the grid it was built on."
             )
-        old_polys = _polygons_of(old_grid, verb="with_grid(remap=True)")
-        new_polys = _polygons_of(grid, verb="with_grid(remap=True)")
+        old_mesh = _mesh_parts(old_grid, verb="with_grid(remap=True)")
+        new_mesh = _mesh_parts(grid, verb="with_grid(remap=True)")
+        old_polys, new_polys = old_mesh.gdf_vorPolys, new_mesh.gdf_vorPolys
         carried = []
         for package in packages:
             if isinstance(package, PackageSpec):
@@ -5598,6 +5623,8 @@ class ModelSpec:
                     package,
                     old_polys=old_polys,
                     new_polys=new_polys,
+                    old_grid=old_mesh,
+                    new_grid=new_mesh,
                     ncpl=getattr(old_grid, "ncpl", None),
                     domain=getattr(self.context, "domain", None),
                     rule=rule,
@@ -6776,8 +6803,10 @@ class SimulationSpec:
         rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
-            ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
-            mean. Any other value raises ``ValueError`` at the call, even when no
+            ``"majority"``; ``ss``/``sy`` always take the area-weighted mean, and
+            ``strt`` -- a head field -- is carried linear between cell centres, as
+            ``model.hds.remap`` carries one (ledger 600). Any other value raises
+            ``ValueError`` at the call, even when no
             model moves; given without ``remap=True`` it raises ``ValueError``
             naming ``remap=True``. Default ``None``: ``"geometric"`` under
             ``remap=True``.

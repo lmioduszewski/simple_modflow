@@ -1386,7 +1386,10 @@ moved = sim.with_grid(finer_grid, remap=True, rule="harmonic", uncovered="raise"
 
 Carries per-cell arrays across by area overlay, so `move_report()` reads **`remapped`**
 instead of `unverifiable` and the build accepts them. Serves `npf` `k`/`k22`/`k33` and
-`ic.strt`/`sto.ss`/`sto.sy` (ledger 300).
+`ic.strt`/`sto.ss`/`sto.sy` (ledger 300). `ic.strt`, a head field, is carried as a solved
+one is -- linear between cell centres, the engine `old.hds.remap` uses (ledger 600) -- so a
+starting head moves by one rule whether it came from a model's input or a run's output;
+`ss`/`sy` take the area-weighted mean.
 
 The OLD mesh is the one the model was declared on, however it was declared --
 `mf.gwf(..., grid=<built grid>)` or `context=mf.ModelContext(grid=...)`; `with_grid` and

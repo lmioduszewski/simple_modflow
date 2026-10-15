@@ -961,8 +961,9 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         old cell covering most of it, moved along that cell's own gradient -- never across
         the gap, and never outside the range the old layer holds, so a concentration cannot
         come back negative.
-        ``"area"`` takes the area-weighted mean of the old cells under each new cell: the
-        rule ``with_grid(remap=True)`` carries an input ``ic.strt`` by. A new cell with NO old
+        ``"area"`` takes the area-weighted mean of the old cells under each new cell.
+        ``with_grid(remap=True)`` carries an input ``ic.strt`` by the linear rule too, through
+        this engine (ledger 600). A new cell with NO old
         cell holding a value under it -- outside the old model, or over cells with none --
         is ``uncovered``.
 

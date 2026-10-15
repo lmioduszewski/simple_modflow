@@ -600,7 +600,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8434 passed / 5 skipped**, 2026-10-15, after a move classifies an `mf.ref`
+- Full suite (**8475 passed / 5 skipped**, 2026-10-15, after ledgers 598-600 -- the heads
+  reader's clock and OC file, `coverage_on`/`Run.resolution` reading `grid=`,
+  `GridSpec.resolve()` naming `workspace=`, and `with_grid(remap=True)` carrying `ic.strt`
+  linear): `-n 10` **5m32s** in a worktree outside `.claude`, at a load average of ~1.9 at
+  its start. Before it, 8434 passed / 5 skipped (after a move classifies an `mf.ref`
   through `library=` -- ledger 597): `-n 10` **5m24s** in a worktree outside `.claude`, at a
   load average of ~2.6 at its start rising to ~17. The two `-n 10` runs before it, at loads of
   ~15-25, each failed ONE `test_sfr_stream_inputs.py` network-validate case -- MF6 6.8's
@@ -1629,7 +1633,9 @@ because it has no parameter of that name. `auxiliary` is forwarded now, `nseg > 
 The overlay remap engine, B3's last commit. It intersects the OLD grid's own cell polygons
 with the new grid's and carries per-cell arrays across on the resulting areas, so
 `unverifiable` becomes a fifth verdict, **`remapped`**. Serves `npf` `k`/`k22`/`k33` and
-`ic.strt`/`sto.ss`/`sto.sy`.
+`ic.strt`/`sto.ss`/`sto.sy` -- `ic.strt` through the SOLVED-field engine, linear between cell
+centres, so a starting head moves by one rule from input or output (ledger 600); `ss`/`sy`
+by the area mean.
 **OPT-IN, and the default does not move, for a measured reason: a remap is the WORSE route
 wherever a source exists.** Re-declaring a polygon map on the new mesh (ledger 299) held to
 7.1% worst-case boundary-flux error where the best reducer managed 12.5% and the worst four
@@ -1707,7 +1713,8 @@ last TDIS period), read at the period's END and checked for that period alone, s
 explicit earlier `per=` reads a run that stopped later while `-1` refuses one that never
 finished, naming a stopped run as well as `SAVE HEAD LAST`; a step MF6's listing says did
 not converge is refused. Carried onto any BUILT grid; `model.conc`/`model.temp.remap` alike.
-`with_grid(remap=True)` carries the INPUT `ic.strt` instead. One engine,
+`with_grid(remap=True)` carries the INPUT `ic.strt` -- through this same engine since ledger
+600. One engine,
 `grid/remap.remap_field` (the field's numbers and two built grids, no model object) and one
 read, `headsplus.read_saved_field`/`saved_record` -- the recipe calls both. **`method="linear"` between MF6's
 cell centres (`grid.points`, never polygon centroids) is the default, measured** -- away

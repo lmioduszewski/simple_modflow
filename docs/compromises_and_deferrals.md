@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 599 entries (604 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 600 entries (605 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 600 | `with_grid(remap=True)` carries an input `ic.strt` linear between cell centres -- one rule for moving heads | 2026-10-15 |
 | 599 | `coverage_on` and `Run.resolution` read a model's `grid=` too, and `GridSpec.resolve()` writes only where i... | 2026-10-15 |
 | 598 | `model.hds`/`.conc`/`.temp` read the file the OC declares, are ONE reader per model while that file is unch... | 2026-10-15 |
 | 597 | A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARE... | 2026-10-15 |
@@ -12594,7 +12595,8 @@ same day, which is the useful part of the result.
       ``sim.with_grid(grid, remap=True, rule=, uncovered=)`` intersects the OLD grid's own
       cell polygons with the new grid's and carries per-cell arrays across on the
       resulting areas. ``npf`` ``k``/``k22``/``k33`` and ``ic.strt``/``sto.ss``/``sto.sy``;
-      ``unverifiable`` becomes a fifth verdict, ``remapped``.
+      ``unverifiable`` becomes a fifth verdict, ``remapped``. (``ic.strt`` is carried by the
+      solved-field engine, linear between cell centres, since ledger 600.)
       **It exists for an array with NO recipe** -- a PEST-calibrated K field, an array read
       out of an imported model. **And it is the WORSE route wherever a source exists,
       measured**: re-declaring a polygon map on the new mesh (ledger 299) held to a
@@ -22234,16 +22236,17 @@ same day, which is the useful part of the result.
       an inactive cell from the layer below rather than the nearest cell in its layer
       (a pinched layer's column holds a closer value; the agreed rule is nearest-in-layer);
       a check of how GWT/GWE write a cell that is dry in the flow model (no run on disk has
-      one); switching `with_grid(remap=True)`'s `ic.strt` to linear (one rule for moving
-      heads, its own change). The array is EAGER: `project.save()` skips a simulation
+      one); ~~switching `with_grid(remap=True)`'s `ic.strt` to linear (one rule for moving
+      heads, its own change)~~ (**RESOLVED by ledger 600**). The array is EAGER: `project.save()` skips a simulation
       holding it (ledger 193), and a built `grid=` too, until `mf.Heads` lands. Found and
       not fixed here: ~~the reader's `nper`/`numstp` are one short, `get_kstpkper()` is
       offset by one after `__init__` overwrites `self.kstpkper`, and the reader opens
       `<model>.hds` rather than the file output control names~~ (**RESOLVED by ledger
-      598**); `GridSpec.resolve()` with no
-      workspace meshes into the cwd; and `with_grid` on a model declared `grid=<built
-      grid>` reads a per-cell array `unchanged` where `context=ModelContext(grid=...)` reads
-      it `unverifiable` (ledger 295's detection keys on the context's grid -- `with_grid`
+      598**); ~~`GridSpec.resolve()` with no
+      workspace meshes into the cwd~~ (**RESOLVED by ledger 599**); and ~~`with_grid` on a
+      model declared `grid=<built grid>` reads a per-cell array `unchanged` where
+      `context=ModelContext(grid=...)` reads it `unverifiable`~~ (**RESOLVED by ledgers 597
+      and 599**) (ledger 295's detection keys on the context's grid -- `with_grid`
       and `move_report` read `grid=` first since ledger 597).
 
 596. **A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed at the declaration (2026-10-15).**
@@ -22495,3 +22498,29 @@ same day, which is the useful part of the result.
       3,054 with a refinement -- on one machine and one Triangle build, not across them.
       Landed from a background session's branch (written as "596" against an older
       `myflopy`), integrated onto ledgers 596-598 and renumbered.
+
+600. **`with_grid(remap=True)` carries an input `ic.strt` linear between cell centres -- one rule for moving heads (2026-10-15).**
+      The user's call, closing the item ledger 595 left open. A starting head was the one
+      head field the library moved two ways: `model.hds.remap` and `mf.Heads` (ledgers
+      595-596) carry a SOLVED field linear between MF6's cell centres, and
+      `with_grid(remap=True)` (ledger 300) carried an INPUT `ic.strt` by the area-weighted
+      mean. `remap_arrays` now hands `strt` to `remap_field` (`method="linear"`), so the
+      measurement behind 595's default holds for both: on a head field the area mean paints
+      every new cell inside an old one with that old cell's value -- flat inside it, then a
+      jump of a whole old cell's head drop at its face -- and linear was 6.4x closer
+      refining (`docs/reproducers/heads_remap_linear_vs_area.py`). Pinned: a plane carried
+      by `with_grid` comes across exactly inside the old range, where the area mean was
+      off by more than 1.0 on the same test meshes.
+      **How the input differs from an output, and what was chosen for it:** a cell the OLD
+      domain removed holds an arbitrary starting head (MF6 never reads it), so it is made a
+      gap BEFORE the water-table rule runs -- a dry starting head above it never takes that
+      number for its water table (pinned: a removed cell holding 1e6 does not reach the new
+      mesh). A dry starting head (`-1e30`, as one copied from a run's output holds) takes
+      the water table below it, as in 595. The engine warns once about what it filled; the
+      remap's own report counts those fills as `strt_filled`, beside `filled`, so the
+      package-level warning does not repeat them, and the `REMAPPED_FROM` stamp adds both.
+      **Not changed:** `sto.ss`/`sto.sy` keep the area mean -- properties, not a smooth
+      field, and outside the user's request -- and the conductivities keep `rule=`. The
+      remap now needs the two meshes' centres and vertex rings, not their polygons alone:
+      `specs._mesh_parts` copies them out of a `GridSpec` before its temporary directory is
+      removed, and `_polygons_of` reads its polygons through it.

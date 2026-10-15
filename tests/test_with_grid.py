@@ -895,3 +895,26 @@ def test_the_built_grid_outranks_the_context_grid_as_the_build_does():
     model = mf.gwf("m", grid=b, context=ModelContext(grid=a))
 
     assert _mesh_in_hand(model) is b
+
+
+def test_remap_onto_a_GRIDSPEC_carries_strt_linear_between_its_cell_centres(boundary, tmp_path):
+    """`with_grid(recipe, remap=True)` meshes the recipe in a temporary directory, and the
+    starting head is carried linear between cell centres (ledger 600) -- the route that
+    copies the recipe's centres and rings out before that directory is removed."""
+
+    import warnings
+
+    from myflopy.modflow.mf6.grid.remap import remap_field
+
+    old = _grid_spec(boundary, 40_000.0).resolve(workspace=tmp_path / "old")
+    x, y = np.asarray(old.points, dtype=float).T
+    strt = np.vstack([90.0 + 0.001 * x, 85.0 + 0.001 * y])
+    model = mf.gwf("m", grid=old, packages=[mf.disv(_stack()), mf.npf(k=1.0), mf.ic(strt=strt)])
+    recipe = _grid_spec(boundary, 15_000.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        moved = model.with_grid(recipe, remap=True)
+    carried = next(p for p in moved.packages if p.name == "ic").options["strt"]
+    new = recipe.resolve(workspace=tmp_path / "new")
+    expected, _ = remap_field(strt, old, new)
+    np.testing.assert_allclose(carried, expected, atol=1e-9)

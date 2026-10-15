@@ -650,10 +650,12 @@ def test_with_grid_reads_a_starting_head_s_no_value_numbers_by_the_same_rule(coa
     strt = np.vstack([_plane(fine), _plane(fine) - 5.0])
     x = np.asarray(fine.points, dtype=float)[:, 0]
     strt[0, x > 1000.0] = -1.0e30
-    moved, _ = remap_arrays(
-        {"strt": strt}, old_polys=fine.gdf_vorPolys, new_polys=coarse.gdf_vorPolys,
-        cellwise=("strt",), package="ic",
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        moved, _ = remap_arrays(
+            {"strt": strt}, old_polys=fine.gdf_vorPolys, new_polys=coarse.gdf_vorPolys,
+            cellwise=("strt",), package="ic", old_grid=fine, new_grid=coarse,
+        )
     assert np.all(np.abs(moved["strt"]) < 1.0e29)
     assert np.isfinite(moved["strt"]).all()
     lowest = (strt[1].min(), strt[0][strt[0] > -1e29].max())
@@ -932,3 +934,47 @@ def test_a_gradient_across_a_chain_of_cells_is_not_fitted(fine, low, high, worst
     reached = new.gdf_vorPolys.geometry.intersection(under).area.to_numpy() > 1e-6
     truth = 100.0 - 30.0 * (np.asarray(new.points)[reached, 0] / 1200.0) ** 2
     assert np.abs(out[0][reached] - truth).max() < worst
+
+
+def test_with_grid_carries_a_starting_head_linear_between_cell_centres(coarse, fine):
+    """One rule for moving heads (ledger 600): ``with_grid(remap=True)``'s ``ic.strt`` is
+    the field engine's linear carry -- a plane comes across exactly inside the old range,
+    where the area mean it used would have stair-stepped it."""
+
+    from myflopy.modflow.mf6.grid.remap import remap_arrays
+
+    strt = np.vstack([_plane(coarse), _plane(coarse) - 2.0])
+    moved, report = remap_arrays(
+        {"strt": strt}, old_polys=coarse.gdf_vorPolys, new_polys=fine.gdf_vorPolys,
+        cellwise=("strt",), package="ic", old_grid=coarse, new_grid=fine,
+    )
+    expected, _ = remap_field(strt, coarse, fine)
+    np.testing.assert_array_equal(moved["strt"], expected)
+    np.testing.assert_allclose(
+        moved["strt"][0], np.clip(_plane(fine), strt[0].min(), strt[0].max()), atol=1e-9
+    )
+    area, _ = remap_field(strt, coarse, fine, method="area")
+    assert np.abs(area[0] - _plane(fine)).max() > 1.0      # what the area mean gave
+    assert report["filled"] == 0 and report.get("strt_filled", 0) == 0
+
+
+def test_a_starting_head_on_a_removed_old_cell_is_a_gap(coarse, fine):
+    """A cell the OLD domain removed holds an arbitrary starting head; it is never carried,
+    and a dry cell above it does not take it for the water table."""
+
+    from myflopy.modflow.mf6.grid.remap import remap_arrays
+
+    x = np.asarray(coarse.points, dtype=float)[:, 0]
+    strt = np.vstack([_plane(coarse), _plane(coarse) - 2.0])
+    removed = x < 300.0
+    strt[1, removed] = 1.0e6                               # arbitrary, as MF6 ignores it
+    strt[0, removed] = -1.0e30                              # dry above the removed cell
+    domain = np.ones((2, coarse.ncpl), dtype=int)
+    domain[1, removed] = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        moved, _ = remap_arrays(
+            {"strt": strt}, old_polys=coarse.gdf_vorPolys, new_polys=fine.gdf_vorPolys,
+            cellwise=("strt",), package="ic", domain=domain, old_grid=coarse, new_grid=fine,
+        )
+    assert moved["strt"].max() < 1.0e5
