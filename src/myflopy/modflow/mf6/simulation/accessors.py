@@ -46,32 +46,67 @@ class ModelOutputs:
         return get_sfr_output(self.model)
 
 
-def get_hds(model):
-    """Build a NEW ``HeadsPlus`` helper for ``model`` on every call, kept as ``model._hds``.
+def _current_reader(model, cls, slot: str, unit: str | None = None):
+    """``model``'s reader of one field, kept in ``model.<slot>`` while its file is unchanged.
 
-    Not cached: every access re-opens the head file and, when a view asks for
-    ``all_heads``, rebuilds the whole value table. Head TARGETS do not come
-    through here -- they read the OC-declared file's period-end records through
-    ``target_values.read_target_values`` (ledger 557).
+    Every access re-resolves the file the OC declares (``cls._declared_path``) and
+    stats it; the kept reader comes back only when it is that file, unchanged since it
+    was indexed (device, inode, size, mtime), on the model's current grid and with the
+    ``unit`` asked for -- otherwise a new one replaces it. A re-run into a reused
+    directory rewrites the file IN PLACE (same inode, new size and mtime, measured), so
+    the stat is what notices. A new reader was built on every access before, and never
+    closed: one ``model.hds.map()`` built five, a ResourceWarning each (ledger 598).
+    The replaced reader is not closed -- a caller may still hold it; its file closes
+    when it is collected, and it refuses to read a rewritten file.
     """
-    model._hds = Hp(model=model, vor=model.vor)
-    return model._hds
+
+    path = cls._declared_path(model)
+    vor = model.vor
+    cached = getattr(model, slot, None)
+    if (
+        isinstance(cached, cls)
+        and getattr(cached, "unit", None) == (unit or getattr(cls, "_default_unit", None))
+        and cached._is_current(path, vor=vor)
+    ):
+        return cached
+    options = {} if cls is Hp else {"unit": unit}
+    reader = cls(path, model=model, vor=vor, **options)
+    setattr(model, slot, reader)
+    return reader
+
+
+def get_hds(model):
+    """``model``'s ``HeadsPlus``, kept as ``model._hds`` while its head file is unchanged.
+
+    The file is the one the OC declares (``HEAD FILEOUT``); see
+    :func:`_current_reader` for when a new reader replaces the kept one (ledger 598).
+    Head TARGETS do not come through here -- they read the OC-declared file's
+    period-end records through ``target_values.read_target_values`` (ledger 557).
+    """
+
+    return _current_reader(model, Hp, "_hds")
 
 
 def get_conc(model, unit: str | None = None):
-    """Build and cache the ``ConcResults`` (GWT concentration) helper for ``model``."""
-    model._conc = ConcResults(model=model, vor=model.vor, unit=unit)
-    return model._conc
+    """``model``'s ``ConcResults`` (GWT concentration), kept as ``model._conc``.
+
+    As :func:`get_hds`, for the file ``CONCENTRATION FILEOUT`` declares.
+    """
+
+    return _current_reader(model, ConcResults, "_conc", unit)
 
 
 def get_temp(model, unit: str | None = None):
-    """Build and cache the ``TempResults`` (GWE temperature) helper for ``model``."""
-    model._temp = TempResults(model=model, vor=model.vor, unit=unit)
-    return model._temp
+    """``model``'s ``TempResults`` (GWE temperature), kept as ``model._temp``.
+
+    As :func:`get_hds`, for the file ``TEMPERATURE FILEOUT`` declares.
+    """
+
+    return _current_reader(model, TempResults, "_temp", unit)
 
 
 def get_all_heads(model):
-    """Return the full heads table from the cached ``HeadsPlus`` helper."""
+    """Return the full heads table from the model's ``HeadsPlus`` (:func:`get_hds`)."""
     return get_hds(model).all_heads
 
 
@@ -156,7 +191,11 @@ def field_reader(model):
 
 
 def get_kstpkper(model):
-    """Return and cache available ``(kstp, kper)`` combinations."""
-    if model._kstpkper is None:
-        model._kstpkper = field_reader(model).kstpkper
-    return model._kstpkper
+    """Every saved ``(kstp, kper)`` of the model's own field file, zero-based.
+
+    Read through :func:`field_reader` on every call, so it follows the file: it was
+    cached on the model as ``_kstpkper`` and never invalidated (ledger 301), so a clock
+    read while MF6 was still writing stayed short for the object's life (ledger 598).
+    """
+
+    return field_reader(model).get_kstpkper()

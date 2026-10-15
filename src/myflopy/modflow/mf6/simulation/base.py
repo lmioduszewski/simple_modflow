@@ -300,7 +300,6 @@ class SimulationBase:
         self._inactive_cells = None
         self._node_to_lni = None
         self._lni_to_node = None
-        self._kstpkper = None
         self._idomain = idomain
         self._grid_type_override = grid_type_override
         self.regions = RegionRegistry(self)
@@ -853,21 +852,31 @@ class SimulationBase:
 
     @property
     def hds(self):
-        """FloPy heads reader for the current model outputs (GWF models)."""
+        """The heads reader (GWF models): the file the OC declares (``HEAD FILEOUT``).
+
+        One reader is kept while that file is unchanged and replaced when a re-run
+        rewrites it (ledger 598; ``accessors._current_reader``).
+        """
 
         self._require_model_kind("gwf6", "hds", "heads")
         return get_hds(self)
 
     @property
     def conc(self):
-        """FloPy concentration reader for the current model outputs (GWT models)."""
+        """The concentration reader (GWT models): the file ``CONCENTRATION FILEOUT`` declares.
+
+        Kept while that file is unchanged, as :attr:`hds` (ledger 598).
+        """
 
         self._require_model_kind("gwt6", "conc", "concentration")
         return get_conc(self)
 
     @property
     def temp(self):
-        """FloPy temperature reader for the current model outputs (GWE models)."""
+        """The temperature reader (GWE models): the file ``TEMPERATURE FILEOUT`` declares.
+
+        Kept while that file is unchanged, as :attr:`hds` (ledger 598).
+        """
 
         self._require_model_kind("gwe6", "temp", "temperature")
         return get_temp(self)
@@ -1352,7 +1361,12 @@ class SimulationBase:
 
     @property
     def kstpkper(self):
-        """Available ``(kstp, kper)`` output indices for this run."""
+        """Every ``(kstp, kper)`` the model's own field file saved, zero-based, in file order.
+
+        The head file's clock on a GWF model (the concentration/temperature file's on
+        GWT/GWE), read through that reader on every access, so it follows a re-run
+        (ledger 598). Another output file keeps its own clock (ledger 301).
+        """
 
         return get_kstpkper(self)
 

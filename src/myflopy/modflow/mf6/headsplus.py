@@ -5,9 +5,9 @@ MODFLOW 6 writes heads (GWF), concentration (GWT), and temperature (GWE) as the
 its ``text=`` tag. So the file-agnostic machinery (tidy frames, the ``(kstpkper,
 layer, cell)`` table, the unified grammar verbs, choropleth maps) lives once in
 :class:`DependentVariableFile`; :class:`HeadsPlus`, :class:`ConcResults`, and
-:class:`TempResults` are thin subclasses that set the file suffix / ``text`` tag /
-value label and (for heads) add the head-only extras (observations, mounding,
-legacy choropleth helpers).
+:class:`TempResults` are thin subclasses that set the ``text`` tag (also the output
+control's word their file is found by) / value label and (for heads) add the
+head-only extras (observations, mounding, legacy choropleth helpers).
 """
 
 from __future__ import annotations
@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
 
+import os
+import weakref
+from functools import cached_property
 from pathlib import Path
 
 import flopy.utils.binaryfile as bf
@@ -37,6 +40,7 @@ from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
 from myflopy.modflow.mf6.hydraulics import unit_labels
+from myflopy.modflow.mf6.output_files import _declared_field_output
 from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.package_plotting import (
     LAYER_FIELD_MAP_PARAMS,
@@ -108,6 +112,17 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
         "Could not reshape values to layer/cell form. "
         f"Got shape={values.shape}, expected nlay={nlay}, ncpl={ncpl}."
     )
+
+
+def _file_stamp(stat) -> tuple[int, int, int, int]:
+    """What says a file is still the one a reader indexed: device, inode, size, mtime (ns).
+
+    ``stat`` is an ``os.stat_result``. The inode alone cannot tell: MF6 re-running into
+    the same directory rewrites its output IN PLACE -- measured, the same inode with a
+    new size and mtime (ledger 598).
+    """
+
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
 def _exact_kstpkper(kstpkper, saved) -> tuple[int, int]:
@@ -322,15 +337,23 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
     ``.mosaic()/.animate()`` (composers). ``LineProfileView`` is first in the MRO
     deliberately so the grammar's ``plot`` shadows flopy's legacy
     ``LayerFile.plot``. Subclasses set the class attributes below.
+
+    ``kstpkper`` is ZERO-based here, where FloPy keeps it one-based: every saved
+    ``(kstp, kper)`` in file order, the list :meth:`get_kstpkper` returns. ``nper`` is
+    the number of stress periods the file reaches (its last saved period plus one) and
+    ``numstp`` the largest saved time-step index plus one (ledger 598). The file stays
+    open for the reader's life and closes when the reader is collected; a reader whose
+    file is rewritten under it -- a re-run into the same directory -- refuses to read
+    rather than label the new numbers with its old index (ledger 598).
     """
 
     #: public value label + tidy-frame column used by the unified grammar
     value_name = "value"
     #: internal column name in the ``(kstpkper, layer, cell)`` table
     store_column = "value"
-    #: output-file suffix appended to ``<model name>`` when no path is given
-    _output_suffix = ".bin"
-    #: FloPy ``HeadFile`` binary ``text=`` selector for this field
+    #: FloPy ``HeadFile`` binary ``text=`` selector for this field -- also the output
+    #: control's word for it (``HEAD``/``CONCENTRATION``/``TEMPERATURE FILEOUT``), so
+    #: the kind ``output_files`` resolves the file by
     _binary_text = "head"
     #: label used by :meth:`summary`
     _summary_label = "value"
@@ -350,8 +373,8 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         """Parameters
         ----------
         path
-            Path to a binary MF6 output file. If omitted, ``model`` is used with
-            this class's ``_output_suffix``.
+            Path to a binary MF6 output file. If omitted, ``model`` is used: the file
+            its output control declares (:meth:`_declared_path`).
         model
             Optional parent model used to infer file paths and geometry helpers.
         vor
@@ -362,11 +385,24 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             if model is None:
                 raise ValueError("Must provide an output file or model")
             assert isinstance(model, SimulationBase), 'no valid model provided'
-            self.output_path = model.model_output_folder_path / f'{model.name}{self._output_suffix}'
+            self.output_path = self._declared_path(model)
         else:
             self.output_path = path
 
-        super().__init__(filename=self.output_path, text=self._binary_text)
+        indexed = False
+        try:
+            super().__init__(filename=self.output_path, text=self._binary_text)
+            indexed = True
+        finally:
+            # FloPy opens the file before it indexes it; a file it cannot index (one cut
+            # mid-write, inside a record header) would otherwise leave the handle open.
+            if not indexed and getattr(self, "file", None) is not None:
+                self.file.close()
+        # Every reader closes its file when it is collected: model.hds built one per
+        # access and closed none, a ResourceWarning each (ledger 598). The callback
+        # holds the file, not the reader.
+        weakref.finalize(self, self.file.close)
+        self._stamp = _file_stamp(os.fstat(self.file.fileno()))
 
         if model is None:
             self.model = None
@@ -375,16 +411,151 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         else:
             raise ValueError("model must be an instance of SimulationBase")
 
-        self.kstpkper = convert_nested_to_int(self.get_kstpkper())
+        # FloPy's ONE-based list, read once through FloPy's own get_kstpkper while it is
+        # still FloPy's; from here on the attribute is zero-based and get_kstpkper
+        # returns it as is (ledger 598).
+        self.kstpkper = convert_nested_to_int(bf.HeadFile.get_kstpkper(self))
         self.vor = self.model.vor if vor is None else vor
         self._value_table = None
-        self.nper = pd.DataFrame(self.get_kstpkper()).iloc[:, 1].max() + 1
-        self.numstp = pd.DataFrame(self.get_kstpkper()).iloc[:, 0].max() + 1
-        self.vor_list = self.vor.gdf_vorPolys.geometry.to_list()
-        self.cell_list = [i for i in range(len(self.vor_list))]
-        self.area_list = [cell.area for cell in self.vor_list]
-        self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
-        self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
+        self.nper = max(kper for _kstp, kper in self.kstpkper) + 1
+        self.numstp = max(kstp for kstp, _kper in self.kstpkper) + 1
+
+    @classmethod
+    def _declared_path(cls, model) -> Path:
+        """The file ``model``'s output control declares for this field.
+
+        ``HEAD``/``CONCENTRATION``/``TEMPERATURE FILEOUT``, read from the run's name and
+        OC files by the rule the targets use
+        (:func:`~myflopy.modflow.mf6.output_files._declared_field_output`, ledger 576):
+        ``<model>.hds``/``.ucn`` when the OC cannot be read, and REFUSED when a readable
+        OC declares none -- MF6 saved nothing, so a file of that name is another run's.
+        It opened ``<model>.<suffix>`` whatever the OC said, so a run declaring
+        ``HEAD FILEOUT other.hds`` raised ``FileNotFoundError`` (ledger 598).
+        """
+
+        return _declared_field_output(
+            Path(model.model_output_folder_path), model.name, cls._binary_text,
+            caller=f"model.{cls._choro_type}",
+        )
+
+    def _is_current(self, path, *, vor) -> bool:
+        """Whether this reader still reads ``path`` as indexed, on grid ``vor``.
+
+        What ``model.hds``/``.conc``/``.temp`` ask before handing a cached reader back
+        (ledger 598): the file the OC declares NOW, unchanged since this reader indexed
+        it -- :func:`_file_stamp` names the file by device and inode, so a reader of
+        another file never matches -- still open, on the model's current grid.
+        """
+
+        if self.vor is not vor or self.file.closed:
+            return False
+        try:
+            return _file_stamp(os.stat(path)) == self._stamp
+        except OSError:
+            return False
+
+    def _refuse_a_rewritten_file(self) -> None:
+        """Raise ``RuntimeError`` when the file changed after this reader indexed it.
+
+        The index -- each record's header and byte position -- is read once, when the
+        reader is built, and the file stays open. A re-run into the same directory
+        rewrites the file IN PLACE, so the handle read the NEW bytes through the OLD
+        positions: measured, a reader of a two-period run returned the re-run's heads
+        under its old labels and never saw the third period (ledger 598). The accessors
+        hand out a fresh reader when the file changes; this is for one held across it.
+        """
+
+        if self.file.closed:
+            return  # FloPy's own read raises on a closed file
+        if _file_stamp(os.fstat(self.file.fileno())) != self._stamp:
+            raise RuntimeError(
+                f"{Path(self.output_path).name} changed after this reader indexed it -- a "
+                "re-run into the same directory rewrites it in place -- so its "
+                f"{len(self.kstpkper)} indexed time(s) no longer describe the file, and "
+                "reading through them would label the new numbers with the old times. Read "
+                f"{self._noun_path()} again, or open a new reader on the file (ledger 598)."
+            )
+
+    def _get_data_array(self, totim=0):
+        """FloPy's read of one saved time, refused once the file has been rewritten."""
+
+        self._refuse_a_rewritten_file()
+        return super()._get_data_array(totim)
+
+    def get_ts(self, idx):
+        """FloPy's per-cell time series, refused once the file has been rewritten.
+
+        Parameters
+        ----------
+        idx : tuple of int, int, or list of such
+            Zero-based cells, as FloPy's ``HeadFile.get_ts`` takes them: ``(layer,
+            cell)`` on a DISV, ``(layer, row, column)`` on a DIS, a node on a DISU.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(ntimes, ncells + 1)``, the first column ``totim``.
+
+        Raises
+        ------
+        RuntimeError
+            The file changed after this reader indexed it (ledger 598).
+        """
+
+        self._refuse_a_rewritten_file()
+        return super().get_ts(idx)
+
+    def get_kstpkper(self) -> list[tuple[int, int]]:
+        """Every saved ``(kstp, kper)``, zero-based and in file order: :attr:`kstpkper`.
+
+        FloPy's ``get_kstpkper`` subtracts one from its ONE-based ``kstpkper``; this
+        class keeps that attribute ZERO-based, so FloPy's subtraction ran a second time
+        and every call named the record before the one meant -- ``(-1, -1)`` for a
+        one-period file's only record, and on six periods at ``nstp=2`` ``[-1]`` read
+        ``(0, 4)`` for ``(1, 5)``, which ``get_data`` then read without error. ``nper``
+        and ``numstp``, computed from it, were one short (ledger 598).
+
+        Returns
+        -------
+        list of tuple of (int, int)
+            One ``(kstp, kper)`` per saved time.
+        """
+
+        return [tuple(key) for key in self.kstpkper]
+
+    # Per-cell geometry, built on first use: built in __init__, the five lists WERE a
+    # reader's cost -- 0.76-0.82 s on a 20,323-cell Ten Trails grid against FloPy's
+    # 8-14 ms index, paid on every model.hds -- and nothing in myflopy reads them
+    # (ledger 598; docs/reproducers/field_reader_per_model.py).
+    @cached_property
+    def vor_list(self) -> list:
+        """Each cell's polygon, in cell order (``vor.gdf_vorPolys``)."""
+
+        return self.vor.gdf_vorPolys.geometry.to_list()
+
+    @cached_property
+    def cell_list(self) -> list[int]:
+        """The zero-based cell numbers, ``0 .. ncpl - 1``."""
+
+        return list(range(len(self.vor_list)))
+
+    @cached_property
+    def area_list(self) -> list[float]:
+        """Each cell polygon's area, in the grid's length units squared."""
+
+        return [cell.area for cell in self.vor_list]
+
+    @cached_property
+    def x_list(self) -> list[float]:
+        """Each cell polygon's centroid x."""
+
+        return [cell.centroid.xy[0][0] for cell in self.vor_list]
+
+    @cached_property
+    def y_list(self) -> list[float]:
+        """Each cell polygon's centroid y."""
+
+        return [cell.centroid.xy[1][0] for cell in self.vor_list]
 
     @property
     def crs(self):
@@ -732,9 +903,7 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             A ``(ncpl,)`` float array, one value per Voronoi cell.
         """
 
-        # Use the normalized kstpkper list the class trusts (the value table reads
-        # with these); flopy's raw get_kstpkper() is offset for some files.
-        keys = [tuple(int(v) for v in key) for key in self.kstpkper]
+        keys = self.get_kstpkper()
         if kstpkper is not None:
             key = tuple(int(v) for v in kstpkper)
             if key not in keys:
@@ -1439,7 +1608,6 @@ class HeadsPlus(DependentVariableFile):
 
     value_name = "head"
     store_column = "elev"
-    _output_suffix = ".hds"
     _binary_text = "head"
     _summary_label = "hds"
     _choro_type = "hds"
@@ -1633,7 +1801,6 @@ class ConcResults(DependentVariableFile):
 
     value_name = "conc"
     store_column = "conc"
-    _output_suffix = ".ucn"
     _binary_text = "concentration"
     _summary_label = "conc"
     _choro_type = "conc"
@@ -1664,7 +1831,6 @@ class TempResults(DependentVariableFile):
 
     value_name = "temp"
     store_column = "temp"
-    _output_suffix = ".ucn"
     _binary_text = "temperature"
     _summary_label = "temp"
     _choro_type = "temp"

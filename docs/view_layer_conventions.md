@@ -631,7 +631,11 @@ temperature) all share `get/summary/array/map/section/mosaic/animate`, plus `rem
 array, so it is not one of the picture verbs), built from one
 `DependentVariableFile` base (`headsplus.py`) — add a new dependent variable by
 subclassing it and setting `value_name`/`store_column`/`_binary_text`/`_choro_type`,
-not by cloning the reader. The choropleth reads whichever field the map's `type`
+not by cloning the reader. `_binary_text` is also the OUTPUT CONTROL's word for the
+field: each reader opens the file its model's OC declares (`HEAD`/`CONCENTRATION`/
+`TEMPERATURE FILEOUT`, through `output_files._declared_field_output` -- the targets'
+rule, refusing a readable OC that declares none), and the model keeps ONE reader while
+that file is unchanged, a new one after a re-run rewrites it (ledger 598). The choropleth reads whichever field the map's `type`
 selects (`_DEPVAR_READER_ATTR` in `choros.py`), so the per-layer hover table and
 value labels stay field-generic.
 

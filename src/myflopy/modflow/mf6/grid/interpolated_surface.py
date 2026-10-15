@@ -436,14 +436,15 @@ class InterpolatedSurface(Picture):
         file its OC names). It opened ``<model name>.hds`` whatever the kind, so
         the interpolated profile of a GWT model raised ``FileNotFoundError`` --
         the model writes ``<name>.ucn`` (ledger 436). A duck-typed model with no
-        ``_field_reader`` keeps the ``<name>.hds`` path.
+        ``_field_reader`` reads the head file its OC declares, by the same rule
+        (ledger 598).
         """
 
         if self._hds is None:
             if self.model:
                 reader = getattr(self.model, "_field_reader", None)
                 self._hds = reader if reader is not None else Hp(
-                    hds_path=self.model.model_output_folder_path / f'{self.model.name}.hds',
+                    hds_path=Hp._declared_path(self.model),
                     vor=self.vor
                 )
             else:

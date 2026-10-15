@@ -721,6 +721,10 @@
       "layer:KEYWORD_ONLY=None",
       "cells:KEYWORD_ONLY=None"
     ],
+    "DependentVariableFile.get_kstpkper": [],
+    "DependentVariableFile.get_ts": [
+      "idx:POSITIONAL_OR_KEYWORD=<required>"
+    ],
     "DependentVariableFile.long": [
       "values:KEYWORD_ONLY=None"
     ],

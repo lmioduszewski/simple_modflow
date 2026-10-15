@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 597 entries (602 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 598 entries (603 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 598 | `model.hds`/`.conc`/`.temp` read the file the OC declares, are ONE reader per model while that file is unch... | 2026-10-15 |
 | 597 | A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARE... | 2026-10-15 |
 | 596 | A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed... | 2026-10-15 |
 | 595 | A SOLVED field is carried to another grid by `model.hds.remap(grid)`; linear between cell centres is the de... | 2026-10-15 |
@@ -13001,7 +13002,9 @@ same day, which is the useful part of the result.
       * **`locs.filter_cells_by_pkg` reads the head clock to index a budget-indexed
         frame, AND falls off the end returning `None` unconditionally.** No callers
         anywhere, so nothing is broken today; it is deleted-or-fixed work, not this.
-      * **`_kstpkper` is still never invalidated.** Nothing resets it -- not
+      * ~~**`_kstpkper` is still never invalidated.**~~ **RESOLVED by ledger 598**: the
+        slot is gone and `model.kstpkper` reads through a reader replaced when its file
+        changes. Nothing reset it -- not
         `run_simulation`, not `Run.execute` (`Run.open` clears `_model_views`, `execute`
         does not) -- while `get_hds` rebuilds its reader on EVERY access, so the heads
         refresh and their clock does not. That is how the reporting user's object got a
@@ -22233,9 +22236,10 @@ same day, which is the useful part of the result.
       one); switching `with_grid(remap=True)`'s `ic.strt` to linear (one rule for moving
       heads, its own change). The array is EAGER: `project.save()` skips a simulation
       holding it (ledger 193), and a built `grid=` too, until `mf.Heads` lands. Found and
-      not fixed here: the reader's `nper`/`numstp` are one short, `get_kstpkper()` is
+      not fixed here: ~~the reader's `nper`/`numstp` are one short, `get_kstpkper()` is
       offset by one after `__init__` overwrites `self.kstpkper`, and the reader opens
-      `<model>.hds` rather than the file output control names; `GridSpec.resolve()` with no
+      `<model>.hds` rather than the file output control names~~ (**RESOLVED by ledger
+      598**); `GridSpec.resolve()` with no
       workspace meshes into the cwd; and `with_grid` on a model declared `grid=<built
       grid>` reads a per-cell array `unchanged` where `context=ModelContext(grid=...)` reads
       it `unverifiable` (ledger 295's detection keys on the context's grid -- `with_grid`
@@ -22305,8 +22309,9 @@ same day, which is the useful part of the result.
       for the build's convergence check (`_run_directory` looks two levels). The old run
       edited between the declaration and a build is read as it then is with nothing said,
       and `drift()` -- which compares against what a BUILT run read -- says `ok`; edited
-      after a build, `edited`. Found and not fixed: `model.hds` builds a new reader on every
-      access and never closes it (a `ResourceWarning` per access).
+      after a build, `edited`. Found and not fixed: ~~`model.hds` builds a new reader on every
+      access and never closes it (a `ResourceWarning` per access)~~ (**RESOLVED by ledger
+      598**).
 
 597. **A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARED on -- a deferred one resolved at the call (2026-10-15).**
       The seventh instance of "`unchanged` is the dangerous verdict". `ModelSpec.with_grid`
@@ -22395,3 +22400,51 @@ same day, which is the useful part of the result.
         `fix/with-grid-array-and-resolve-cwd`, not on `myflopy` at this writing) reads
         `grid=` first through `_mesh_in_hand` and also numbers itself 596. Whichever lands
         second merges onto the other's rule and renumbers.
+
+598. **`model.hds`/`.conc`/`.temp` read the file the OC declares, are ONE reader per model while that file is unchanged, and name their records zero-based on every call (2026-10-15).**
+      Four defects of `DependentVariableFile` that ledger 595's review found and left.
+      - `get_kstpkper()` returns `self.kstpkper` as is. The reader keeps that attribute
+        ZERO-based (`array`, `to_xugrid`, `model.kstpkper` read it); FloPy keeps it one-based
+        and its `get_kstpkper` subtracts one, so every call named the record BEFORE the one
+        meant -- `(-1, -1)` for a one-period file, and on six periods at `nstp=2` `[-1]` read
+        `(0, 4)` for `(1, 5)`, which `get_data` read without error -- and `nper`/`numstp`
+        were one short (Ten Trails: 37 for 38). Overriding the method was chosen over
+        keeping FloPy's attribute one-based: the zero-based attribute is what callers read.
+      - The file is `output_files._declared_field_output`'s, the targets' rule (ledger 576).
+        A readable OC declaring none is REFUSED, the user's call, rather than falling back
+        to `<model>.hds`: MF6 saved nothing, so a file of that name is another run's.
+        `temperature` is a kind there now (`.ucn` default, `temperature_filerecord`); it
+        raised `KeyError`. `_output_suffix` is gone -- `_binary_text` IS the OC's word -- and
+        `InterpolatedSurface`'s fallback for a duck-typed model reads the same rule.
+      - Kept per model, the user's call over "close only": every access re-resolves the
+        OC's file and hands the kept reader back only when `(st_dev, st_ino, st_size,
+        st_mtime_ns)` is what it indexed, it is still open, the model's grid object is the
+        one it was built on and (conc/temp) the unit matches. Measured
+        (`docs/reproducers/field_reader_per_model.py`): a re-run into a
+        reused directory (`prepare_run(overwrite=True)`) rewrites the file IN PLACE -- the
+        same inode, a new size and mtime -- so an inode alone could not tell. One
+        `model.hds.map()` built five readers; it builds none after the first access.
+        `model.kstpkper` reads through the reader on every call (ledger 301's `_kstpkper`
+        slot is gone). A replaced reader is NOT closed: a caller may still hold it.
+      - A reader held across a rewrite RAISES `RuntimeError`, the user's call:
+        `_get_data_array` and `get_ts` `fstat` the open handle against the stamp. Measured
+        before: a held two-record reader returned the re-run's heads under its old labels
+        and never saw the third period. A reader whose file was NOT rewritten keeps reading.
+      - Every reader closes its file when collected (`weakref.finalize` on the FILE --
+        `HeadsPlus.hds = self` makes the reader a cycle), and when FloPy fails to index a
+        file it has opened (one cut mid-write).
+      - The five per-cell lists (`vor_list`, `cell_list`, `area_list`, `x_list`, `y_list`)
+        are `cached_property`s: they WERE a reader's construction cost -- 0.76-0.82 s built
+        cell by cell on a 20,323-cell Ten Trails run, against 8-14 ms for FloPy's index of
+        the file -- and nothing in myflopy reads them. Measured by the reproducer's part 2
+        at load averages of ~12 and ~17-18: each later `model.hds` 0.35-1.02 s before,
+        0.1-0.3 ms after; `model.hds.map()` 2.73-4.77 s before, 0.35-2.13 s after.
+      **Not done.** The 2.3-2.9 s per access ledger 595's review reported was not reproduced
+      (0.35-1.02 s here, under load) and is not carried. A kept reader's value table lives as long as the
+      model (the last reader's did before, in `model._hds`). An EMPTY head file still leaks a
+      handle inside FloPy's `get_headfile_precision`, before the reader opens anything.
+      `_resolved_fileout` names the MODEL directory for a declared file that does not
+      exist yet, where MF6 writes `FILEOUT` relative to the simulation's -- only the path a
+      `FileNotFoundError` names. A loaded run's budget reader (`_bud`) has the same shape:
+      kept on the model, never invalidated nor closed -- not touched here. Legacy
+      `mp3du/legacy_prt.py` still names `<model>.hds` (a frozen tier).

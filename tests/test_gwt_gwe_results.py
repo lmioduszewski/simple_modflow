@@ -19,11 +19,12 @@ from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.specs import ModelContext
 
 
-def _coupled_run(tmp_path, kind: str, *, porosity: float = 0.2):
+def _coupled_run(tmp_path, kind: str, *, porosity: float = 0.2, field_file: str = "trans.ucn"):
     """Build + run a small coupled GWF+(GWT|GWE) model; return the built ``Run``.
 
     ``porosity`` is a knob so callers can build two models that differ in one
     physical parameter -- what a grouped comparison needs to be meaningful.
+    ``field_file`` is the concentration/temperature file the transport OC declares.
     """
 
     vor = irregular_voronoi_grid(nrow=8, ncol=8, cell_size=100.0)
@@ -52,7 +53,7 @@ def _coupled_run(tmp_path, kind: str, *, porosity: float = 0.2):
         transport = mf.gwt("trans", context=ctx, packages=[
             disv(), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"), mf.mst(porosity=porosity),
             mf.ssm(sources=[["chd", "AUX", "concentration"]]),
-            mf.oc(concentration_filerecord="trans.ucn", budget_filerecord="trans.cbc",
+            mf.oc(concentration_filerecord=field_file, budget_filerecord="trans.cbc",
                   saverecord=[("CONCENTRATION", "ALL"), ("BUDGET", "ALL")]),
         ])
         exchange = mf.ExchangeSpec("gwfgwt", mf.build_gwf_gwt_exchange, models=("flow", "trans"))
@@ -63,7 +64,7 @@ def _coupled_run(tmp_path, kind: str, *, porosity: float = 0.2):
                    heat_capacity_water=4184.0, density_water=1000.0),
             mf.cnd(ktw=0.6, kts=0.5, alh=1.0, ath1=0.1),
             mf.ssm(sources=[["chd", "AUX", "temperature"]]),
-            mf.oc(temperature_filerecord="trans.ucn", budget_filerecord="trans.cbc",
+            mf.oc(temperature_filerecord=field_file, budget_filerecord="trans.cbc",
                   saverecord=[("TEMPERATURE", "ALL"), ("BUDGET", "ALL")]),
         ])
         exchange = mf.ExchangeSpec("gwfgwe", mf.build_gwf_gwe_exchange, models=("flow", "trans"))

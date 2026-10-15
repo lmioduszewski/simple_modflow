@@ -461,7 +461,6 @@ class LoadedMf6Run(SimulationBase):
         self._inactive_cells = None
         self._node_to_lni = None
         self._lni_to_node = None
-        self._kstpkper = None
         self._budget_kstpkper = None
         self._idomain = None
         self._grid_type_override = grid_type if grid_type != "unknown" else None

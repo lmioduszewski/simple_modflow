@@ -63,7 +63,10 @@ no length check can see. Both were live: the first crashed
 step, silently. `SFRStageOutput.get` is the reference pattern. **The budget
 FILENAME comes from the OC record too** -- `<name>.cbc` is a default, not a
 rule, and assuming it left every cell-budget surface raising `FileNotFoundError`
-on a real model whose OC said `BUDGET FILEOUT tentrails.cbb`. **A reader whose
+on a real model whose OC said `BUDGET FILEOUT tentrails.cbb`. So does the HEAD /
+CONCENTRATION / TEMPERATURE file `model.hds`/`.conc`/`.temp` open (ledger 598:
+`output_files._declared_field_output`, the targets' rule, refusing a readable OC that
+declares none). **A reader whose
 records do not line up must RAISE** -- the removed fallback warned once (Python
 dedupes by line, and IPython never resets `__warningregistry__`) and returned a
 raw list from a method documenting a DataFrame, and the `isinstance` guard that
@@ -77,8 +80,14 @@ record from the stage file's own headers (`model.outputs.lak.stage.kstpkper()`) 
 target keyed by period read steps 1-3 of period 0 and PEST got nine rows for three
 periods -- and a record count that disagrees with the headers RAISES. `group/sfr.py`
 decoded a reach-by-time frame as time-by-reach (`per` held the reach); both group
-stage tables are rebuilt on the single-model tables. STILL OPEN: `_kstpkper` is never
-invalidated.
+stage tables are rebuilt on the single-model tables. **`model.hds` is ONE reader per
+model while its file is unchanged** (ledger 598, the user's call): every access re-resolves
+the OC's file and stats it (device, inode, size, mtime -- MF6 re-running into a reused
+directory rewrites the file IN PLACE, measured), so a re-run gets a new reader and
+`model.kstpkper` reads through it (the `_kstpkper` cache that was never invalidated is
+gone). A reader HELD across a rewrite RAISES rather than read the new bytes through its
+old index. `get_kstpkper()` on these readers is zero-based like `.kstpkper` -- it named
+the record BEFORE the one meant, and `nper`/`numstp` were one short.
 The rule is `model.<pkg>.<inputs|results>.<noun>.<verb>()` (ledger 339: `model.drn` is
 myflopy's view, **FloPy's package object is `model.fl.drn`**, and `model.packages` keeps
 only the all-packages `summary()`/`mosaic()`; group and diff still read

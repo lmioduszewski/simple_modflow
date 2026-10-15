@@ -28,8 +28,9 @@ def _model_dir(workspace: Path, model_name: str) -> Path:
 
 #: What the model writes when its OC names no file for a kind: ``<model>.<suffix>``.
 #: ``concentration`` is a GWT model's OC (``CONCENTRATION FILEOUT``), read by the PEST
-#: build's concentration writer (ledger 505).
-_OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds", "concentration": "ucn"}
+#: build's concentration writer (ledger 505); ``temperature`` a GWE model's
+#: (``TEMPERATURE FILEOUT``), read by ``model.temp`` (ledger 598).
+_OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds", "concentration": "ucn", "temperature": "ucn"}
 
 
 def _model_name_file(workspace: Path, model_name: str) -> Path:
@@ -116,11 +117,12 @@ def _oc_declaration(workspace: Path, model_name: str, kind: str) -> tuple[Path |
 
 
 def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
-    """The ``BUDGET``/``HEAD``/``CONCENTRATION`` output path the model's OC file actually declares.
+    """The ``BUDGET``/``HEAD``/``CONCENTRATION``/``TEMPERATURE`` output path the model's OC declares.
 
     Falls back to ``<model_name>.cbc`` / ``.hds`` / ``.ucn`` when the OC file cannot
-    be read or names no such record. A TARGET reads its head or concentration
-    through :func:`_declared_field_output` instead, which refuses the second case.
+    be read or names no such record. A TARGET, and ``model.hds``/``.conc``/``.temp``
+    (ledger 598), read their field through :func:`_declared_field_output` instead,
+    which refuses the second case.
 
     A caller that ASSUMES the fallback is wrong whenever the modeller named the
     file themselves: an OC saying ``BUDGET FILEOUT tentrails.cbb`` left every
@@ -155,14 +157,20 @@ def _resolved_fileout(workspace: Path, model_name: str, declared: str) -> Path:
 
 
 #: The ``mf.oc`` keyword that declares each field file, named by the refusal below.
-_FILERECORD_KEYWORDS = {"head": "head_filerecord", "concentration": "concentration_filerecord"}
+_FILERECORD_KEYWORDS = {
+    "head": "head_filerecord",
+    "concentration": "concentration_filerecord",
+    "temperature": "temperature_filerecord",
+}
 
 
 def _declared_field_output(workspace: Path, model_name: str, kind: str, *, caller: str) -> Path:
-    """The head or concentration file a TARGET reads: the one the OC declares, and no other.
+    """The head, concentration or temperature file the OC declares, and no other.
 
-    As :func:`_declared_output_path`, except that a READABLE OC declaring no
-    ``HEAD FILEOUT`` (``CONCENTRATION FILEOUT``) is REFUSED (ledger
+    What a TARGET reads, and the file ``model.hds``/``.conc``/``.temp`` open (ledger
+    598; they opened ``<model>.<suffix>`` whatever the OC said). As
+    :func:`_declared_output_path`, except that a READABLE OC declaring no
+    ``HEAD FILEOUT`` (``CONCENTRATION``/``TEMPERATURE FILEOUT``) is REFUSED (ledger
     576): MF6 refuses ``SAVE HEAD`` without one, so such a run saved no
     head at all, and the ``<model>.hds`` the fallback opened was another run's,
     left in a reused directory -- read in silence by ``compare()`` and by the
@@ -176,8 +184,9 @@ def _declared_field_output(workspace: Path, model_name: str, kind: str, *, calle
     workspace : pathlib.Path
         The run directory.
     model_name : str
-        The flow (``"head"``) or transport (``"concentration"``) model's name.
-    kind : {"head", "concentration"}
+        The flow (``"head"``), transport (``"concentration"``) or energy
+        (``"temperature"``) model's name.
+    kind : {"head", "concentration", "temperature"}
         Which file.
     caller : str
         What is reading it, named in the refusal.
