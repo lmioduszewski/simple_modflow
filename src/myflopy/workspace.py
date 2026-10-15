@@ -54,6 +54,7 @@ from myflopy.specs import (
     _grid_entry,
     _json_value,
     _package_entry_label,
+    _ref_resolved,
     dropped_context_fields,
     executable_name,
     package_digest,
@@ -1976,6 +1977,10 @@ class Run:
                 package = entry
                 if isinstance(entry, PackageRef):
                     package = library.get(entry.key) or resolved.get(entry.key) or entry
+                    if isinstance(package, PackageSpec):
+                        # With the stamp a `with_grid` put on the REF, as the build reads
+                        # it -- the library copy itself is never stamped.
+                        package = _ref_resolved(entry, package)
                 pairs.append((entry, package))
             # Classified as a SET, not one at a time: a mover's verdict depends on its
             # siblings' (ledger 303), and this table must agree with the pre-build

@@ -51,11 +51,22 @@ refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
     .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")  # swap a package
-    .with_grid(mf.grid_ref("refined"), on="flow")                # swap the grid
+    .with_grid(mf.grid_ref("refined"), on="flow", library=project)  # swap the grid
 )
 project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
 ```
+
+**A move needs the library its refs name: `library=project`.** `with_grid` and
+`move_report` classify each `mf.ref` as the library package it NAMES, and measure each
+package against the mesh the model was declared on -- for `grid=mf.grid_ref(key)` that
+is the library's mesh. Without `library=` a moved model holding either raises naming it;
+a ref is no longer read as itself, which said `unchanged` for every one and let a library
+`mf.ic(strt=<array>)` build on the old mesh's values (ledger 597). An unverifiable ref is
+stamped on the REF (the library package is shared and is never changed) and the build
+refuses it; a move that must CHANGE what a ref names -- `remap=True` carrying its array, an
+eager `.gpkg` re-declared -- puts the changed copy inline in place of the ref, and its
+`move_report` row says so.
 
 **Swapping the grid re-maps only what was declared LAZILY.** A GIS-driven helper given
 a `context=` (`mf.drn.gpkg(path, context=ctx, …)`, `mf.rch(context=ctx, …)`,
@@ -71,7 +82,8 @@ raises naming what is stale. It used to build and run — MF6 applied the old ce
 numbers to the new geometry and reported Normal termination. **Read
 `sim.move_report()` before `prepare_run`**: a package declared lazily reads `rebuilt`
 and moves itself, while one declared with `context=` reads `stale` and must be
-re-declared against the new grid.
+re-declared against the new grid. Pass the project when the model names packages or its
+grid from the libraries: `sim.move_report(library=project)`.
 
 **Starting the moved model from what the old one solved** is
 `mf.ic(strt=mf.Heads(old_run))`: the old run's heads at the end of its last stress period
@@ -121,7 +133,8 @@ project.add_grid("refined", vor)                                # register when 
 
 To **refine an area**, build a second grid with the refinement, look at it, and
 register it under a new key — then swap to it with
-`sim.with_grid(mf.grid_ref(key), on=model)`, and read `sim.move_report()` first.
+`sim.with_grid(mf.grid_ref(key), on=model, library=project)`, and read
+`sim.move_report(library=project)` first.
 
 ### Grid definition tiers
 

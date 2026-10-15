@@ -68,7 +68,11 @@ def test_project_grid_library_resolves_and_swaps(tmp_path):
 
     baseline = _sim_with_grid("baseline", mf.grid_ref("a"))
     project.add_simulation(baseline)
-    swapped = baseline.derive("swapped").with_grid(mf.grid_ref("b"), on="gwf")
+    # `library=`: the model's OWN grid is a `grid_ref`, and the move measures its
+    # packages against the mesh that names.
+    swapped = baseline.derive("swapped").with_grid(
+        mf.grid_ref("b"), on="gwf", library=project
+    )
     project.add_simulation(swapped)
 
     run_a = project.prepare_run("a_run", "baseline")
@@ -93,10 +97,9 @@ def test_replace_grid_still_works_and_warns(tmp_path):
     fails the suite rather than quietly carrying on (ledger 271).
     """
 
-    project = mf.Project(tmp_path / "demo", name="demo")
-    project.add_grid("a", mf.GridSpec.from_object(SimpleNamespace(tag="A")))
-    project.add_grid("b", mf.GridSpec.from_object(SimpleNamespace(tag="B")))
-    baseline = _sim_with_grid("baseline", mf.grid_ref("a"))
+    # On a built grid, not a `grid_ref`: the alias forwards to `with_grid(grid, on=)`
+    # and takes no `library=`, and a `grid_ref` model now needs one to be moved.
+    baseline = _sim_with_grid("baseline", SimpleNamespace(tag="A"))
 
     with pytest.warns(DeprecationWarning, match=r"replace_grid is deprecated"):
         swapped = baseline.derive("swapped").replace_grid("gwf", mf.grid_ref("b"))

@@ -2644,7 +2644,8 @@
       "data:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "ModelSpec.move_report": [
-      "grid_free:KEYWORD_ONLY=()"
+      "grid_free:KEYWORD_ONLY=()",
+      "library:KEYWORD_ONLY=None"
     ],
     "ModelSpec.package": [
       "name:POSITIONAL_OR_KEYWORD=<required>"
@@ -2661,7 +2662,8 @@
       "grid_free:KEYWORD_ONLY=()",
       "remap:KEYWORD_ONLY=False",
       "rule:KEYWORD_ONLY=None",
-      "uncovered:KEYWORD_ONLY=None"
+      "uncovered:KEYWORD_ONLY=None",
+      "library:KEYWORD_ONLY=None"
     ],
     "ModelSpec.with_options": [
       "overrides:VAR_KEYWORD=<required>"
@@ -3004,7 +3006,8 @@
       "kwargs:VAR_KEYWORD=<required>"
     ],
     "PackageRef": [
-      "key:POSITIONAL_OR_KEYWORD=<required>"
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "moved_from:POSITIONAL_OR_KEYWORD=None"
     ],
     "PackageRef.from_dict": [
       "data:POSITIONAL_OR_KEYWORD=<required>"
@@ -4169,7 +4172,8 @@
     ],
     "SimulationSpec.move_report": [
       "on:KEYWORD_ONLY=None",
-      "grid_free:KEYWORD_ONLY=()"
+      "grid_free:KEYWORD_ONLY=()",
+      "library:KEYWORD_ONLY=None"
     ],
     "SimulationSpec.resolved_packages": [
       "build_context:POSITIONAL_OR_KEYWORD=None"
@@ -4188,7 +4192,8 @@
       "grid_free:KEYWORD_ONLY=()",
       "remap:KEYWORD_ONLY=False",
       "rule:KEYWORD_ONLY=None",
-      "uncovered:KEYWORD_ONLY=None"
+      "uncovered:KEYWORD_ONLY=None",
+      "library:KEYWORD_ONLY=None"
     ],
     "SimulationSpec.with_model": [
       "model:POSITIONAL_OR_KEYWORD=<required>"

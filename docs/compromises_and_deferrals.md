@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 596 entries (601 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 597 entries (602 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 597 | A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARE... | 2026-10-15 |
 | 596 | A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed... | 2026-10-15 |
 | 595 | A SOLVED field is carried to another grid by `model.hds.remap(grid)`; linear between cell centres is the de... | 2026-10-15 |
 | 594 | The pooled thresholds are read off an exact posterior's FINITE-ensemble z, and the rehearsal notebook keeps... | 2026-10-14 |
@@ -10839,7 +10840,8 @@ same day, which is the useful part of the result.
       declaration, so `with_grid` has no pin to stamp and its hand-written cellids move
       unrefused. They were never verifiable in the first place -- CLAUDE.md already says a
       hand-written package stays unpinned -- so this is the pre-existing gap rather than a
-      new one, but the stamp does not close it.
+      new one, but the stamp does not close it. (Closed by ledger 597: the declared grid is
+      resolved at the call, a `grid_ref` through `library=`.)
       **Also NOT accepted:** `uncovered=`, `drop=`, `reducers=` from the plan's signature.
       Nothing is transferred from old cells at B1 -- the stack re-samples its own rasters
       -- so none of them could act, and `uncovered=`'s two candidate meanings are already
@@ -11412,6 +11414,8 @@ same day, which is the useful part of the result.
       `PackageRef` carries no `options`, `inputs` or `metadata`, so `package_move`
       answered "names no cells" for every entry of a model declared the DOCUMENTED
       library way. It resolves the ref against the run's own package copies first now.
+      (The spec side -- `with_grid`/`move_report`, which hold no library -- kept the same
+      defect until ledger 597.)
       **(b) `_cellids_in` skipped a numpy RECARRAY entirely.** It accepted a list or a
       tuple of records; a recarray is neither -- and a recarray is what FloPy itself
       produces, what a `.flopy(...)` escape hatch carries, and what rebuilding a spec
@@ -12302,6 +12306,7 @@ same day, which is the useful part of the result.
       whether or not the engine is ever built. It also cannot fire for a model whose
       context carries no grid (a deferred-grid model), which is the same limit ledger 271
       already records for hand-written cellids: there is no old mesh to measure against.
+      (Closed by ledger 597, which resolves the declared grid at the call.)
 
 296. **An eagerly declared `.gpkg` moves EXACTLY, and needed no overlay engine
       (2026-09-22).**
@@ -22233,7 +22238,8 @@ same day, which is the useful part of the result.
       `<model>.hds` rather than the file output control names; `GridSpec.resolve()` with no
       workspace meshes into the cwd; and `with_grid` on a model declared `grid=<built
       grid>` reads a per-cell array `unchanged` where `context=ModelContext(grid=...)` reads
-      it `unverifiable` (ledger 295's detection keys on the context's grid).
+      it `unverifiable` (ledger 295's detection keys on the context's grid -- `with_grid`
+      and `move_report` read `grid=` first since ledger 597).
 
 596. **A run's heads are a RECIPE, `mf.ic(strt=mf.Heads(old_run))`, resolved at build; the run is found and hashed at the declaration (2026-10-15).**
       The user's call: build the recipe straight after `model.hds.remap` (ledger 595), whose
@@ -22301,3 +22307,91 @@ same day, which is the useful part of the result.
       and `drift()` -- which compares against what a BUILT run read -- says `ok`; edited
       after a build, `edited`. Found and not fixed: `model.hds` builds a new reader on every
       access and never closes it (a `ResourceWarning` per access).
+
+597. **A move classifies what an `mf.ref` NAMES, through `library=project`, against the mesh the model was DECLARED on -- a deferred one resolved at the call (2026-10-15).**
+      The seventh instance of "`unchanged` is the dangerous verdict". `ModelSpec.with_grid`
+      stamped only `isinstance(package, PackageSpec)`, and `package_move` handed a
+      `PackageRef` -- no options, inputs or metadata -- answered `unchanged`, "names no
+      cells". Ledger 281(a) fixed exactly this for `Run.resolution` ONLY; the spec side has
+      no library. Measured (`docs/reproducers/with_grid_package_ref.py`; a 4x7 and a 7x4
+      `rectangular_voronoi`, ncpl 28 each, a lazy `disv`, `strt` a `(2, 28)` array), report
+      before / after the move / `prepare_run`:
+      - `context=ModelContext(grid=a)`, inline `ic`: `unverifiable` / `unverifiable` /
+        refused -- the control.
+      - the same, `mf.ref("ic_regrid")` -- the documented route for a saveable remapped
+        array (heads until `mf.Heads`, ledger 596; conc/temp still): `unchanged` /
+        `unchanged` / BUILT, `strt` byte-identical to the old mesh's.
+      - `grid=mf.grid_ref("mesh")`, inline OR ref: `unchanged` / `unchanged` / BUILT on the
+        old values -- ledgers 271/295's recorded deferred-grid limit, and it was never about
+        refs.
+      - `with_grid(remap=True)` with the ref: `unchanged`, nothing carried, nothing said;
+        the inline twin read `remapped` (`_remap_onto` had the same gate).
+      A spy over the 672 tests in the 22 files using `with_grid`/`move_report` found NONE
+      that moved or reported a model holding a ref -- ledger 281's lesson again: every
+      fixture declares inline.
+      **User decisions, 2026-10-15** (each the recommended option): a `library=project`
+      keyword, not a `project.with_grid(sim, ...)` twin of a seven-parameter signature, and
+      not "stamp every ref and let the build decide", which leaves the report unable to see
+      through a ref; RESOLVE a deferred declared grid at the call rather than keep the
+      limit; a move that must CHANGE what a ref names puts the changed copy INLINE.
+      **Chosen:**
+      - `library=` on `SimulationSpec`/`ModelSpec` `with_grid` and `move_report`, DUCK-TYPED
+        (callable `package` and `grid`; `TypeError` otherwise) because `specs` is import
+        layer 1 and `Project` is not. Nothing in the library is changed: it is shared with
+        every model and run that names it.
+      - REFUSED without it, naming it: a model on a mesh holding a ref no earlier move
+        stamped -- every such ref listed at once, since naming the first sent the caller
+        back once per ref -- and any model on a `grid_ref` grid. NOT refused: `with_grid` on
+        a model with NO mesh, which is `mf.gwf(...).with_grid(recipe)` giving a model its
+        first grid (the user's scratch notebook does it) and has no pin to stamp; and a
+        stamped ref, whose verdict that move already decided.
+      - The stamp rides ON THE REF: `PackageRef.moved_from`, written by `to_dict` only when
+        set, so an unmoved ref serializes byte-identically (asserted) and no digest or stored
+        simulation moves; a `metadata` property gives it the shape every stamp reader
+        already reads. `_ref_resolved` is the ONE rule the build (`resolved_packages`),
+        `with_grid`/`move_report` and `Run.resolution` read a ref through: it copies the
+        stamp onto the resolved package with `MOVED_VIA_REF`, so the refusal names
+        `mf.ref(key)` and tells you to name the KEY in `grid_free=` -- which is translated to
+        the resolved package's name for the classifier.
+      - The changed copy (arrays `remap=True` carried, an eager `.gpkg` re-lazified per 296)
+        replaces the ref inline with `INLINED_FROM_REF`, and its row says "library package
+        X is unchanged and this model no longer refers to it" -- the one place a reader
+        would otherwise not see it.
+      - The declared mesh is `grid=` first, else `context.grid` -- the build's own order --
+        and a deferred one is resolved: `GridSpec.from_object` for free, a recipe meshed in
+        a `TemporaryDirectory` (never the cwd or the project; a leak test pins it) anchored
+        to `library.root`, a route that does not resolve (`NotImplementedError`) read as no
+        mesh. `grid_identity.move_report` takes `(label, package)` pairs now; specs was its
+        only caller.
+      - A later move keeps the FIRST stamp, inline and ref: `with_metadata` overwrote it
+        with the intermediate mesh's pin, so the refusal named a mesh the values never meant.
+      - `remap=True` leaves a stamped package alone. Made reachable by reading `grid=` as
+        the declared mesh: measured without the guard, a second move's remap carried the
+        first move's values by the wrong mesh's polygons, the report read `remapped`, and
+        the surviving stamp refused the build -- not a silent build, but the report and the
+        build disagreeing about one package.
+      **Tests:** `tests/test_with_grid_library.py` (19) and a library `mf.Heads` ref moving
+      `rebuilt` in `tests/test_heads_recipe.py`; fourteen mutants, each reverting one piece,
+      each killed by a named test. Three tests migrated: two `test_grid_library` and one
+      `test_grid_remap` move or report a `grid_ref` model and now pass `library=`; the
+      `replace_grid` alias test moved to a built grid, because the warned alias forwards
+      `with_grid(grid, on=)` and takes no `library=`.
+      **NOT done, and what it costs:**
+      - A recipe declared grid is meshed at EVERY `with_grid`/`move_report` on it, once per
+        moved model (coupled models on one recipe mesh it twice); no cache. Free on the
+        documented route, `project.add_grid(key, GridSpec.from_object(vor))`.
+      - `remap=True` onto a NEW `grid_ref` still raises `TypeError` naming
+        `project.grid(key)`, though the library is now in hand; `coverage_on` takes no
+        `library=` and still refuses a deferred grid.
+      - A stamp is the move's decision, as for an inline package: re-registering the library
+        key with values for the new mesh does not clear it -- re-point with a fresh
+        `mf.ref(key)` or `grid_free=`. An inlined copy no longer follows the library entry.
+      - The report after a move measures against the model's CURRENT mesh, so a new-mesh
+        array declared after the move reads `unverifiable` -- what moving it AGAIN would do
+        -- though the build accepts it; a typed cellid has always read that way.
+      - The simulation-level `resolved_packages` does not read a ref's stamp: `with_grid`
+        never stamps a simulation package.
+      - Overlap: a parallel session's commit `e9841e20` (branch
+        `fix/with-grid-array-and-resolve-cwd`, not on `myflopy` at this writing) reads
+        `grid=` first through `_mesh_in_hand` and also numbers itself 596. Whichever lands
+        second merges onto the other's rule and renumbers.

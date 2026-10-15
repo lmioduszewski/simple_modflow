@@ -76,8 +76,9 @@ def _sim(grid, *, k, strt=40.0):
     )
 
 
-def _verdict(sim, package):
-    return next(row["how"] for row in sim.move_report() if row["package"] == package)
+def _verdict(sim, package, library=None):
+    rows = sim.move_report(library=library)
+    return next(row["how"] for row in rows if row["package"] == package)
 
 
 # ------------------------------------------------------------------------- the point
@@ -561,18 +562,19 @@ def test_a_remapped_model_CAN_be_saved_by_the_documented_route(meshes, lens, tmp
     """
 
     fine, coarse = meshes
+    project = mf.Project(tmp_path / "saved", name="p")
+    project.add_grid("mesh", coarse)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         moved = _sim(fine, k=lens).with_grid(coarse, remap=True)
         # Re-point at the library entry. The verdict and the values both have to survive.
         repointed = moved.with_grid(mf.grid_ref("mesh"))
 
-    assert _verdict(repointed, "npf") == "remapped"
+    # `library=`: the repointed model's grid is a `grid_ref`, which the report resolves.
+    assert _verdict(repointed, "npf", library=project) == "remapped"
     npf = next(p for p in repointed.model("m").packages if p.name == "npf")
     assert isinstance(npf.options["k"], np.ndarray)
 
-    project = mf.Project(tmp_path / "saved", name="p")
-    project.add_grid("mesh", coarse)
     project.add_package("npf/remapped", npf)
     project.add_simulation(
         repointed.with_model(

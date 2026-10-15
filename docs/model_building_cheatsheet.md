@@ -1209,6 +1209,11 @@ So the simulation holds only `mf.ref("disv/base")`, stays serializable, and the
 arrays ride along in the sidecar. Verified: `save()` → `load()` → `prepare_run`
 rebuilt the same 3-layer model. §8 has the full persistence rules.
 
+**Moving such a model needs the library too:** `sim.with_grid(new, library=project)`
+and `sim.move_report(library=project)`. A move classifies each `mf.ref` as the package it
+NAMES -- a library array reads `unverifiable` and is refused at build, exactly like the
+inline one -- and refuses naming `library=` without it (ledger 597).
+
 ---
 
 ## 6 · Context

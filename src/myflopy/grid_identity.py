@@ -592,6 +592,20 @@ MOVED_FROM = "myflopy_moved_from"
 #: package the remap just fixed.
 REMAPPED_FROM = "myflopy_remapped_from"
 
+#: Stamped, beside :data:`MOVED_FROM`, on the package the build resolves from a MOVED
+#: ``mf.ref``: the library key the model named it by. The stamp itself rides on the
+#: ``PackageRef`` (the library package is shared and is never stamped), and the build
+#: copies it across -- this is what lets the refusal name the spelling the caller typed,
+#: ``mf.ref("ic_regrid")``, rather than the resolved package's own ``"ic"``.
+MOVED_VIA_REF = "myflopy_moved_via_ref"
+
+#: Stamped on a package ``with_grid`` had to CHANGE on its way to the new mesh -- arrays
+#: the remap carried, an eager ``.gpkg`` re-declared (ledger 296) -- when the model named
+#: it by ``mf.ref``. The changed copy is not the library package, so it replaces the ref
+#: INLINE (user decision, 2026-10-15) and this records the key it came from, so the
+#: report says the model no longer refers to the library for it.
+INLINED_FROM_REF = "myflopy_inlined_from_ref"
+
 #: Names the SIBLING packages whose features this one addresses by INDEX rather than by
 #: cellid -- an MVR's providers and receivers. Stamped by ``mvr_spec``, so both
 #: ``mf.mvr(moves=...)`` and ``mf.mvr.flopy(...)`` carry it.
@@ -844,6 +858,18 @@ def package_moves(
         if (name := getattr(package, "name", None)) is not None
     }
     for package in packages:
+        inlined = (getattr(package, "metadata", None) or {}).get(INLINED_FROM_REF)
+        name = getattr(package, "name", None)
+        if inlined and name in verdicts:
+            # Said in the row, because nothing else shows it: the model was declared
+            # with `mf.ref`, and editing the library no longer reaches this copy.
+            how, why = verdicts[name]
+            verdicts[name] = (
+                how,
+                f"{why}; an inline copy -- library package {inlined!r} is unchanged and "
+                "this model no longer refers to it",
+            )
+    for package in packages:
         name = getattr(package, "name", None)
         if name is None or name in grid_free:
             continue
@@ -870,9 +896,15 @@ def package_moves(
 
 
 def move_report(
-    model, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
+    entries, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
 ) -> list[dict[str, str]]:
     """One row per package: what a grid move does to it, before anything is built.
+
+    ``entries`` are ``(label, package)`` pairs: the label is what the model DECLARED --
+    a ref's library key -- and the package is what classifying it must read, which for
+    an ``mf.ref`` is the library package it names. Classifying the ref itself answered
+    ``unchanged`` for every one (ledger 281(a), and its spec-side twin). ``grid_free``
+    holds the classified packages' own names.
 
     ``ncpl`` is the mesh the packages were DECLARED on, so the report can see a
     per-cell array. The report and the stamp must be handed the same one or they
@@ -880,11 +912,11 @@ def move_report(
     before ``prepare_run``.
     """
 
-    packages = tuple(getattr(model, "packages", ()))
-    verdicts = package_moves(packages, grid_free=grid_free, ncpl=ncpl)
+    pairs = list(entries)
+    verdicts = package_moves([package for _label, package in pairs], grid_free=grid_free, ncpl=ncpl)
     return [
-        {"package": name, "how": verdicts[name][0], "why": verdicts[name][1]}
-        for package in packages
+        {"package": label, "how": verdicts[name][0], "why": verdicts[name][1]}
+        for label, package in pairs
         if (name := getattr(package, "name", None)) is not None
     ]
 
@@ -937,8 +969,24 @@ def moved_package_complaints(packages) -> list[str]:
 
     complaints = []
     for package in packages:
-        pin = (getattr(package, "metadata", None) or {}).get(MOVED_FROM)
+        metadata = getattr(package, "metadata", None) or {}
+        pin = metadata.get(MOVED_FROM)
         if pin is None:
+            continue
+        via = metadata.get(MOVED_VIA_REF)
+        if via is not None:
+            # Named by the ref the caller typed: the library package is shared, so
+            # "re-declare it" means pointing the model at a different one, and
+            # `grid_free=` takes the library KEY, not the resolved package's name.
+            complaints.append(
+                f"package {getattr(package, 'name', '?')!r}, declared as "
+                f"mf.ref({via!r}), was moved to this grid by `with_grid`, and the "
+                f"library package it names holds cell numbers or per-cell values that "
+                f"were not resolved against a mesh, so they still mean mesh {pin}. "
+                "Point the model at a package declared for this grid (register one under "
+                f"a new key and `mf.ref` it), or name {via!r} in `grid_free=` if it "
+                "really is mesh-independent."
+            )
             continue
         complaints.append(
             f"package {getattr(package, 'name', '?')!r} was moved to this grid by "

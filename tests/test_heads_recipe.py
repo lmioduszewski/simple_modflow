@@ -305,6 +305,33 @@ def test_a_model_starting_from_the_recipe_moves_rebuilt(world, tmp_path):
     assert report["ic"] == "rebuilt"
 
 
+def test_the_recipe_moves_rebuilt_through_a_LIBRARY_ref_too(world, tmp_path):
+    """A move classifies what an `mf.ref` NAMES (ledger 597) -- here a recipe.
+
+    Read as itself the ref said `unchanged`; resolved through `library=` it is the recipe,
+    so it is `rebuilt`, is not stamped, and the moved model builds the old run's heads
+    carried onto the NEW mesh.
+    """
+
+    project = mf.Project(tmp_path / "p", name="p")
+    project.add_grid("mesh", mf.GridSpec.from_object(world["new"]))
+    project.add_package("ic/heads", mf.ic(strt=mf.Heads(world["old_run"])))
+    simulation = _simulation(mf.gwf("m", grid=mf.grid_ref("mesh"), packages=[
+        mf.disv(mf.LayerStack(top=mf.Surface.flat(10_100.0))
+                .add("upper", thickness=150.0).add("lower", thickness=150.0)),
+        mf.npf(k=10.0, icelltype=1), mf.ref("ic/heads"),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ]))
+
+    report = {row["package"]: row["how"] for row in simulation.move_report(library=project)}
+    assert report["ic/heads"] == "rebuilt"
+    moved = simulation.with_grid(world["third"], library=project)
+    assert mf.ref("ic/heads") in moved.models[0].packages, "a recipe's ref is not stamped"
+    built = project.prepare_run("r", moved).build()
+    strt = np.asarray(built.simulation.get_model("m").ic.strt.array)
+    np.testing.assert_allclose(strt, _eager(world, world["third"]), atol=1e-9)
+
+
 def test_a_frozen_run_rebuilds_with_the_old_run_deleted(world, tmp_path):
     """The run freezes the CARRIED heads, not the recipe (ledgers 251, 270)."""
 

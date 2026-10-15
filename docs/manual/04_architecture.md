@@ -255,7 +255,7 @@ refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
     .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")   # swap a package by key
-    .with_grid(mf.grid_ref("refined"), on="flow")     # move to another grid
+    .with_grid(mf.grid_ref("refined"), on="flow", library=project)  # move to another grid
 )
 project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
@@ -285,7 +285,13 @@ they do not move: `mf.rch.gpkg`, `mf.drn.gpkg`, K-from-vector and the rest hold 
 old grid's cell numbers.
 
 **So read the report before you believe the move.** `sim.move_report()` classifies
-every package before anything is built, and `run.resolution` is the record after:
+every package before anything is built, and `run.resolution` is the record after.
+**A model that names packages by `mf.ref` or its grid by `mf.grid_ref` needs the
+library they name** -- `sim.with_grid(new, library=project)`,
+`sim.move_report(library=project)` -- and raises naming it otherwise: a ref is
+classified as the package it NAMES (read as itself it said `unchanged` for every one),
+and each package is measured against the mesh the model was declared on, a deferred
+one resolved at the call (ledger 597):
 
 | verdict | meaning |
 | --- | --- |

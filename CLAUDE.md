@@ -591,9 +591,15 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8413 passed / 5 skipped**, 2026-10-15, after the `mf.Heads` recipe -- ledger
-  596): `-n 10` **9m15s** in a detached checkout outside `.claude`, NOT a quiet clock -- a
-  load average of ~22 at its start from other sessions. Before it, 8364 passed / 5 skipped
+- Full suite (**8434 passed / 5 skipped**, 2026-10-15, after a move classifies an `mf.ref`
+  through `library=` -- ledger 597): `-n 10` **5m24s** in a worktree outside `.claude`, at a
+  load average of ~2.6 at its start rising to ~17. The two `-n 10` runs before it, at loads of
+  ~15-25, each failed ONE `test_sfr_stream_inputs.py` network-validate case -- MF6 6.8's
+  intermittent crash, its output stopping after the header; 0 of 10 alone on this branch and
+  0 of 10 on unmodified `myflopy`, interleaved at low load. Before it, 8413 passed / 5 skipped
+  (after the `mf.Heads` recipe -- ledger 596): `-n 10` **9m15s** in a detached checkout
+  outside `.claude`, NOT a quiet clock -- a load average of ~22 at its start from other
+  sessions. Before it, 8364 passed / 5 skipped
   (after `model.hds.remap` -- ledger 595): `-n 10` 5m28s at ~7; serial not re-measured.
   Before that,
   8281 passed / 5 skipped (2026-10-14, after the rehearsal's recovery became a
@@ -880,10 +886,29 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   moves EVERY model with a grid, because coupled models must share a mesh (ledger
   268); `on=` is the spelling that can strand a sibling. `grid_free=` is the caller
   asserting mesh-independence. The stamp is the only thing behind a hand-typed cellid
-  across a move -- every number stays in range on a larger mesh. **A DEFERRED-grid
-  model has no old pin to stamp**, so its hand-written cellids move unrefused; they
-  were never verifiable anyway -- and a per-cell array cannot be measured there
-  either. The array detection is ncpl-EXACT (a per-LAYER list `k=[10.0, 1.0]` means the
+  across a move -- every number stays in range on a larger mesh. **The mesh measured
+  against is the one the model was DECLARED on -- `grid=`, else `context.grid` -- and
+  a DEFERRED one is RESOLVED at the call** (ledger 597): a `GridSpec.from_object` for
+  free, a recipe meshed once in a temporary directory (never the cwd or the project),
+  a `grid_ref` through `library=`. Before it a deferred-grid model had no pin to stamp
+  and no `ncpl`, so its typed cellids AND an inline `mf.ic(strt=<array>)` moved as
+  `unchanged` and BUILT on the old mesh's values. **An `mf.ref` is classified as the
+  library package it NAMES, through `library=project`** (same ledger; user decision
+  2026-10-15). A `PackageRef` carries no options, so read as itself every one said
+  `unchanged` and `with_grid`'s `isinstance(PackageSpec)` gate never stamped it --
+  measured, `mf.ref("ic_regrid")` (the docs' route for a saveable remapped array --
+  heads until `mf.Heads`, conc/temp still) built on the old mesh's values; ledger 281(a) had fixed this for `Run.resolution`
+  ONLY. The stamp rides ON THE REF (`PackageRef.moved_from`; the library package is
+  shared and never changed) and `_ref_resolved` -- the ONE rule the build,
+  `with_grid`/`move_report` and `Run.resolution` all read a ref through -- copies it
+  onto the resolved package with `MOVED_VIA_REF`, so the refusal names `mf.ref(key)`.
+  A move that must CHANGE what a ref names (`remap=True`, an eager `.gpkg` re-declared)
+  puts the changed copy INLINE (`INLINED_FROM_REF`, said in its row). Without
+  `library=`, a model holding an UNSTAMPED ref or a `grid_ref` grid REFUSES naming it
+  (all the refs at once) -- except `with_grid` on a model with NO mesh, the first-grid
+  spelling, which has nothing it could stamp. A later move keeps the FIRST stamp, and
+  `remap=True` leaves a stamped package alone (measured: carrying it read `remapped`
+  while the surviving stamp refused the build). The array detection is ncpl-EXACT (a per-LAYER list `k=[10.0, 1.0]` means the
   same on any mesh, so guessing from "is it a sequence" would refuse a correct move),
   and `with_grid` supplies the count from the OLD grid it STILL HOLDS at the call site
   -- it does not mutate, so the mesh is gone from the RESULT and present at the CALL.
@@ -1633,7 +1658,8 @@ ndarrays (`to_dict` refuses them, ledger 193) and **the model was already unsave
 the move** -- which is why it needed remapping rather than re-declaring. The route, pinned
 by a test: `with_grid(<built grid>, remap=True)`, then `with_grid(mf.grid_ref(key))` to
 re-point (the `remapped` verdict and the arrays survive, because `REMAPPED_FROM` is tested
-before the cellwise branch), then `add_package` the array and `mf.ref` it. A `grid_ref`
+before the cellwise branch; reading the report on that `grid_ref` model takes
+`library=project`, ledger 597), then `add_package` the array and `mf.ref` it. A `grid_ref`
 target is refused for the remap itself: it needs real polygons.
 **NOT built:** collapsing that into one call, `runs.drift()` telling a remap from an edit
 (the values move the digest, the stamp does not), hand-typed list BCs (no per-cell values
@@ -1681,7 +1707,10 @@ level is a CYCLE through `grid/__init__` -> plotting -> `headsplus`, so `remap()
 engine lazily; the no-value rule lives in `myflopy._numbers` (`is_no_value`/`is_dry`) for
 the same reason. A DISU (stacked nodes: cells sharing a centre, or overlapping) is refused
 in the engine, so a reader with no model cannot slip one through. The ARRAY makes a
-simulation unsaveable and pins it to its mesh -- which is why the recipe exists.
+simulation unsaveable and pins it to its mesh -- which is why the recipe exists. An array
+kept the other way (registered as a library package, `mf.ref`'d) and moved on with
+`with_grid(..., library=project)` reads `unverifiable` and is refused at build -- it used
+to read `unchanged` and build on the old mesh (ledger 597).
 
 ## A per-cell array from a polygon map? `mf.Polygons` (2026-09-23, ledger 299)
 `mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))`, and the

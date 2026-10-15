@@ -50,8 +50,10 @@ from myflopy.grid_identity import (
     GENERATED_SOLVER,
     GRID_PIN,  # noqa: F401
     GRID_PIN_OPTIONS,  # noqa: F401
+    INLINED_FROM_REF,
     MOVE_RECIPE,
     MOVED_FROM,
+    MOVED_VIA_REF,
     PIN_VOIDED,
     REMAPPED_FROM,
     SOURCE_SHA,  # noqa: F401
@@ -127,6 +129,14 @@ class PackageRef:
         stripped; an empty or all-whitespace key raises ``ValueError``. It is
         not checked against any library here -- an unknown key fails when the
         run is built and the reference is resolved.
+    moved_from : str, optional
+        The pin of the mesh a ``with_grid`` moved this reference AWAY from,
+        set by that move when the library package it names could not be
+        verified on the new mesh -- per-cell values, or cellids it typed rather
+        than resolved. The build copies it onto the package it resolves and
+        refuses it, as it refuses an inline package the move stamped. Not
+        something to set by hand: replace the entry with a fresh ``mf.ref(key)``
+        (or name the key in ``grid_free=``) to clear it. Default ``None``.
 
     See Also
     --------
@@ -135,6 +145,7 @@ class PackageRef:
     """
 
     key: str
+    moved_from: str | None = None
 
     def __post_init__(self) -> None:
         """Strip the key and reject an empty one (on this frozen dataclass)."""
@@ -161,10 +172,28 @@ class PackageRef:
 
         return True
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a durable JSON-ready package reference."""
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """The move stamp in the shape a :class:`PackageSpec` carries it, else empty.
 
-        return {"kind": "PackageRef", "key": self.key}
+        So every reader of a stamp -- :func:`~myflopy.grid_identity.package_move`'s
+        report, the build's refusal -- reads a stamped ref as it reads a stamped
+        package, without the library the ref names.
+        """
+
+        return {} if self.moved_from is None else {MOVED_FROM: self.moved_from}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a durable JSON-ready package reference.
+
+        ``moved_from`` is written only when set, so an unmoved reference
+        serializes exactly as it did before the field existed.
+        """
+
+        payload: dict[str, Any] = {"kind": "PackageRef", "key": self.key}
+        if self.moved_from is not None:
+            payload["moved_from"] = self.moved_from
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PackageRef:
@@ -174,11 +203,12 @@ class PackageRef:
         ----------
         data : dict
             A mapping carrying a ``"key"`` entry, as :meth:`to_dict` writes
-            (``{"kind": "PackageRef", "key": ...}``). Only ``"key"`` is read; a
-            missing one raises ``KeyError``.
+            (``{"kind": "PackageRef", "key": ...}``), and optionally
+            ``"moved_from"``. A missing ``"key"`` raises ``KeyError``; other
+            entries are ignored.
         """
 
-        return cls(data["key"])
+        return cls(data["key"], moved_from=data.get("moved_from"))
 
 
 def ref(key: str) -> PackageRef:
@@ -1344,6 +1374,166 @@ def _relazified(package: Any) -> Any:
     )
 
 
+def _ref_resolved(entry: PackageRef, package: PackageSpec) -> PackageSpec:
+    """The library ``package`` an ``mf.ref`` names, carrying that ref's move stamp.
+
+    The ONE rule for reading a ref through its library, shared by the build
+    (:meth:`ModelSpec.resolved_packages`), the move (``with_grid``/``move_report``) and
+    ``Run.resolution``, so a stamped ref cannot be refused by one and waved through by
+    another. The library package itself is never stamped: it is shared with every other
+    model and run that names it.
+    """
+
+    if entry.moved_from is None:
+        return package
+    return package.with_metadata(
+        **{MOVED_FROM: entry.moved_from, MOVED_VIA_REF: entry.key}
+    )
+
+
+def _checked_library(library: Any, verb: str) -> Any:
+    """``library=`` as given, refused unless it can answer what a ref or grid ref names."""
+
+    if library is None:
+        return None
+    if not (
+        callable(getattr(library, "package", None))
+        and callable(getattr(library, "grid", None))
+    ):
+        raise TypeError(
+            f"{verb}(library=...) takes the Project whose library the model's `mf.ref` "
+            f"and `mf.grid_ref` entries name, not {type(library).__name__}."
+        )
+    return library
+
+
+def _move_entries(
+    model: Any, library: Any, *, verb: str, required: bool = True
+) -> list[tuple[Any, Any]]:
+    """Every package entry of ``model``, beside what classifying it for a move must read.
+
+    An inline package is its own answer. An ``mf.ref`` carries no options, inputs or
+    metadata, so classifying the REF answered ``unchanged`` -- "names no cells" -- for
+    every one of them, and a library ``mf.ic(strt=<array>)`` moved to a mesh of the same
+    size BUILT on the old mesh's values: ledger 281(a)'s defect, on the spec side, which
+    has no library. So it is resolved through ``library=`` instead (user decision,
+    2026-10-15). A ref an earlier move already stamped needs no library -- its verdict
+    was decided by that move -- and an unstamped one with none is REFUSED naming
+    ``library=`` rather than guessed.
+
+    ``required=False`` passes refs through as themselves instead of refusing: what
+    ``with_grid`` asks for when the model holds NO mesh, so there is no pin a verdict
+    could stamp -- ``mf.gwf(...).with_grid(recipe)`` gives a model its FIRST grid, and
+    refusing that over a ref would refuse a call that moves nothing.
+    """
+
+    unread = [
+        entry.key
+        for entry in model.packages
+        if isinstance(entry, PackageRef) and entry.moved_from is None
+    ]
+    if unread and library is None and required:
+        # All of them at once: naming the first sent the caller back once per ref.
+        named = ", ".join(f"mf.ref({key!r})" for key in unread)
+        raise ValueError(
+            f"Model {model.name!r}: {verb} cannot classify {named} -- a ref names a "
+            "package in a project library, and this spec does not hold the library, so "
+            "the package it names would read `unchanged` whatever it holds. Pass "
+            "library=project, the Project these keys are registered in."
+        )
+    return [
+        (entry, _ref_resolved(entry, library.package(entry.key)))
+        if isinstance(entry, PackageRef) and library is not None
+        else (entry, entry)
+        for entry in model.packages
+    ]
+
+
+def _grid_free_names(pairs: list[tuple[Any, Any]], grid_free: tuple[str, ...]) -> tuple[str, ...]:
+    """``grid_free=`` as the names the classifier sees: a ref's KEY becomes its package's name.
+
+    The caller names a ref by the library key it typed (``"ic_regrid"``); the classifier
+    is handed the resolved package, which carries its own name (``"ic"``).
+    """
+
+    return tuple(
+        dict.fromkeys(
+            name
+            for entry, resolved in pairs
+            if _package_entry_label(entry) in grid_free
+            and (name := getattr(resolved, "name", None)) is not None
+        )
+    )
+
+
+def _declared_mesh(model: Any, library: Any, *, verb: str) -> Any:
+    """The built mesh ``model``'s packages were declared on, resolved if deferred; or ``None``.
+
+    ``grid=`` first, because it is what the build resolves the model onto, REPLACING
+    ``context.grid``; then ``context.grid``. A DEFERRED grid -- a recipe, a pickle, an
+    ``mf.grid_ref`` -- used to count as "no mesh", so nothing could measure a per-cell
+    array or pin a hand-typed cellid against it, and both moved as ``unchanged``: the
+    limit ledgers 271 and 295 recorded, measured as an inline ``mf.ic(strt=<array>)``
+    building on the old mesh's values. It is resolved here instead, as the build would
+    resolve it (user decision, 2026-10-15): a :meth:`GridSpec.from_object` costs nothing,
+    a recipe is meshed once in a temporary directory removed on return -- a move must not
+    write a mesh into the project -- anchored to ``library.root`` when one is given. A
+    ``grid_ref`` needs ``library=`` and is refused naming it without one.
+
+    ``None`` when the model holds no grid at all, or one whose route does not resolve
+    (``NotImplementedError``: ``GridSpec.structured``/``from_geopackage``) -- a model
+    that cannot be built either, so there was never a mesh to measure against.
+    """
+
+    grid = getattr(model, "grid", None)
+    if grid is None:
+        return getattr(getattr(model, "context", None), "grid", None)
+    if isinstance(grid, GridRef):
+        if library is None:
+            raise ValueError(
+                f"Model {model.name!r}: {verb} measures each package against the mesh it "
+                f"was declared on, and that mesh is mf.grid_ref({grid.key!r}) -- a project "
+                "library entry this spec does not hold. Pass library=project so it can be "
+                "resolved."
+            )
+        grid = _grid_entry(library.grid(grid.key))
+        if not isinstance(grid, GridSpec):
+            # The build's own rule (`_library_grid_spec`): a library entry must be a
+            # resolvable GridSpec, not another reference.
+            raise TypeError(
+                f"Project grid library entry {model.grid.key!r} must be a GridSpec, "
+                f"got {type(grid).__name__}"
+            )
+    if grid.method == "object":
+        return grid.obj
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="myflopy-declared-grid-") as scratch:
+        try:
+            return grid.resolve(
+                project_root=getattr(library, "root", None), workspace=scratch
+            )
+        except NotImplementedError as error:
+            logger.debug(
+                "model %r: its grid %r does not resolve (%s), so %s has no mesh to "
+                "measure its packages against",
+                getattr(model, "name", "?"), grid.name, error, verb,
+            )
+            return None
+
+
+def _move_stamped(package: Any, pin: str) -> Any:
+    """``package`` stamped as moved away from mesh ``pin`` -- unless a move already did.
+
+    A second move must not overwrite the first stamp: the values still mean the mesh
+    they were DECLARED on, and the refusal names that one.
+    """
+
+    if MOVED_FROM in (package.metadata or {}):
+        return package
+    return package.with_metadata(**{MOVED_FROM: pin})
+
+
 def _remap_engine():
     """The overlay remap module, imported on first use (it pulls in geopandas).
 
@@ -1423,6 +1613,14 @@ def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, unco
         # A voided package's values were never verified on the OLD mesh either, so an
         # overlay would carry an unverified guess forward and stamp it certified; a
         # pinned one is `stale` and has a better route (re-declaration). Ledger 275.
+        return package, False
+    if MOVED_FROM in metadata:
+        # An EARLIER move stamped it, so its values mean the mesh before THAT one, not
+        # the mesh in hand, and weighting them by this mesh's polygons carries the wrong
+        # cells. Measured without this: the report read `remapped` while the surviving
+        # stamp still refused the build -- the disagreement `move_report` exists to
+        # prevent. Unreachable while a moved model held no mesh; reading `grid=` as the
+        # declared mesh (2026-10-15) made it live. It stays stamped, and says so.
         return package, False
     moved_options, report = _remap_engine().remap_arrays(
         dict(package.options),
@@ -5087,7 +5285,9 @@ class ModelSpec:
                     f"Package reference '{package.key}' cannot be resolved without "
                     "a SpecBuildContext package library."
                 )
-            packages.append(build_context.package_spec(package.key))
+            # A ref `with_grid` stamped hands its stamp to the package it resolves, so
+            # the build refuses it as it refuses a stamped inline package.
+            packages.append(_ref_resolved(package, build_context.package_spec(package.key)))
         _validate_concrete_packages(packages)
         return tuple(packages)
 
@@ -5126,6 +5326,7 @@ class ModelSpec:
         remap: bool = False,
         rule: str | None = None,
         uncovered: str | None = None,
+        library: Any = None,
     ) -> ModelSpec:
         """Return a copy on ``grid``, with everything derived from the old one dropped.
 
@@ -5145,6 +5346,22 @@ class ModelSpec:
 
         ``grid_free=`` names packages the caller asserts are mesh-independent; their
         stamp is cleared rather than applied. Read :meth:`move_report` first.
+
+        **An ``mf.ref`` is classified as the library package it NAMES**, which needs
+        ``library=project``: a ref carries no options, so classified as itself it read
+        ``unchanged`` and a library ``mf.ic(strt=<array>)`` built on the old mesh's values.
+        A ref that cannot be verified is stamped ON THE REF -- the library package is
+        shared and stays untouched -- and the build refuses it. One the move must CHANGE
+        (arrays ``remap=True`` carries, an eager ``.gpkg`` re-declared) becomes an INLINE
+        copy in place of the ref, since the changed package is no longer the library's.
+        A model holding an unstamped ref and no ``library=`` raises naming it.
+
+        **The mesh measured against is the one the packages were DECLARED on** --
+        ``grid=``, else ``context.grid`` -- and a DEFERRED one (a recipe, a pickle, an
+        ``mf.grid_ref``) is resolved here to measure it, as the build would: a
+        :meth:`GridSpec.from_object` costs nothing, a recipe is meshed once in a
+        temporary directory. Before that a deferred-grid model had nothing to measure,
+        and its per-cell arrays and typed cellids moved as ``unchanged``.
 
         ``remap=True`` CARRIES a package's per-cell arrays onto the new mesh by area
         overlay instead of stamping them (ledger 300), turning ``unverifiable`` into
@@ -5183,12 +5400,15 @@ class ModelSpec:
             Default: empty.
         remap : bool, optional
             Carry per-cell arrays (``npf`` ``k``/``k22``/``k33``, ``ic.strt``,
-            ``sto.ss``/``sto.sy``) from the model's CURRENT ``context.grid`` onto
-            ``grid`` by area overlay; a pinned or pin-voided package is left
-            alone. Raises ``ValueError`` when the context has no grid, and --
-            once a package has an array to carry -- when the two meshes are in
-            different frames (CRS, or no overlap), or the array is an integer
-            flag or one with no measured rule. Default ``False``.
+            ``sto.ss``/``sto.sy``) from the mesh the model was declared on --
+            ``grid=``, else ``context.grid``, resolved if deferred -- onto
+            ``grid`` by area overlay; a pinned, pin-voided or already-stamped
+            package is left alone. A ref'd package it carries becomes an inline
+            copy (its ``move_report`` row says so). Raises ``ValueError`` when
+            the model holds no grid at all, and -- once a package has an array
+            to carry -- when the two meshes are in different frames (CRS, or no
+            overlap), or the array is an integer flag or one with no measured
+            rule. Default ``False``.
         rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
@@ -5203,42 +5423,76 @@ class ModelSpec:
             ``"raise"`` (``ValueError``). Checked at the call like ``rule``, and
             likewise refused without ``remap=True``. Default ``None``:
             ``"nearest"`` under ``remap=True``.
+        library : Project, optional
+            The project whose libraries the model's ``mf.ref`` and
+            ``mf.grid_ref`` entries name: each ref is classified as the package
+            it names, a ``grid_ref`` grid is resolved to measure against, and
+            the project root anchors a grid recipe's relative paths. Required
+            when the model's grid is a ``grid_ref``, and when the model is on a
+            mesh and holds a ref no earlier move stamped -- ``ValueError``
+            naming it otherwise. A model on no mesh at all (the first
+            ``with_grid`` of ``mf.gwf(...)``) needs none: nothing could be
+            stamped. Anything without ``package``/``grid`` methods raises
+            ``TypeError``. Nothing in the library is changed. Default ``None``.
 
         Returns
         -------
         ModelSpec
             The copy, with ``context.grid``, ``domain`` and ``surfaces`` set to
             ``None`` and the packages re-lazified, remapped or stamped as
-            described above.
+            described above (a stamped ref carries ``moved_from``).
+
+        Raises
+        ------
+        ValueError
+            For a ref or ``grid_ref`` with no ``library=``, and as ``remap``,
+            ``rule`` and ``uncovered`` describe.
+        TypeError
+            For a ``library=`` that is not a project, or a ``grid`` that
+            ``remap=True`` cannot take polygons from.
+        KeyError
+            For a ref or ``grid_ref`` key the library does not hold.
         """
 
         rule, uncovered = _remap_choices(remap, rule, uncovered)
+        library = _checked_library(library, "with_grid")
         free = tuple(grid_free)
         # The OLD mesh, still in hand: `with_grid` returns a copy and does not mutate,
-        # so `self.context.grid` is the grid these packages were declared on. It is what
-        # lets `package_move` see a per-cell array that nothing stamped (ledger 295).
-        declared_on = getattr(getattr(self.context, "grid", None), "ncpl", None)
+        # so the grid these packages were declared on is present at this call -- and a
+        # deferred one is resolved now, as the build would. It is what lets
+        # `package_move` see a per-cell array that nothing stamped (ledger 295).
+        old = _declared_mesh(self, library, verb="with_grid")
+        declared_on = getattr(old, "ncpl", None)
+        # Each entry beside what it RESOLVES to: a ref is classified as the library
+        # package it names, never as itself (refused without `library=`). A model on
+        # NO mesh has no pin to stamp against, so a ref's verdict could change nothing
+        # and the library is not demanded -- this is also the spelling that gives a
+        # model its first grid.
+        pairs = _move_entries(self, library, verb="with_grid", required=old is not None)
         # An EAGERLY declared `.gpkg` is re-lazified from the recipe it recorded, so it
         # moves EXACTLY rather than being refused (ledger 296). Done first, because it
         # turns a `stale` package into a `rebuilt` one and the stamping below must see
         # the result, not the original.
-        relazified = tuple(_relazified(package) for package in self.packages)
+        relazified = tuple(_relazified(package) for _entry, package in pairs)
         if remap:
             relazified = self._remap_onto(
-                relazified, grid, rule=rule, uncovered=uncovered
+                relazified, grid, old_grid=old, rule=rule, uncovered=uncovered
             )
         # `package_moves`, not `package_move`: a MOVER's staleness lives in its siblings,
         # and one package is not enough to see it (ledger 303). All three callers share
         # this function so the pre-build report, the stamp and `Run.resolution` cannot
         # disagree about the same mover.
-        verdicts = package_moves(relazified, grid_free=free, ncpl=declared_on)
-        stamped = tuple(
-            package.with_metadata(**{MOVED_FROM: pin})
+        verdicts = package_moves(
+            relazified, grid_free=_grid_free_names(pairs, free), ncpl=declared_on
+        )
+        pin = grid_pin(old)
+        moved_entries = []
+        for (entry, resolved), package in zip(pairs, relazified, strict=True):
             # `grid_free` is honoured inside `package_move`, which answers
             # "unchanged" for a named package -- so testing it again here was dead
             # code that read as load-bearing. Mutation found it.
-            if (
-                isinstance(package, PackageSpec)
+            unverifiable = (
+                pin is not None
                 and verdicts.get(getattr(package, "name", None), ("", ""))[0]
                 == "unverifiable"
                 # A VOIDED package is already refused by its own complaint, which names
@@ -5246,35 +5500,51 @@ class ModelSpec:
                 # the same package twice with two different explanations -- measured on
                 # a real ncpl 36 -> 100 move. One defect, one sentence.
                 and PIN_VOIDED not in (package.metadata or {})
-                and (pin := grid_pin(getattr(self.context, "grid", None))) is not None
             )
-            else package
-            for package in relazified
-        )
+            if isinstance(entry, PackageRef) and package is resolved:
+                # The library package is shared, so the stamp rides on the REF and the
+                # build hands it across (`_ref_resolved`). An earlier move's stamp is
+                # kept: the values still mean the mesh they were declared on.
+                if unverifiable and entry.moved_from is None:
+                    entry = replace(entry, moved_from=pin)
+                moved_entries.append(entry)
+                continue
+            if isinstance(entry, PackageRef):
+                # The move CHANGED what the ref names -- arrays remapped, an eager
+                # `.gpkg` re-declared -- and the changed copy is not the library's
+                # package, so it goes INLINE in place of the ref (user decision,
+                # 2026-10-15), saying where it came from. Not "via a ref" any more.
+                metadata = {
+                    key: value for key, value in (package.metadata or {}).items()
+                    if key != MOVED_VIA_REF
+                }
+                package = replace(
+                    package, metadata={**metadata, INLINED_FROM_REF: entry.key}
+                )
+            moved_entries.append(_move_stamped(package, pin) if unverifiable else package)
         return replace(
             self,
             grid=grid,
-            packages=stamped,
+            packages=tuple(moved_entries),
             context=replace(self.context, grid=None, domain=None, surfaces=None),
         )
 
-    def _remap_onto(self, packages, grid, *, rule: str, uncovered: str):
+    def _remap_onto(self, packages, grid, *, old_grid, rule: str, uncovered: str):
         """Carry every remappable package's arrays onto ``grid``; see ``with_grid``.
 
-        The OLD mesh is read from ``self.context`` HERE and not later, because
-        ``with_grid`` does not mutate: the grid these arrays were declared on is present
-        at this call and absent from the result. That is the whole reason the remap is
-        eager rather than a recipe resolved at build.
+        ``old_grid`` is the mesh the arrays were declared on, read by ``with_grid`` at
+        the call and not later, because ``with_grid`` does not mutate: that grid is
+        present at this call and absent from the result. That is the whole reason the
+        remap is eager rather than a recipe resolved at build.
         """
 
-        old_grid = getattr(self.context, "grid", None)
         if old_grid is None:
             raise ValueError(
-                f"{self.name}: remap=True carries this model's per-cell arrays from its "
-                "CURRENT mesh onto the new one, and this model's context has no grid to "
-                "carry them from -- a deferred-grid model has never been resolved, so "
-                "there are no values on a mesh yet. Move it without `remap=`, or build "
-                "it once first."
+                f"{self.name}: remap=True carries this model's per-cell arrays from the "
+                "mesh they were declared on onto the new one, and this model holds no "
+                "grid to carry them from -- neither `grid=` nor "
+                "`context=ModelContext(grid=...)`, or one whose route does not resolve. "
+                "Move it without `remap=`, or declare the grid it was built on."
             )
         old_polys = _polygons_of(old_grid)
         new_polys = _polygons_of(grid)
@@ -5346,30 +5616,47 @@ class ModelSpec:
             )
         return cell_coverage(old.gdf_vorPolys, _polygons_of(grid))
 
-    def move_report(self, *, grid_free: tuple[str, ...] | list[str] = ()) -> list[dict[str, str]]:
+    def move_report(
+        self,
+        *,
+        grid_free: tuple[str, ...] | list[str] = (),
+        library: Any = None,
+    ) -> list[dict[str, str]]:
         """What a grid move would do to each package, readable BEFORE the build.
 
         The build is what refuses, so this is how you find out what it will refuse
-        without waiting for `prepare_run` to raise.
+        without waiting for `prepare_run` to raise. It classifies exactly as
+        :meth:`with_grid` does -- an ``mf.ref`` as the library package it names, against
+        the mesh the packages were declared on, a deferred one resolved -- so the two
+        cannot disagree; which is why it needs ``library=`` in the same cases.
 
         Parameters
         ----------
         grid_free : sequence of str, optional
             Package names (a ref's library key) to report as mesh-independent,
             as :meth:`with_grid` would treat them. Default: empty.
+        library : Project, optional
+            The project whose libraries the model's ``mf.ref`` and
+            ``mf.grid_ref`` entries name, as for :meth:`with_grid`. Required
+            when the model holds a ref no earlier move stamped, or a
+            ``grid_ref`` grid -- ``ValueError`` naming it otherwise. Default
+            ``None``.
 
         Returns
         -------
         list of dict
-            One ``{"package", "how", "why"}`` row per package, where ``how`` is
-            ``"rebuilt"``, ``"stale"``, ``"unverifiable"``, ``"remapped"`` or
-            ``"unchanged"``.
+            One ``{"package", "how", "why"}`` row per package -- a ref's row
+            under its library key -- where ``how`` is ``"rebuilt"``, ``"stale"``,
+            ``"unverifiable"``, ``"remapped"`` or ``"unchanged"``.
         """
 
+        library = _checked_library(library, "move_report")
+        pairs = _move_entries(self, library, verb="move_report")
+        old = _declared_mesh(self, library, verb="move_report")
         return move_report(
-            self,
-            grid_free=tuple(grid_free),
-            ncpl=getattr(getattr(self.context, "grid", None), "ncpl", None),
+            [(_package_entry_label(entry), resolved) for entry, resolved in pairs],
+            grid_free=_grid_free_names(pairs, tuple(grid_free)),
+            ncpl=getattr(old, "ncpl", None),
         )
 
     def build(
@@ -6380,6 +6667,7 @@ class SimulationSpec:
         remap: bool = False,
         rule: str | None = None,
         uncovered: str | None = None,
+        library: Any = None,
     ) -> SimulationSpec:
         """Return a copy moved to ``grid``, with everything derived from the old one gone.
 
@@ -6396,6 +6684,10 @@ class SimulationSpec:
         ``grid_free`` names packages the caller asserts are mesh-independent, so they
         are not stamped. Everything else that names cells without a pin IS stamped and
         the build refuses it -- see :meth:`ModelSpec.with_grid`.
+
+        A model built from a project names its packages by ``mf.ref`` and often its grid
+        by ``mf.grid_ref``; classifying those needs the library they name, so pass
+        ``library=project`` -- a moved model holding either raises naming it otherwise.
 
         **This reports and stamps; the BUILD refuses.** Read :meth:`move_report` to see
         what will happen before it does.
@@ -6436,6 +6728,20 @@ class SimulationSpec:
             For ``remap=True``: ``"nearest"`` or ``"raise"`` for a new cell no old
             cell reaches, per :meth:`ModelSpec.with_grid`. Checked and refused
             like ``rule``. Default ``None``: ``"nearest"`` under ``remap=True``.
+        library : Project, optional
+            The project whose libraries the moved models' ``mf.ref`` and
+            ``mf.grid_ref`` entries name, handed to :meth:`ModelSpec.with_grid`
+            for each: refs are classified as the packages they name, a
+            ``grid_ref`` grid is resolved to measure against. Required when a
+            moved model holds a ref no earlier move stamped, or a ``grid_ref``
+            grid (``ValueError`` naming it otherwise). Nothing in the library is
+            changed. Default ``None``.
+
+        Returns
+        -------
+        SimulationSpec
+            The moved copy, with a ``with_grid`` record appended to ``lineage``
+            (and a ``derive`` record after it when ``name`` is given).
         """
 
         if isinstance(grid, GridRef):
@@ -6450,7 +6756,8 @@ class SimulationSpec:
         if on is not None:
             moved = self.with_model(
                 self.model(on).with_grid(
-                    grid, grid_free=free, remap=remap, rule=rule, uncovered=uncovered
+                    grid, grid_free=free, remap=remap, rule=rule, uncovered=uncovered,
+                    library=library,
                 )
             )
             targets = [on]
@@ -6465,7 +6772,7 @@ class SimulationSpec:
                 moved = moved.with_model(
                     moved.model(model_name).with_grid(
                         grid, grid_free=free, remap=remap, rule=rule,
-                        uncovered=uncovered,
+                        uncovered=uncovered, library=library,
                     )
                 )
         moved = replace(
@@ -6486,7 +6793,11 @@ class SimulationSpec:
         return moved.derive(name) if name is not None else moved
 
     def move_report(
-        self, *, on: str | None = None, grid_free: tuple[str, ...] | list[str] = ()
+        self,
+        *,
+        on: str | None = None,
+        grid_free: tuple[str, ...] | list[str] = (),
+        library: Any = None,
     ) -> list[dict[str, str]]:
         """One row per package per model: what a grid move does to it.
 
@@ -6501,6 +6812,10 @@ class SimulationSpec:
         grid_free : sequence of str, optional
             Package names to report as mesh-independent, as :meth:`with_grid`
             would treat them. Default: empty.
+        library : Project, optional
+            The project whose libraries the models' ``mf.ref`` and
+            ``mf.grid_ref`` entries name, as for :meth:`with_grid` -- required in
+            the same cases, ``ValueError`` naming it otherwise. Default ``None``.
 
         Returns
         -------
@@ -6513,7 +6828,7 @@ class SimulationSpec:
         return [
             {"model": model.name, **row}
             for model in models
-            for row in model.move_report(grid_free=grid_free)
+            for row in model.move_report(grid_free=grid_free, library=library)
         ]
 
     def coverage_on(self, grid: Any, *, on: str | None = None) -> dict[str, Any]:

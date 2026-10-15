@@ -1346,6 +1346,33 @@ Refused at the declaration, each still available with `context=`:
 
 `mf.sfr` and `mf.lak` still require `context=`.
 
+### Moving a model that uses the libraries — `with_grid(library=project)`
+
+```python
+sim.move_report(library=project)                        # read it first
+moved = sim.with_grid(new_vor, library=project)
+moved = sim.with_grid(mf.grid_ref("fine"), library=project, grid_free=("ic_regrid",))
+```
+
+A move classifies each `mf.ref` as the library package it NAMES, and measures every
+package against the mesh the model was DECLARED on. Both need the project, so a model
+holding an `mf.ref` (unless an earlier move already stamped it) or declared on
+`grid=mf.grid_ref(key)` **raises naming `library=project`** without it. A model on no
+mesh at all -- the first `mf.gwf(...).with_grid(grid)` -- needs none (ledger 597).
+
+| what the ref names | what the move does |
+| --- | --- |
+| nothing mesh-bound (`mf.npf(k=1.0)`, `mf.ic(strt=90.0)`, a recipe) | `unchanged` / `rebuilt`; the ref stays a ref |
+| per-cell values or typed cellids | `unverifiable`: the REF is stamped (`PackageRef.moved_from`) and the build refuses it, naming `mf.ref(key)` |
+| a package the move must CHANGE -- arrays under `remap=True`, an eager `.gpkg` | an INLINE copy replaces the ref; its row says the library package is unchanged |
+
+The library package itself is never changed: it is shared with every other model and run
+that names it. `grid_free=` takes the ref's KEY. A deferred declared grid is resolved at the
+call to be measured against -- a `GridSpec.from_object` for free, a recipe meshed once in a
+temporary directory -- where before a deferred-grid model had nothing to measure, and its
+per-cell arrays moved as `unchanged`. A stamp is never overwritten by a later move: the
+values still mean the mesh they were declared on.
+
 ### Moving a calibrated array to a new mesh — `with_grid(remap=True)`
 
 ```python
@@ -1362,6 +1389,7 @@ instead of `unverifiable` and the build accepts them. Serves `npf` `k`/`k22`/`k3
 | `remap` | opt-in. The default does not move — a remap is the inferior route wherever a source exists |
 | `rule` | the CONDUCTIVITY rule: `"geometric"` (default), `"mean"`, `"harmonic"`, `"majority"` |
 | `uncovered` | `"nearest"` (default, fills and warns in detail) or `"raise"` |
+| `library` | the project the model's `mf.ref`s name: a ref'd array is carried as an INLINE copy (above) |
 
 `rule=` and `uncovered=` are checked at the call: an unknown value raises even when no
 package holds an array to carry, and either one given without `remap=True` raises naming
@@ -1428,7 +1456,10 @@ it as a library package (`project.add_package("ic_regrid", mf.ic(strt=strt))` +
 `mf.ref("ic_regrid")`). Either way the model's grid must save too: a built `grid=new_vor`
 cannot be serialized, so register it (`project.add_grid("mesh",
 mf.GridSpec.from_object(new_vor))` + `mf.gwf(..., grid=mf.grid_ref("mesh"))`) or keep the
-`GridSpec` it was resolved from.
+`GridSpec` it was resolved from. Moving a model that holds such a ref'd array on is
+`sim.with_grid(next_grid, library=project)`, and the ref reads `unverifiable` -- its values
+are shaped for `"mesh"` -- so the build refuses it: register fresh values for the next grid,
+or pass `remap=True` to carry these as an inline copy (ledger 597).
 
 ### A run's heads as a recipe — `mf.ic(strt=mf.Heads(old_run))`
 
