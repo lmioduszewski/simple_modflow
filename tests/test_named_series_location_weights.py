@@ -30,7 +30,11 @@ import pytest
 import myflopy as mf
 from myflopy.modflow.mf6.observations.hydrographs import read_readings
 from myflopy.modflow.mf6.pest import PestProject
-from myflopy.modflow.mf6.pest.specs import LakeStageObservationSpec, SfrFlowObservationSpec
+from myflopy.modflow.mf6.pest.specs import (
+    LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+    SfrStageObservationSpec,
+)
 from tests.test_pest_handed_targets import _observation_at, run_toy
 
 pyemu = pytest.importorskip("pyemu")
@@ -249,3 +253,18 @@ def test_no_refusal_names_a_weight_spelling_that_fails():
     followed = mf.LakeStageTargets(
         locations=pd.DataFrame({"name": ["pond"], "lake": [0], "weight": [2.0]}), values=wide.drop(columns="weight"))
     assert followed.get()["weight"].tolist() == [2.0]
+
+
+@pytest.mark.parametrize("spec", [
+    LakeStageObservationSpec, SfrStageObservationSpec, SfrFlowObservationSpec,
+])
+def test_a_specs_set_weight_is_documented_below_the_locations(spec):
+    """A spec's ``weight`` entry said every row with no READING weight took it.
+
+    That stopped being true when a location weight came between the two, so the
+    entry must name the locations' ``weight_column`` it now sits below.
+    """
+
+    doc = inspect.cleandoc(spec.__doc__)
+    entry = re.search(r"^weight : .*?(?=^\w+ : |\Z)", doc, re.S | re.M).group(0)
+    assert "weight_column" in entry and "locations table" in entry, entry

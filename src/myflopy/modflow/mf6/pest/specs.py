@@ -231,7 +231,7 @@ class LakeStageObservationSpec:
 
     ``cal.observe(...)`` / ``cal.forecast(...)`` accept a bare
     ``LakeStageTargets`` and wrap it; build this spec explicitly to pin a
-    non-default ``prefix`` or a uniform ``weight``. Although ``targets`` has a
+    non-default ``prefix`` or a set ``weight``. Although ``targets`` has a
     default, the build REQUIRES it: a spec without one raises ``ValueError``
     when ``cal.build()`` prepares the observations.
 
@@ -251,11 +251,13 @@ class LakeStageObservationSpec:
         Ignored (see above). Default ``"stage"``.
     weight : float or None, optional
         The set's observation weight. When not ``None`` every target row holding
-        a value and no weight of its own gets it (cast with ``float``): a
-        reading's weight in the targets' values table wins (ledger
-        504; this used to overwrite it). Default ``None``: those rows get
-        weight ``1.0``. Every row no target measures gets weight 0 either way
-        (ledger 340), and a forecast's weights are zero regardless.
+        a value and no weight of its own -- neither a reading's ``weight`` in the
+        targets' values table (ledger 504; this used to overwrite it) nor its
+        lake target's in the locations table (``LakeStageTargets``'s
+        ``weight_column``; ledger 609) -- gets it (cast with
+        ``float``). Default ``None``: those rows get weight ``1.0``. Every row
+        no target measures gets weight 0 either way (ledger 340), and a
+        forecast's weights are zero regardless.
     prefix : str, optional
         pyEMU observation-name prefix, default ``"lak_stage"``; it is the set's
         PEST observation group (ledger 358). It also names the files the build
@@ -301,9 +303,11 @@ class SfrStageObservationSpec:
         two sets need two prefixes.
     weight : float or None, optional
         The set's observation weight (ledger 504, as a lake set's): every
-        target row holding a value and no weight of its own in the targets'
-        values table gets it (cast with ``float``). Default ``None``: those rows
-        get weight ``1.0``. Rows no target measures get weight 0 either way, and
+        target row holding a value and no weight of its own -- neither a
+        reading's ``weight`` in the targets' values table nor its reach target's
+        in the locations table (``SfrStageTargets``'s ``weight_column``; ledger
+        609) -- gets it (cast with ``float``). Default ``None``: those
+        rows get weight ``1.0``. Rows no target measures get weight 0 either way, and
         a forecast's weights are zero regardless. ``cal.observe(targets)`` builds
         the spec without one; build this spec to set it. PESTPP-IES draws a
         reading's noise with standard deviation 1/weight, so a flow in
@@ -336,9 +340,11 @@ class SfrFlowObservationSpec:
         two sets need two prefixes.
     weight : float or None, optional
         The set's observation weight (ledger 504, as a lake set's): every
-        target row holding a value and no weight of its own in the targets'
-        values table gets it (cast with ``float``). Default ``None``: those rows
-        get weight ``1.0``. Rows no target measures get weight 0 either way, and
+        target row holding a value and no weight of its own -- neither a
+        reading's ``weight`` in the targets' values table nor its reach target's
+        in the locations table (``SfrFlowTargets``'s ``weight_column``; ledger
+        609) -- gets it (cast with ``float``). Default ``None``: those
+        rows get weight ``1.0``. Rows no target measures get weight 0 either way, and
         a forecast's weights are zero regardless. ``cal.observe(targets)`` builds
         the spec without one; build this spec to set it. PESTPP-IES draws a
         reading's noise with standard deviation 1/weight, so a flow in
