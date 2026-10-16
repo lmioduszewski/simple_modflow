@@ -1198,6 +1198,7 @@ def _load_locations(
     weight_column: str | None,
     screen_top_column: str | None = None,
     screen_bottom_column: str | None = None,
+    owner: str = "HeadTargets",
 ) -> pd.DataFrame:
     """Load and validate a head-target locations layer.
 
@@ -1209,7 +1210,9 @@ def _load_locations(
     is the two-screen well of ledger 234 -- two observations -- unless the rows
     carry screens, and then the name must be ONE row (:func:`_location_screens`,
     ledger 556). The ``screen_top``/``screen_bottom`` columns are kept
-    only when the table carries the screen columns.
+    only when the table carries the screen columns. A location's ``weight`` must
+    be blank or a finite number from 0 (:func:`_coerce_row_weights`, refused
+    naming ``owner``; ledger 609).
     """
 
     if isinstance(locations, gpd.GeoDataFrame):
@@ -1311,6 +1314,11 @@ def _load_locations(
         frame["group"] = pd.NA
     if "weight" not in frame.columns:
         frame["weight"] = np.nan
+    # A location's weight passes the reading rule (ledger 609): -3
+    # reached the control file as -3.0, and 'x' as text.
+    frame["weight"] = _coerce_row_weights(
+        frame["weight"], frame, owner=owner, column=weight_column or "weight", of="location"
+    )
 
     frame["name_key"] = _normalize_identifier_series(frame["name"])
     if "cell" in frame.columns:
@@ -1592,6 +1600,36 @@ def _refuse_names_repeated_in_a_layer(frame: pd.DataFrame) -> None:
 #: the set's, which beats 1.0.
 ROW_WEIGHT_COLUMN = "weight"
 
+#: Where a reading's own weight waits while its values meet the locations table,
+#: which carries a ``weight`` column of its own (ledger 504).
+_READING_WEIGHT = "_reading_weight"
+
+
+def _readings(values: pd.DataFrame) -> pd.DataFrame:
+    """``values`` with a reading's own ``weight`` set aside before it meets the locations table."""
+
+    return values.rename(columns={"weight": _READING_WEIGHT})
+
+
+def _reading_weight_first(merged: pd.DataFrame) -> pd.DataFrame:
+    """One ``weight``: a reading's own, else its location's (ledger 504).
+
+    The values table may carry a per-reading ``weight`` and the locations table
+    always carries the location's, so a plain merge returned ``weight_x`` and
+    ``weight_y`` from ``get`` and ``compare``, and ``residuals`` raised
+    ``KeyError`` naming ``weight``. This is the order the PEST build applies
+    (``pest.observations._location_weights``), for zones, lakes and reaches
+    alike (ledger 609).
+    """
+
+    if _READING_WEIGHT not in merged.columns:
+        return merged
+    reading = pd.to_numeric(merged.pop(_READING_WEIGHT), errors="coerce").astype(float)
+    if "weight" in merged.columns:
+        reading = reading.fillna(pd.to_numeric(merged["weight"], errors="coerce").astype(float))
+    merged["weight"] = reading
+    return merged
+
 
 def _long_values(
     frame: pd.DataFrame,
@@ -1676,7 +1714,8 @@ def _long_values(
                 f"per-reading weight, so its {weight_column!r} column would be read as a "
                 "target of that name. Give per-reading weights in the LONG form -- columns "
                 f"{time_column!r}, 'name', {value_column!r} and 'weight', one row per reading -- "
-                "or a weight per location (the locations' weight column)."
+                "or one weight per location, in the weight column of its locations table "
+                "(weight_column=, default 'weight')."
             )
         value_columns = [column for column in frame.columns if column != time_column]
         clashing = [column for column in value_columns
@@ -1705,17 +1744,38 @@ def _long_values(
     return long
 
 
-def _coerce_row_weights(raw: pd.Series, long: pd.DataFrame, *, owner: str, column) -> pd.Series:
-    """Each reading's PEST weight: a blank is none, anything else a finite number from 0.
+def _coerce_row_weights(
+    raw: pd.Series, long: pd.DataFrame, *, owner: str, column, of: str = "reading"
+) -> pd.Series:
+    """Each reading's or location's PEST weight: a blank is none, anything else a finite number from 0.
 
-    A negative weight has no meaning to PEST, and an infinite one makes phi
-    infinite; both are refused naming the reading, as a value that is not a
-    number is (:func:`_coerce_target_values`).
+    ONE rule for what a weight may be, read for a values table's readings
+    (``of="reading"``, ledger 504) and for a locations table's rows
+    (``of="location"``, every family; ledger 609 -- a location weight
+    of -3 reached the control file as -3.0, and one of ``'x'`` as 1.0). A
+    negative weight has no meaning to PEST, and an infinite one makes phi
+    infinite; both are refused naming the reading or location, as a value that
+    is not a number is (:func:`_coerce_target_values`). A location is named by
+    POSITION: one name may be several rows (a well in two layers, a zone's
+    rows), so its label is not unique.
     """
 
     blank = raw.map(_is_blank).astype(bool)
     numbers = pd.to_numeric(raw.where(~blank), errors="coerce").astype(float)
-    failed = (~blank & ~np.isfinite(numbers.to_numpy())) | (numbers.to_numpy() < 0)
+    failed = (~blank.to_numpy() & ~np.isfinite(numbers.to_numpy())) | (numbers.to_numpy() < 0)
+    if failed.any() and of == "location":
+        names = long["name"].to_numpy()
+        values = raw.to_numpy()
+        offenders = [
+            f"{_shown(names[position])} weighs {_shown(values[position])}"
+            for position in np.flatnonzero(failed)[:5]
+        ]
+        raise ValueError(
+            f"{owner} locations: a location's weight (column {column!r}) must be blank -- "
+            "none of its own -- or a finite number from 0, and "
+            f"{int(failed.sum())} are not: {_listing(offenders)}. PESTPP-IES draws a "
+            "reading's noise with standard deviation 1/weight."
+        )
     if failed.any():
         offenders = [
             (
@@ -2099,44 +2159,99 @@ def _resolve_feature_ids(
     return resolved
 
 
+def _refuse_names_given_twice(frame: pd.DataFrame, *, id_column: str, owner: str) -> None:
+    """Refuse a lake or reach target name given on two rows of one locations table (ledger 609).
+
+    A name is ONE target reading ONE lake or reach, so a repeat has no reading
+    that is not a guess: a lake table kept its LAST row and an SFR table its
+    FIRST, a ``Series`` its last, and ``{1: 0, "1": 1}`` lake 1 -- all in
+    silence. Identical rows are refused too, as ledger 502 refuses a head name
+    twice in one layer. Names are compared as TEXT, exactly (lake and reach
+    targets are matched to their values exactly). Rows are named by the frame's
+    index label: a position for a dict, ``Series`` or records, the caller's own
+    label for a ``DataFrame``.
+    """
+
+    repeated = frame["name"].duplicated(keep=False)
+    if not repeated.any():
+        return
+    items = []
+    for name, group in frame.loc[repeated].groupby("name", sort=False):
+        rows = ", ".join(
+            f"row {_shown(label)}: {id_column} {_shown(ident)}"
+            for label, ident in zip(group.index, group[id_column], strict=True)
+        )
+        items.append(f"{_shown(name)} ({rows})")
+    raise ValueError(
+        f"{owner} locations: a target name may be given once, and {_listing(items)} "
+        f"{'is' if len(items) == 1 else 'are'} given more than once. One name is one "
+        f"target reading one {id_column}: drop the repeated row, or give each target its "
+        f"own name -- several names may share a {id_column}. Names are compared as text, "
+        "so 1 and '1' are one name."
+    )
+
+
 def _normalize_named_integer_locations(
     locations,
     *,
     id_column: str,
     target_name: str,
+    weight_column: str | None = "weight",
 ) -> pd.DataFrame:
-    """Normalize simple ``name -> id`` location definitions (ids read by :func:`_feature_id`)."""
+    """Normalize ``name -> id`` lake or reach locations into ``name``, ``<id_column>``, ``weight``.
 
-    source = {} if locations is None else locations
-    if isinstance(source, pd.Series):
-        source = source.to_dict()
-    elif isinstance(source, pd.DataFrame):
+    The ONE reading of a lake or reach target set's locations
+    (``LakeStageTargets``, ``SfrStageTargets``, ``SfrFlowTargets``). A ``dict`` or
+    ``Series`` is ``{name: id}``; a ``DataFrame`` or list of records carries
+    ``name`` and ``id_column`` columns and may carry ``weight_column``, each
+    location's PEST weight (ledger 609: it was dropped, so those
+    observations reached the control file at 1.0). Names pass through ``str`` and
+    may be given ONCE (:func:`_refuse_names_given_twice`); ids are read by
+    :func:`_feature_id`; a weight by :func:`_coerce_row_weights`'s location rule,
+    ``NaN`` for none.
+    """
+
+    columns = ["name", id_column, "weight"]
+    if locations is None:
+        return pd.DataFrame(columns=columns)
+    if isinstance(locations, pd.Series):
+        frame = pd.DataFrame({"name": list(locations.index), id_column: list(locations.to_numpy())})
+    elif isinstance(locations, pd.DataFrame):
         required = {"name", id_column}
-        if required - set(source.columns):
-            missing = sorted(required - set(source.columns))
+        if required - set(locations.columns):
+            missing = sorted(required - set(locations.columns))
             raise ValueError(f"{target_name} locations DataFrame is missing columns: {', '.join(missing)}")
-        source = source.loc[:, ["name", id_column]].drop_duplicates(subset=["name"]).set_index("name")[id_column].to_dict()
-    elif isinstance(source, (list, tuple)):
-        source_frame = pd.DataFrame(source)
+        frame = locations
+    elif isinstance(locations, (list, tuple)):
+        frame = pd.DataFrame(locations)
         required = {"name", id_column}
-        if required - set(source_frame.columns):
-            missing = sorted(required - set(source_frame.columns))
+        if required - set(frame.columns):
+            missing = sorted(required - set(frame.columns))
             raise ValueError(f"{target_name} location records are missing columns: {', '.join(missing)}")
-        source = (
-            source_frame.loc[:, ["name", id_column]]
-            .drop_duplicates(subset=["name"])
-            .set_index("name")[id_column]
-            .to_dict()
-        )
-
-    normalized = {
-        str(name): _feature_id(value, name=name, owner=target_name, feature=id_column)
-        for name, value in dict(source).items()
-    }
-    frame = pd.DataFrame([{"name": name, id_column: value} for name, value in normalized.items()])
+    else:
+        source = dict(locations)
+        frame = pd.DataFrame({"name": list(source.keys()), id_column: list(source.values())})
     if frame.empty:
-        return pd.DataFrame(columns=["name", id_column])
-    return frame
+        return pd.DataFrame(columns=columns)
+
+    table = pd.DataFrame(
+        {
+            "name": [str(name) for name in frame["name"]],
+            id_column: [
+                _feature_id(value, name=name, owner=target_name, feature=id_column)
+                for name, value in zip(frame["name"], frame[id_column], strict=True)
+            ],
+        },
+        index=frame.index,
+    )
+    _refuse_names_given_twice(table, id_column=id_column, owner=target_name)
+    if weight_column is not None and weight_column in frame.columns:
+        table["weight"] = _coerce_row_weights(
+            frame[weight_column], table, owner=target_name, column=weight_column, of="location"
+        ).to_numpy()
+    else:
+        table["weight"] = np.nan
+    return table.reset_index(drop=True)
 
 
 def _normalize_named_series_values(

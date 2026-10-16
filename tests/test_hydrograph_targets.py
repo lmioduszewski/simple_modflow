@@ -537,6 +537,13 @@ def test_lake_stages_bin_by_the_same_rule(models, tmp_path):
     compared = lake.compare(model)
     assert set(compared["per"]) == set(year.months_of(-1).values())
     assert compared["sim_stage"].notna().all()
+    # A lake is weighted through its locations' weight column, which every binned
+    # target at it takes (ledger 609: the column was dropped).
+    weighted = mf.LakeStageTargets.from_hydrographs(
+        pd.DataFrame({"name": ["pit"], "lake": [0], "weight": [50.0]}), stages, model=model,
+        mode="average_year",
+    )
+    assert weighted.compare(model)["weight"].eq(50.0).all()
     _, three = models["three"]  # 37 periods where the lake run has 25: refused before LAK is read
     for read in (lake.compare, lake.simulated_series):
         with pytest.raises(ValueError, match=r"LakeStageTargets.(compare|simulated_series)\(...\): .*runs 37 "

@@ -169,7 +169,10 @@ class DrnFlowTargets(_CellZoneFlowTargets):
         observation of that zone that has a target value and no weight of its
         own, and weight 1 where both are ``NaN``; a zone given as rows with
         DIFFERENT weights is refused, and every period without a target value
-        gets weight 0 (ledger 340).
+        gets weight 0 (ledger 340). A blank is "none of its own"; anything but a
+        blank or a finite number from 0 raises ``ValueError`` naming the zone
+        (ledger 609: it was not checked, and ``'x'`` reached the
+        control file as 1.0).
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after

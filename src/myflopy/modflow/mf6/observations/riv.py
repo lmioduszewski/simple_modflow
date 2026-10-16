@@ -167,7 +167,10 @@ class RivFlowTargets(_CellZoneFlowTargets):
         DIFFERENT weights is refused, and every period without a target value
         gets weight 0 (ledger 340). PESTPP-IES draws a reading's noise with
         standard deviation 1/weight, so a flow in ft3/d at weight 1 carries
-        1 ft3/d of noise.
+        1 ft3/d of noise. A blank is "none of its own"; anything but a blank or a finite
+        number from 0 raises ``ValueError`` naming the zone (ledger
+        609: it was not checked, and ``'x'`` reached the control
+        file as 1.0).
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after

@@ -17,14 +17,16 @@ from myflopy.modflow.mf6.observations._shared import (
     _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
-    _feature_id,
     _measured_periods,
     _normalize_compare_time,
     _normalize_lake_stage_values,
+    _normalize_named_integer_locations,
     _observation_label,
     _ObservedQuantity,
     _owning_package,
     _read_declared_observations,
+    _reading_weight_first,
+    _readings,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_reserved_target_names,
@@ -206,8 +208,11 @@ class LakeStageTargets:
         the targets are read (ledger 503 -- ``int()`` truncated
         ``0.7`` to 0 and a missing lake read nothing, in silence; MF6's files
         number lakes from ONE, so one past the last is named so). Each name is
-        passed through ``str``.
-        Several names may share a lake. Default ``None``: no targets.
+        passed through ``str``. A name may be given ONCE: one given twice --
+        ``1`` and ``"1"`` are one name -- raises ``ValueError`` naming each row
+        and its lake (it kept the LAST row in silence; ledger 609).
+        Several names may share a lake. A table may carry the ``weight_column``,
+        each lake target's PEST weight. Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed lake stage through time, in the model's length units. A path is
         read with ``pandas.read_csv``. LONG form has ``name`` and
@@ -223,7 +228,8 @@ class LakeStageTargets:
         its column (ledger 340).
         A LONG or one-series table may carry a ``weight`` column (matched
         ignoring case): each READING's own PEST weight (ledger 504). It
-        beats the set's weight (a ``LakeStageObservationSpec``'s ``weight``), which beats 1.0; a blank means "none of its own", and
+        beats the location's weight (``weight_column``), which beats the set's
+        (a ``LakeStageObservationSpec``'s ``weight``), which beats 1.0; a blank means "none of its own", and
         anything but a blank or a finite number from 0 raises ``ValueError``.
         PESTPP-IES draws a reading's noise with standard deviation 1/weight. A
         WIDE table cannot carry one (its ``weight`` column would be a target of
@@ -269,6 +275,21 @@ class LakeStageTargets:
         the bound holds; :meth:`compare` scores it so too (``residual`` 0 there,
         ``raw_residual`` simulated minus target). ``cal.forecast(...)`` refuses a
         bound set.
+    weight_column : str or None, optional
+        Column of a ``DataFrame`` or list-of-records ``locations`` holding each
+        lake target's PEST weight, matched exactly and carried as ``weight``.
+        Default ``"weight"``; ``None``, or a table without the column, gives no
+        location weights, and a ``{name: lake}`` dict or a ``Series`` carries
+        none. A blank is "none of its own"; anything but a blank or a finite
+        number from 0 raises ``ValueError`` naming the target. It is the weight
+        of each of the target's readings that holds a value and has no weight of
+        its own in ``values`` -- a reading's own weight beats it, and it beats the
+        set's (``LakeStageObservationSpec``'s ``weight``), which beats 1.0
+        (ledger 504) -- in :meth:`get`, :meth:`compare` and the PEST build; a
+        period with no target value carries weight 0 there (ledger 340).
+        PESTPP-IES draws a reading's noise with standard deviation 1/weight, so a
+        stage known to 0.02 ft is weight 50. Until ledger 609 the
+        column was dropped in silence and the build gave 1.0.
 
     Examples
     --------
@@ -288,6 +309,7 @@ class LakeStageTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
     inequality: str | None = None
+    weight_column: str | None = "weight"
 
     #: What an INACTIVE lake -- the one lake with no stage for calibration -- is
     #: WRITTEN as in the CSV PEST reads (ledger 329), by both writers -- the base
@@ -309,27 +331,17 @@ class LakeStageTargets:
         """Normalize the ``name -> lake`` locations and observed values into internal tables."""
 
         self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
-        normalized: dict[str, int] = {}
-        source = self.locations if self.locations is not None else {}
-        if isinstance(source, pd.Series):
-            source = source.to_dict()
-        elif isinstance(source, pd.DataFrame):
-            if {"name", "lake"} - set(source.columns):
-                raise ValueError("LakeStageTargets locations DataFrame requires 'name' and 'lake' columns.")
-            source = source.set_index("name")["lake"].to_dict()
-        elif isinstance(source, (list, tuple)):
-            source_frame = pd.DataFrame(source)
-            if {"name", "lake"} - set(source_frame.columns):
-                raise ValueError("LakeStageTargets locations records require 'name' and 'lake' keys.")
-            source = source_frame.set_index("name")["lake"].to_dict()
-        for name, lake_id in dict(source).items():
-            normalized[str(name)] = _feature_id(
-                lake_id, name=name, owner=type(self).__name__, feature="lake"
-            )
-        _refuse_reserved_target_names(
-            normalized, owner=type(self).__name__, columns=("stage", "sim_stage")
+        # The ONE reading of lake or reach locations (ledger 609): a
+        # name given twice is refused (the LAST row won here in silence), and a
+        # table's weight column is each lake target's weight (it was dropped).
+        self._locations = _normalize_named_integer_locations(
+            self.locations, id_column="lake", target_name=type(self).__name__,
+            weight_column=self.weight_column,
         )
-        self._series = normalized
+        _refuse_reserved_target_names(
+            self._locations["name"], owner=type(self).__name__, columns=("stage", "sim_stage")
+        )
+        self._series = dict(zip(self._locations["name"], self._locations["lake"], strict=True))
         self._values = _normalize_lake_stage_values(
             self.values,
             time_column=self.time_column,
@@ -434,9 +446,12 @@ class LakeStageTargets:
         records : list of dict or pandas.DataFrame
             One row per target per time, as ``pandas.DataFrame(records)`` reads
             it, with columns ``name``, ``lake`` (MF6's lake number, ZERO-based),
-            ``time_column`` and ``value_column``, all matched exactly.
-            ``ValueError`` when there are no records or a column is missing. A
-            name's lake is taken from its FIRST row.
+            ``time_column`` and ``value_column``, all matched exactly, and
+            optionally ``weight`` -- each RECORD's own PEST weight, a blank
+            meaning none of its own (ledger 504; it was dropped). ``ValueError``
+            when there are no records, a column is missing, or one name's
+            records name two lakes, naming the first row of each (it took the
+            FIRST in silence; ledger 609).
         time_column : str, optional
             Column holding each record's time label. Default ``"time"``.
         value_column : str, optional
@@ -465,13 +480,15 @@ class LakeStageTargets:
         if {"name", "lake", time_column, value_column} - set(frame.columns):
             missing = {"name", "lake", time_column, value_column} - set(frame.columns)
             raise ValueError("from_records(...) is missing required columns: " + ", ".join(sorted(missing)))
-        locations = (
-            frame.loc[:, ["name", "lake"]]
-            .drop_duplicates(subset=["name"])
-            .set_index("name")["lake"]
-            .to_dict()
-        )
-        values_frame = frame.loc[:, [time_column, "name", value_column]].copy()
+        # One location per (name, lake): a name whose records name two lakes is
+        # refused by the constructor, naming each first record (it took the FIRST
+        # in silence; ledger 609).
+        locations = frame.loc[:, ["name", "lake"]].drop_duplicates()
+        # A record's weight is ITS reading's (ledger 504), as
+        # ``HeadTargets.from_records`` reads it: it was dropped here.
+        values_frame = frame.loc[
+            :, [time_column, "name", value_column, *(["weight"] if "weight" in frame.columns else [])]
+        ].copy()
         return cls(locations=locations, values=values_frame, time_column=time_column,
                    value_column=value_column, package=package, inequality=inequality)
 
@@ -487,6 +504,7 @@ class LakeStageTargets:
         rule: str | None = None,
         date_column: str = "date",
         value_column: str = "stage",
+        weight_column: str | None = "weight",
         max_offset=None,
         between=None,
         min_years: int | None = None,
@@ -506,7 +524,8 @@ class LakeStageTargets:
         ----------
         locations : dict, pandas.Series, pandas.DataFrame, list or tuple
             The named lakes, read as the constructor's ``locations``: ``{name:
-            lake}`` with MF6's lake number ZERO-based, or the lake's boundname.
+            lake}`` with MF6's lake number ZERO-based, or the lake's boundname; a
+            table may carry each lake's weight in ``weight_column``.
         readings : str, pathlib.Path, pandas.DataFrame or pandas.Series
             The dated stage readings, in the model's length units. A path is read
             with ``pandas.read_csv``. WIDE: ``date_column`` plus one column per
@@ -517,7 +536,7 @@ class LakeStageTargets:
             name that is not a target name (matched EXACTLY, as lake values are)
             raises ``ValueError`` naming it; two readings of one lake at one
             instant collapse when equal and raise when not; a ``weight`` column
-            raises (weight the set through ``cal.observe(..., weight=)``).
+            raises (weight a lake through the ``weight_column`` of ``locations``).
         model : SimulationBase
             The model the targets will be compared on, whose calendar the
             readings are binned against (its TDIS must declare
@@ -544,6 +563,11 @@ class LakeStageTargets:
         value_column : str, default "stage"
             The stage column of a LONG or one-series table, matched ignoring case;
             the result's ``value_column``.
+        weight_column : str or None, default "weight"
+            Column of a ``locations`` table holding each lake's PEST weight (the
+            constructor's ``weight_column``, ledger 609); with no
+            reading weight possible, it is every binned target's weight at that
+            lake.
         max_offset : str, pandas.Timedelta, datetime.timedelta, numpy.timedelta64 or None, default None
             History with ``rule="nearest_end"`` only: a reading farther than this
             from its period's end is not used. Elsewhere it raises.
@@ -578,7 +602,7 @@ class LakeStageTargets:
         """
 
         owner = cls.__name__
-        known = cls(locations=locations, package=package)
+        known = cls(locations=locations, package=package, weight_column=weight_column)
         calendar, months = model_clock(model, mode=mode, owner=owner)
         long = read_readings(readings, date_column=date_column, value_column=value_column, owner=owner)
         if "name" not in long.columns:
@@ -607,6 +631,7 @@ class LakeStageTargets:
             value_column=value_column,
             package=package,
             inequality=inequality,
+            weight_column=weight_column,
         )
         targets._binned = binning
         return targets
@@ -634,14 +659,24 @@ class LakeStageTargets:
         return None if binned is None else binned.calendar
 
     def get(self) -> pd.DataFrame:
-        """Return the named lake-stage definitions or merged values."""
+        """Return the named lake-stage definitions or merged values.
 
-        definitions = pd.DataFrame(
-            [{"name": name, "lake": lake_id} for name, lake_id in self._series.items()]
-        )
+        Returns
+        -------
+        pandas.DataFrame
+            With no values, ``name``, ``lake`` and ``weight`` (the location's,
+            ``NaN`` for none); with values, each values row joined on ``name``
+            with ONE ``weight`` -- the reading's own, else its location's (ledger
+            504) -- the weight the PEST build gives the observation, ``NaN``
+            meaning the set's weight, else 1.0.
+        """
+
+        definitions = self._locations.copy()
         if self._values.empty:
             return definitions
-        return _copy_frame(self._values.merge(definitions, on="name", how="left"))
+        return _copy_frame(
+            _reading_weight_first(_readings(self._values).merge(definitions, on="name", how="left"))
+        )
 
     def to_long(self) -> pd.DataFrame:
         """Return the long-format lake-stage target table."""
@@ -907,6 +942,8 @@ class LakeStageTargets:
         pandas.DataFrame
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``lake``, ``time``, ``per``, ``stage_target``,
+            ``weight`` (as :meth:`get`'s; for a set given no values it is the
+            location's, though the build gives every such row weight 0),
             ``sim_stage``, ``residual`` (simulated minus target) and
             ``abs_residual`` -- for a BOUND set (``inequality``) PEST++'s
             residual, 0 where the bound holds, with ``raw_residual`` (simulated
@@ -938,6 +975,9 @@ class LakeStageTargets:
 
         refuse_another_clock(self, model, caller="LakeStageTargets.compare(...)")
         definitions = self._definitions_on(model)
+        # Each target's location weight, joined by name so the simulated side
+        # stays id-only (ledger 609).
+        weights = self._locations.loc[:, ["name", "weight"]]
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
@@ -947,11 +987,16 @@ class LakeStageTargets:
             simulated = _lake_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
-            compare = _compare_without_values(simulated, target_column="stage_target")
+            compare = _compare_without_values(
+                simulated.merge(weights, on="name", how="left"), target_column="stage_target"
+            )
         else:
             # The values joined to the CHECKED lakes, a boundname resolved -- what
-            # ``get()`` shows as declared.
-            targets = _copy_frame(self._values.merge(definitions, on="name", how="left"))
+            # ``get()`` shows as declared -- with ONE weight: the reading's own,
+            # else its location's (ledger 504).
+            targets = _copy_frame(_reading_weight_first(_readings(self._values).merge(
+                definitions.merge(weights, on="name"), on="name", how="left"
+            )))
             targets["per"] = _measured_periods(
                 targets, value_column="stage", caller="LakeStageTargets.compare(...)"
             )
@@ -989,8 +1034,8 @@ class LakeStageTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
-            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``stage_target``, ``sim_stage``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
@@ -999,7 +1044,9 @@ class LakeStageTargets:
         """
 
         frame = self.compare(model)
-        columns = ["name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]
+        columns = [
+            "name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual", "weight",
+        ]
         return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
@@ -1255,7 +1302,8 @@ class BoundLakeStageTargets:
         pandas.DataFrame
             One row per target row (per simulated row, ``stage_target`` and the
             residuals ``NaN``, when the set holds no values): ``name``, ``lake``,
-            ``time``, ``per``, ``stage_target``, ``sim_stage``, ``residual``
+            ``time``, ``per``, ``stage_target``, ``weight`` (as
+            :meth:`LakeStageTargets.compare`'s), ``sim_stage``, ``residual``
             (simulated minus target) and ``abs_residual``.
         """
 
@@ -1274,8 +1322,8 @@ class BoundLakeStageTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
-            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``stage_target``, ``sim_stage``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
         """
 

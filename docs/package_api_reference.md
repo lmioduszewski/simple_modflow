@@ -1045,7 +1045,7 @@ mode="history", rule=None, date_column="date", value_column=None, name_column=,
 layer_column=, group_column=, weight_column=, max_offset=None, between=None,
 min_years=None)`** (`ConcTargets` inherits it; `LakeStageTargets.from_hydrographs(locations,
 readings, *, model, package=None, mode=, rule=, date_column=, value_column="stage",
-max_offset=, between=, min_years=)` alike; ledger 543). `readings` is a CSV path
+weight_column="weight", max_offset=, between=, min_years=)` alike; ledger 543). `readings` is a CSV path
 or a table, WIDE (a date column and one column per well -- dates may be the index) or
 LONG (`date`, `name`, value), binned against `model.calendar` by one module,
 `observations/hydrographs.py` (`read_readings`, `bin_readings`). `mode="history"`:
@@ -1073,11 +1073,13 @@ dates (ledger 544).
 (ledger 504). A LONG values table (`time`, `name`, value) may carry a `weight`
 column, one weight per reading; it was dropped without a word. A blank is none of its
 own, a weight that is not a finite number from 0 is refused, and a WIDE table with a
-`weight` column is refused naming the LONG form. Head, concentration and DRN-zone
-locations carry a location weight; lake and SFR sets take a set weight through their
-spec (`SfrStageObservationSpec(weight=)` / `SfrFlowObservationSpec(weight=)` are new; a
-lake spec's `weight` no longer overrides a reading's). `HeadTargets.from_records` reads
-a record's `weight` as that reading's.
+`weight` column is refused naming the LONG form. Every family's locations carry a
+location weight (`weight_column=`, default `"weight"`), lake and SFR sets included --
+they dropped it until ledger 609; the spec's set `weight=` sits below it (a lake
+spec's `weight` no longer overrides a reading's). A location weight is checked as a
+reading's is, a lake or reach name given twice in a locations table is refused naming
+both rows, and `HeadTargets.from_records` and `LakeStageTargets.from_records` read a
+record's `weight` as that reading's.
 
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
 target to the simulated row whose index EQUALS its period and to its column by name,

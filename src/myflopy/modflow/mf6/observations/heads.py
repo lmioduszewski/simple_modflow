@@ -231,7 +231,10 @@ class HeadTargets:
         its own in ``values`` (a reading's weight wins, ledger 504), and
         ``NaN`` gives those observations weight 1; a period with no target value
         carries weight 0 (ledger 340). Default ``"weight"``; ``None`` or an
-        absent column leaves it ``NaN``.
+        absent column leaves it ``NaN``. A blank is "none of its own";
+        anything but a blank or a finite number from 0 raises ``ValueError``
+        naming the location (ledger 609: it was not checked, and a
+        weight of -3 reached the control file as -3.0).
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``. Required once ``times`` has been applied
@@ -354,6 +357,7 @@ class HeadTargets:
             weight_column=self.weight_column,
             screen_top_column=self.screen_top_column,
             screen_bottom_column=self.screen_bottom_column,
+            owner=type(self).__name__,
         )
         if not self._SCREENS and self.screened:
             raise ValueError(
@@ -466,7 +470,8 @@ class HeadTargets:
             PEST observation weight per target (see the constructor's
             ``weight_column``). A scalar applies to every cell; a sequence must
             have one entry per cell. Default ``None`` leaves ``weight`` as
-            ``NaN``.
+            ``NaN``. A weight that is neither blank nor a finite number from 0
+            raises ``ValueError`` (ledger 609).
         time_column : str, optional
             Name of the time column in the table built here, and stored on the
             result. Default ``"time"``.
@@ -836,6 +841,7 @@ class HeadTargets:
             weight_column=weight_column,
             screen_top_column=screen_top_column,
             screen_bottom_column=screen_bottom_column,
+            owner=owner,
         )
         calendar, months = model_clock(model, mode=mode, owner=owner)
         long = read_readings(readings, date_column=date_column, value_column=value_column, owner=owner)

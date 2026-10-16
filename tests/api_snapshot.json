@@ -2037,7 +2037,8 @@
       "value_column:POSITIONAL_OR_KEYWORD='stage'",
       "times:POSITIONAL_OR_KEYWORD=None",
       "package:POSITIONAL_OR_KEYWORD=None",
-      "inequality:POSITIONAL_OR_KEYWORD=None"
+      "inequality:POSITIONAL_OR_KEYWORD=None",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'"
     ],
     "LakeStageTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -2063,6 +2064,7 @@
       "rule:KEYWORD_ONLY=None",
       "date_column:KEYWORD_ONLY='date'",
       "value_column:KEYWORD_ONLY='stage'",
+      "weight_column:KEYWORD_ONLY='weight'",
       "max_offset:KEYWORD_ONLY=None",
       "between:KEYWORD_ONLY=None",
       "min_years:KEYWORD_ONLY=None",
@@ -3842,7 +3844,8 @@
       "value_column:POSITIONAL_OR_KEYWORD='flow'",
       "times:POSITIONAL_OR_KEYWORD=None",
       "package:POSITIONAL_OR_KEYWORD=None",
-      "inequality:POSITIONAL_OR_KEYWORD=None"
+      "inequality:POSITIONAL_OR_KEYWORD=None",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'"
     ],
     "SfrFlowTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
@@ -3924,7 +3927,8 @@
       "value_column:POSITIONAL_OR_KEYWORD='stage'",
       "times:POSITIONAL_OR_KEYWORD=None",
       "package:POSITIONAL_OR_KEYWORD=None",
-      "inequality:POSITIONAL_OR_KEYWORD=None"
+      "inequality:POSITIONAL_OR_KEYWORD=None",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'"
     ],
     "SfrStageTargets.attach_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",

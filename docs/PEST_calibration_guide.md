@@ -420,11 +420,17 @@ cal.observe(head_targets)          # history-matching targets (measured values +
 
 **Where a weight comes from** (ledger 504): a reading's OWN weight -- a `weight`
 column in a LONG values table (`time`, `name`, value, `weight`) -- beats its location's
-(the locations' `weight` column, for head, concentration and DRN/RIV-zone targets), which
-beats the set's (`LakeStageObservationSpec(weight=)`, `SfrStageObservationSpec(weight=)`,
+(the locations' `weight` column, `weight_column=`, on every family: head, concentration,
+lake, SFR stage and flow, DRN/RIV zones), which beats the set's
+(`LakeStageObservationSpec(weight=)`, `SfrStageObservationSpec(weight=)`,
 `SfrFlowObservationSpec(weight=)`, `DrnFlowObservationSpec(weight=)`,
 `RivFlowObservationSpec(weight=)`), which beats 1.0. A blank weight means "none of its
-own". A WIDE values table cannot carry one and is refused naming the LONG form.
+own". A WIDE values table cannot carry one and is refused naming the LONG form. A location
+weight that is not blank or a finite number from 0 is refused naming the location, and a
+lake or reach name given twice in a locations table is refused naming both rows (ledger
+609: lake and SFR sets dropped their locations' weight column, so those
+observations reached the control file at 1.0, and a repeated name kept one row in
+silence).
 
 **What the control file holds is exactly your targets** (ledger 340). Each target is
 matched to the simulated row whose index equals its `time` read as a zero-based stress
@@ -599,7 +605,8 @@ date in silence. Refused at construction, by name: a model whose TDIS has no
 text date column written day first in some rows and read month first in others
 (`13/02/2018` beside `01/02/2018`; ledger 545), two
 different readings of one well at one instant (equal ones collapse), a well not among the
-locations, a `weight` column in the readings (weight a well through its locations), and an
+locations, a `weight` column in the readings (weight a well or a lake through its locations'
+weight column, `weight_column=`), and an
 option the mode does not read. **The review draws dates**: the build records each set's
 period-end dates (every set on a dated model), so `ies.plot_vs_obs()` and
 `plot_prior_vs_obs()` put the ensembles on a date axis; a template built before that keeps

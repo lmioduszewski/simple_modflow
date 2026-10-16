@@ -221,9 +221,9 @@ def read_readings(
         raise ValueError(
             f"{caller}: the readings carry a {weight!r} column, and binning makes ONE "
             "target from several readings, so a reading's own weight has no "
-            "observation to go to. Weight a location through its locations table, or "
-            "the whole set through its observation spec (cal.observe(..., weight=) for "
-            "a lake set)."
+            "observation to go to. Weight each location through the weight column of "
+            "its locations table (weight_column=, default 'weight'): every target "
+            "binned at that location takes it."
         )
 
     dates = frame[date_column]

@@ -27,6 +27,8 @@ from myflopy.modflow.mf6.observations._shared import (
     _ObservedQuantity,
     _owning_package,
     _read_declared_observations,
+    _reading_weight_first,
+    _readings,
     _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
@@ -176,8 +178,8 @@ class SfrStageTargets:
     locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
         The named reaches: a ``{name: reach}`` dict, a ``Series`` indexed by
         name, or a ``DataFrame`` / list of record dicts with ``name`` and
-        ``reach`` columns (``ValueError`` naming whichever is missing; a
-        repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
+        ``reach`` columns (``ValueError`` naming whichever is missing).
+        ``reach`` is MF6's reach number,
         ZERO-based (:meth:`to_flopy_obs` writes it one-based). A whole number (``1.0``, or text reading as one, ``"3"``)
         is the number; other text is the reach's BOUNDNAME, found (any case) in
         the SFR packagedata when the targets are read and refused unless it
@@ -186,8 +188,12 @@ class SfrStageTargets:
         the targets are read (ledger 503 -- ``int()`` truncated
         ``0.7`` to 0 and a missing reach read nothing, in silence; MF6's files
         number reaches from ONE, so one past the last is named so). Each name is
-        passed through ``str``.
-        Default ``None``: no targets.
+        passed through ``str``. A name may be given ONCE: one given twice --
+        ``1`` and ``"1"`` are one name -- raises ``ValueError`` naming each row
+        and its reach (it kept the FIRST row of a table and the LAST of a
+        ``Series``, in silence; ledger 609). Several names may share
+        a reach. A table may carry the ``weight_column``, each reach target's
+        PEST weight. Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed stage through time, in the model's length units. A path is
         read with ``pandas.read_csv``. LONG form has ``name`` and
@@ -203,7 +209,8 @@ class SfrStageTargets:
         its column (ledger 340).
         A LONG or one-series table may carry a ``weight`` column (matched
         ignoring case): each READING's own PEST weight (ledger 504). It
-        beats the set's weight (the observation spec's ``weight``), which beats 1.0; a blank means "none of its own", and
+        beats the location's weight (``weight_column``), which beats the set's
+        (the observation spec's ``weight``), which beats 1.0; a blank means "none of its own", and
         anything but a blank or a finite number from 0 raises ``ValueError``.
         PESTPP-IES draws a reading's noise with standard deviation 1/weight. A
         WIDE table cannot carry one (its ``weight`` column would be a target of
@@ -247,6 +254,21 @@ class SfrStageTargets:
         (``l_sfr_stage``), which scores 0 wherever the bound holds; :meth:`compare`
         scores it so too (``residual`` 0 there, ``raw_residual`` simulated minus
         target). ``cal.forecast(...)`` refuses a bound set.
+    weight_column : str or None, optional
+        Column of a ``DataFrame`` or list-of-records ``locations`` holding each
+        reach target's PEST weight, matched exactly and carried as ``weight``.
+        Default ``"weight"``; ``None``, or a table without the column, gives no
+        location weights, and a ``{name: reach}`` dict or a ``Series`` carries
+        none. A blank is "none of its own"; anything but a blank or a finite
+        number from 0 raises ``ValueError`` naming the target. It is the weight
+        of each of the target's readings that holds a value and has no weight of
+        its own in ``values`` -- a reading's own weight beats it, and it beats the
+        set's (``SfrStageObservationSpec``'s ``weight``), which beats 1.0
+        (ledger 504) -- in :meth:`get`, :meth:`compare` and the PEST build; a
+        period with no target value carries weight 0 there (ledger 340).
+        PESTPP-IES draws a reading's noise with standard deviation 1/weight, so
+        a stage known to 0.02 ft is weight 50. Until ledger 609 the column was dropped in silence
+        and the build gave 1.0.
 
     Examples
     --------
@@ -266,6 +288,7 @@ class SfrStageTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
     inequality: str | None = None
+    weight_column: str | None = "weight"
 
     #: What the family reads, for resolving and checking its reaches (ledger 503).
     _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_STAGE
@@ -274,7 +297,14 @@ class SfrStageTargets:
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
 
         self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
-        self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
+        # The ONE reading of lake or reach locations (ledger 609): a
+        # name given twice is refused (a table kept its FIRST row and a Series
+        # its LAST, in silence), and a table's weight column is each reach
+        # target's weight (it was dropped).
+        self._locations = _normalize_named_integer_locations(
+            self.locations, id_column="reach", target_name=type(self).__name__,
+            weight_column=self.weight_column,
+        )
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,
             columns=("stage_target", "sim_stage"),
@@ -293,12 +323,24 @@ class SfrStageTargets:
             self._values["name"] = str(self._locations["name"].iloc[0])
 
     def get(self) -> pd.DataFrame:
-        """Return the named reach definitions, or the observed values merged with them."""
+        """Return the named reach definitions, or the observed values merged with them.
+
+        Returns
+        -------
+        pandas.DataFrame
+            With no values, ``name``, ``reach`` and ``weight`` (the location's,
+            ``NaN`` for none); with values, each values row joined on ``name``
+            with ONE ``weight`` -- the reading's own, else its location's (ledger
+            504) -- the weight the PEST build gives the observation, ``NaN``
+            meaning the set's weight, else 1.0.
+        """
 
         definitions = self._locations.copy()
         if self._values.empty:
             return definitions
-        return _copy_frame(self._values.merge(definitions, on="name", how="left"))
+        return _copy_frame(
+            _reading_weight_first(_readings(self._values).merge(definitions, on="name", how="left"))
+        )
 
     def to_long(self) -> pd.DataFrame:
         """Return the long-format SFR-stage target table."""
@@ -496,6 +538,8 @@ class SfrStageTargets:
         pandas.DataFrame
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``reach``, ``time``, ``per``, ``stage_target``,
+            ``weight`` (as :meth:`get`'s; for a set given no values it is the
+            location's, though the build gives every such row weight 0),
             ``sim_stage``, ``residual`` (simulated minus target) and
             ``abs_residual``. For a BOUND set (``inequality``) ``residual`` is PEST++'s, 0 where the
             bound holds, and ``raw_residual`` after it is simulated minus target
@@ -522,6 +566,9 @@ class SfrStageTargets:
         """
 
         locations = self._locations_on(model)
+        # Each target's location weight, joined by name so the simulated side
+        # stays id-only (ledger 609).
+        weights = self._locations.loc[:, ["name", "weight"]]
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
@@ -531,11 +578,16 @@ class SfrStageTargets:
             simulated = _sfr_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
-            compare = _compare_without_values(simulated, target_column="stage_target")
+            compare = _compare_without_values(
+                simulated.merge(weights, on="name", how="left"), target_column="stage_target"
+            )
         else:
             # The values joined to the CHECKED reaches, a boundname resolved --
-            # what ``get()`` shows as declared.
-            targets = _copy_frame(self._values.merge(locations, on="name", how="left"))
+            # what ``get()`` shows as declared -- with ONE weight: the reading's
+            # own, else its location's (ledger 504).
+            targets = _copy_frame(_reading_weight_first(_readings(self._values).merge(
+                locations.merge(weights, on="name"), on="name", how="left"
+            )))
             targets["per"] = _measured_periods(
                 targets, value_column="stage_target", caller="SfrStageTargets.compare(...)"
             )
@@ -570,8 +622,8 @@ class SfrStageTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
-            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``stage_target``, ``sim_stage``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
@@ -580,7 +632,9 @@ class SfrStageTargets:
         """
 
         frame = self.compare(model)
-        columns = ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]
+        columns = [
+            "name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual", "weight",
+        ]
         return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
@@ -771,8 +825,8 @@ class SfrFlowTargets:
     locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
         The named (gage) reaches: a ``{name: reach}`` dict, a ``Series`` indexed
         by name, or a ``DataFrame`` / list of record dicts with ``name`` and
-        ``reach`` columns (``ValueError`` naming whichever is missing; a
-        repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
+        ``reach`` columns (``ValueError`` naming whichever is missing).
+        ``reach`` is MF6's reach number,
         ZERO-based (:meth:`to_flopy_obs` writes it one-based). A whole number (``1.0``, or text reading as one, ``"3"``)
         is the number; other text is the reach's BOUNDNAME, found (any case) in
         the SFR packagedata when the targets are read and refused unless it
@@ -781,8 +835,12 @@ class SfrFlowTargets:
         the targets are read (ledger 503 -- ``int()`` truncated
         ``0.7`` to 0 and a missing reach read nothing, in silence; MF6's files
         number reaches from ONE, so one past the last is named so). Each name is
-        passed through ``str``.
-        Default ``None``: no targets.
+        passed through ``str``. A name may be given ONCE: one given twice --
+        ``1`` and ``"1"`` are one name -- raises ``ValueError`` naming each row
+        and its reach (it kept the FIRST row of a table and the LAST of a
+        ``Series``, in silence; ledger 609). Several names may share
+        a reach. A table may carry the ``weight_column``, each reach target's
+        PEST weight. Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed streamflow through time, in model length cubed per model time
         unit, in MF6's own sign: water leaving the reach is NEGATIVE, so enter a
@@ -803,7 +861,8 @@ class SfrFlowTargets:
         its column (ledger 340).
         A LONG or one-series table may carry a ``weight`` column (matched
         ignoring case): each READING's own PEST weight (ledger 504). It
-        beats the set's weight (the observation spec's ``weight``), which beats 1.0; a blank means "none of its own", and
+        beats the location's weight (``weight_column``), which beats the set's
+        (the observation spec's ``weight``), which beats 1.0; a blank means "none of its own", and
         anything but a blank or a finite number from 0 raises ``ValueError``.
         PESTPP-IES draws a reading's noise with standard deviation 1/weight. A
         WIDE table cannot carry one (its ``weight`` column would be a target of
@@ -850,6 +909,22 @@ class SfrFlowTargets:
         observation is in PESTPP-IES's ``l_``/``g_`` group (``l_sfr_flow``), which
         scores 0 wherever the bound holds; :meth:`compare` scores it so too.
         ``cal.forecast(...)`` refuses a bound set.
+    weight_column : str or None, optional
+        Column of a ``DataFrame`` or list-of-records ``locations`` holding each
+        reach target's PEST weight, matched exactly and carried as ``weight``.
+        Default ``"weight"``; ``None``, or a table without the column, gives no
+        location weights, and a ``{name: reach}`` dict or a ``Series`` carries
+        none. A blank is "none of its own"; anything but a blank or a finite
+        number from 0 raises ``ValueError`` naming the target. It is the weight
+        of each of the target's readings that holds a value and has no weight of
+        its own in ``values`` -- a reading's own weight beats it, and it beats the
+        set's (``SfrFlowObservationSpec``'s ``weight``), which beats 1.0
+        (ledger 504) -- in :meth:`get`, :meth:`compare` and the PEST build; a
+        period with no target value carries weight 0 there (ledger 340).
+        PESTPP-IES draws a reading's noise with standard deviation 1/weight, so
+        a flow known to 10 ft3/d is weight 0.1, in 1/(model length3/time).
+        Until ledger 609 the column was dropped in silence and the
+        build gave 1.0.
 
     Examples
     --------
@@ -868,6 +943,7 @@ class SfrFlowTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
     inequality: str | None = None
+    weight_column: str | None = "weight"
 
     #: What the family reads, for resolving and checking its reaches (ledger 503).
     _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_FLOW
@@ -876,7 +952,14 @@ class SfrFlowTargets:
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
 
         self.inequality = _check_inequality(self.inequality, owner=type(self).__name__)
-        self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
+        # The ONE reading of lake or reach locations (ledger 609): a
+        # name given twice is refused (a table kept its FIRST row and a Series
+        # its LAST, in silence), and a table's weight column is each reach
+        # target's weight (it was dropped).
+        self._locations = _normalize_named_integer_locations(
+            self.locations, id_column="reach", target_name=type(self).__name__,
+            weight_column=self.weight_column,
+        )
         _refuse_reserved_target_names(
             self._locations["name"], owner=type(self).__name__,
             columns=("flow_target", "sim_flow"),
@@ -903,12 +986,24 @@ class SfrFlowTargets:
         )
 
     def get(self) -> pd.DataFrame:
-        """Return the named reach definitions, or the observed flows merged with them."""
+        """Return the named reach definitions, or the observed flows merged with them.
+
+        Returns
+        -------
+        pandas.DataFrame
+            With no values, ``name``, ``reach`` and ``weight`` (the location's,
+            ``NaN`` for none); with values, each values row joined on ``name``
+            with ONE ``weight`` -- the reading's own, else its location's (ledger
+            504) -- the weight the PEST build gives the observation, ``NaN``
+            meaning the set's weight, else 1.0.
+        """
 
         definitions = self._locations.copy()
         if self._values.empty:
             return definitions
-        return _copy_frame(self._values.merge(definitions, on="name", how="left"))
+        return _copy_frame(
+            _reading_weight_first(_readings(self._values).merge(definitions, on="name", how="left"))
+        )
 
     def to_long(self) -> pd.DataFrame:
         """Return the long-format SFR-flow target table."""
@@ -1215,6 +1310,8 @@ class SfrFlowTargets:
         pandas.DataFrame
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``reach``, ``time``, ``per``, ``flow_target``,
+            ``weight`` (as :meth:`get`'s; for a set given no values it is the
+            location's, though the build gives every such row weight 0),
             ``sim_flow``, ``residual`` (simulated minus target) and
             ``abs_residual``. ``flow_target`` and ``sim_flow`` are both in MF6's
             sign -- zero or negative, water leaving the reach (ledger 350) -- so a
@@ -1244,6 +1341,9 @@ class SfrFlowTargets:
         """
 
         locations = self._locations_on(model)
+        # Each target's location weight, joined by name so the simulated side
+        # stays id-only (ledger 609).
+        weights = self._locations.loc[:, ["name", "weight"]]
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
@@ -1253,11 +1353,16 @@ class SfrFlowTargets:
             simulated = self._package_flow_table(model)
             simulated = locations.merge(simulated, on="reach", how="left")
         if self._values.empty:
-            compare = _compare_without_values(simulated, target_column="flow_target")
+            compare = _compare_without_values(
+                simulated.merge(weights, on="name", how="left"), target_column="flow_target"
+            )
         else:
             # The values joined to the CHECKED reaches, a boundname resolved --
-            # what ``get()`` shows as declared.
-            targets = _copy_frame(self._values.merge(locations, on="name", how="left"))
+            # what ``get()`` shows as declared -- with ONE weight: the reading's
+            # own, else its location's (ledger 504).
+            targets = _copy_frame(_reading_weight_first(_readings(self._values).merge(
+                locations.merge(weights, on="name"), on="name", how="left"
+            )))
             targets["per"] = _measured_periods(
                 targets, value_column="flow_target", caller="SfrFlowTargets.compare(...)"
             )
@@ -1292,8 +1397,8 @@ class SfrFlowTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
-            ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``flow_target``, ``sim_flow``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
             A set given no ``values`` -- a capture template, a forecast set --
             gets one row per simulated row, its targets and residuals ``NaN``:
@@ -1302,7 +1407,9 @@ class SfrFlowTargets:
         """
 
         frame = self.compare(model)
-        columns = ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]
+        columns = [
+            "name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual", "weight",
+        ]
         return frame.loc[:, columns + (["raw_residual"] if "raw_residual" in frame.columns else [])]
 
     def stats(self, model) -> pd.DataFrame:
@@ -1519,7 +1626,8 @@ class BoundSfrStageTargets:
         pandas.DataFrame
             One row per target row (per simulated row, ``stage_target`` and the
             residuals ``NaN``, when the set holds no values): ``name``,
-            ``reach``, ``time``, ``per``, ``stage_target``, ``sim_stage``,
+            ``reach``, ``time``, ``per``, ``stage_target``, ``weight`` (as
+            :meth:`SfrStageTargets.compare`'s), ``sim_stage``,
             ``residual`` (simulated minus target) and ``abs_residual``.
         """
 
@@ -1538,8 +1646,8 @@ class BoundSfrStageTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
-            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``stage_target``, ``sim_stage``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
         """
 
@@ -1734,7 +1842,8 @@ class BoundSfrFlowTargets:
         pandas.DataFrame
             One row per target row (per simulated row, ``flow_target`` and the
             residuals ``NaN``, when the set holds no values): ``name``,
-            ``reach``, ``time``, ``per``, ``flow_target``, ``sim_flow``,
+            ``reach``, ``time``, ``per``, ``flow_target``, ``weight`` (as
+            :meth:`SfrFlowTargets.compare`'s), ``sim_flow``,
             ``residual`` (simulated minus target, above zero when the model
             sends LESS water downstream than was gauged) and ``abs_residual``.
         """
@@ -1754,8 +1863,8 @@ class BoundSfrFlowTargets:
         -------
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
-            ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
-            ``abs_residual`` -- and ``raw_residual`` for a bound set (ledger
+            ``per``, ``flow_target``, ``sim_flow``, ``residual``,
+            ``abs_residual`` and ``weight`` (as :meth:`compare`'s) -- and ``raw_residual`` for a bound set (ledger
             564).
         """
 

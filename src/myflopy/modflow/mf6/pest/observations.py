@@ -286,7 +286,7 @@ def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
 
     A zone is ONE observation per period, so it is in one group: a zone given as
     several rows carrying different labels is refused, as different weights are
-    (:func:`_zone_weights`). Rows with no label defer to the ones that have one --
+    (:func:`_location_weights`). Rows with no label defer to the ones that have one --
     as a zone set's ``compare()`` reads them (``_zone_details``, ledger 359).
     """
 
@@ -316,10 +316,16 @@ def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
     return frame["name"].map(table.groupby("name")["group"].first()).astype(object)
 
 
-def _zone_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
-    """Each DRN or RIV zone's observation weight, from its location rows; refuse a zone given two."""
+def _location_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
+    """Each target's location weight, for every named-series family; refuse a zone given two.
 
-    locations = targets.locations_gdf
+    A lake's, a reach's (ledger 609: their locations' weight was
+    dropped, so they reached the control file at 1.0) or a DRN/RIV zone's, read
+    from the set's normalized locations, ``NaN`` for none. Only a zone can be
+    several rows of one name, so only a zone can carry two weights.
+    """
+
+    locations = targets._locations
     if "weight" not in locations.columns or frame.empty:
         return frame["weight"]
     table = pd.DataFrame(
@@ -568,11 +574,12 @@ def _prepare_named_series_observations(
     _register_table(project, simulated_wide, simulated_path, prefix=prefix)
 
     frame = _named_series_targets(targets, value_column=value_column, prefix=prefix)
-    # A reading's own weight, else its zone's, else the set's, else 1.0 (ledger
+    # A reading's own weight, else its location's (every family: a lake, a
+    # reach, a zone -- ledger 609), else the set's, else 1.0 (ledger
     # 504). The set's weight used to overwrite every row, and a values
     # table's weight column was dropped before it got here.
+    frame["weight"] = frame["weight"].fillna(_location_weights(targets, frame, prefix=prefix))
     if isinstance(targets, _CellZoneFlowTargets):
-        frame["weight"] = frame["weight"].fillna(_zone_weights(targets, frame, prefix=prefix))
         frame["group"] = _zone_groups(targets, frame, prefix=prefix)
     if weight is not None and not frame.empty:
         frame["weight"] = frame["weight"].fillna(float(weight))

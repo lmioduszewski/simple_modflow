@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 608 entries (613 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 609 entries (614 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 609 | Lake and SFR targets read their locations' `weight` column, every location weight is checked by the reading... | 2026-10-16 |
 | 608 | A `periods=` group holding the steady period beside transient ones is refused at build; a group of steady p... | 2026-10-16 |
 | 607 | `run_template` refuses a PEST working directory as `outputs_from=`, and a run with no finite simulated value | 2026-10-16 |
 | 606 | The rehearsal's head weight is `1 / head_noise`, not a literal | 2026-10-16 |
@@ -20341,6 +20342,9 @@ same day, which is the useful part of the result.
       `weight` on `DrnFlowObservationSpec`, whose zones already carry one~~.
       **Restated 2026-10-12:** `DrnFlowObservationSpec` and `RivFlowObservationSpec`
       take a set `weight=` too, below a zone's own in the order above.
+      **Restated 2026-10-16:** lake and SFR locations carry a location weight too
+      (`weight_column=`, ledger 609), so the order is row > location (every
+      family) > set > 1.0; the set weight sits below the location's.
 
 505. **The PEST head and concentration writers read the file the model's OC declares, and the build refuses one that is absent rather than read another (2026-10-12).**
       `_write_head_target_csv`/`_write_conc_target_csv` opened `<model>.hds`/`.ucn`, the
@@ -22744,3 +22748,35 @@ same day, which is the useful part of the result.
       groups; rebuilding one that mixed fails, naming the fix. Ledger 549's `ordinal` test,
       which grouped the steady block with the transient period repeating it, now runs on an
       all-transient copy of that run.
+
+609. **Lake and SFR targets read their locations' `weight` column, every location weight is checked by the reading rule, and a lake or reach name given twice is refused (2026-10-16).**
+      `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets` and
+      `LakeStageTargets.from_hydrographs` take `weight_column="weight"`, as heads,
+      concentrations and DRN/RIV zones already did; it is read from a table, and a dict
+      or `Series` carries none. Ledger 504's order is unchanged -- reading, location, the
+      set's `*ObservationSpec(weight=)`, 1.0 -- and holds in `get()`, `compare()`,
+      `residuals()` and the build, through ONE `_reading_weight_first` (moved to
+      `_shared`) and ONE build fill, `pest.observations._location_weights` (was
+      `_zone_weights`, now serving every named-series family). Measured before: the
+      column was dropped in silence and those observations reached the pst at 1.0 -- at a
+      0.02 ft stage sd (weight 50) the lake's phi was 1/2,500 of what was meant.
+      Every family's location weight now passes ONE rule, `_coerce_row_weights(of=
+      "location")`: blank, or a finite number from 0. Nothing checked it: a head location
+      weight of -3 reached the pst as -3.0 and a DRN zone weight `'x'` as 1.0 (measured).
+      A name given twice in a lake or reach locations table is REFUSED, naming each row
+      and its id, identical rows included, as ledger 502 refuses a head name twice in one
+      layer; it was last-wins for a lake table and any `Series` and first-wins for an SFR
+      table, and `{1: 0, "1": 1}` read lake 1 (names are compared as text).
+      `LakeStageTargets.from_records` refuses a name whose records name two lakes (it took
+      the first) and reads a record's `weight` as that reading's (it dropped it). The
+      refusals that named `cal.observe(..., weight=)` -- which does not exist -- or "the
+      locations' weight column" -- the one that was dropped -- now name `weight_column=`.
+      **Judgment calls:** a set given no values shows its location weight in `compare()`
+      although the build gives each such row weight 0 (the zones' precedent). The
+      forward-run snapshot stays `name`/`lake|reach`: weights are a build-time matter, so a
+      template's files do not move. A lake table's missing-column refusal now reads as the
+      SFR one did (`... locations DataFrame is missing columns: lake`).
+      **Not done:** retiring the `*ObservationSpec` wrappers (not asked); `HeadTargets.
+      from_records` still takes a name's cell from its FIRST record when the records
+      disagree; SFR has no `from_hydrographs`. Reproducer:
+      `docs/reproducers/named_series_location_weights.py`.

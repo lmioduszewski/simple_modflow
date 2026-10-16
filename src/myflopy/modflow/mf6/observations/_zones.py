@@ -32,6 +32,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
     _check_inequality,
+    _coerce_row_weights,
     _compare_without_values,
     _copy_frame,
     _declared_observations,
@@ -51,6 +52,8 @@ from myflopy.modflow.mf6.observations._shared import (
     _packages_of_type,
     _placement_note,
     _read_declared_observations,
+    _reading_weight_first,
+    _readings,
     _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
@@ -202,6 +205,11 @@ def _normalize_zone_locations(
         frame["group"] = pd.NA
     if "weight" not in frame.columns:
         frame["weight"] = np.nan
+    # A zone's weight passes the reading rule (ledger 609): 'x'
+    # reached the control file as 1.0.
+    frame["weight"] = _coerce_row_weights(
+        frame["weight"], frame, owner=owner, column=weight_column or "weight", of="location"
+    )
     if "cells" in frame.columns:
         frame["cells"] = pd.Series(
             [_coerce_cells(values) for values in frame["cells"]], index=frame.index, dtype=object
@@ -800,36 +808,6 @@ def _warn_on_labels_of_the_one_layer_form(
     warnings.warn(message, UserWarning, stacklevel=4)
 
 
-#: Where a reading's own weight waits while its values meet the zone table, which
-#: carries a ``weight`` column of its own (ledger 504).
-_READING_WEIGHT = "_reading_weight"
-
-
-def _readings(values: pd.DataFrame) -> pd.DataFrame:
-    """``values`` with a reading's own ``weight`` set aside before it meets the zone table."""
-
-    return values.rename(columns={"weight": _READING_WEIGHT})
-
-
-def _reading_weight_first(merged: pd.DataFrame) -> pd.DataFrame:
-    """One ``weight``: a reading's own, else its zone's (ledger 504).
-
-    The values table may carry a per-reading ``weight`` and the zone table always
-    carries the zone's, so a plain merge returned ``weight_x`` and ``weight_y``
-    from ``get`` and ``compare``, and ``residuals`` raised ``KeyError`` naming
-    ``weight``. This is the order the PEST build applies
-    (``pest.observations._zone_weights``).
-    """
-
-    if _READING_WEIGHT not in merged.columns:
-        return merged
-    reading = pd.to_numeric(merged.pop(_READING_WEIGHT), errors="coerce").astype(float)
-    if "weight" in merged.columns:
-        reading = reading.fillna(pd.to_numeric(merged["weight"], errors="coerce").astype(float))
-    merged["weight"] = reading
-    return merged
-
-
 def _packages_in_scope(model, quantity: _ObservedQuantity, package: str | None) -> list[str]:
     """The NAMES of the packages a zone set reads on the budget route, upper-cased as MF6 writes them.
 
@@ -1235,7 +1213,7 @@ class _CellZoneFlowTargets:
         What :meth:`compare` joins to each simulated row, on both routes. A zone
         given as several rows takes its ``group`` and ``weight`` from the first
         row that carries one, as the PEST build does
-        (``pest.observations._zone_groups`` / ``_zone_weights``, which refuse rows
+        (``pest.observations._zone_groups`` / ``_location_weights``, which refuse rows
         that DISAGREE; ledger 359).
         """
 
