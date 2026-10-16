@@ -702,6 +702,66 @@ def _describes_its_mesh(package) -> bool:
     return any(key in options for key in ("cell2d", "vertices", "ncpl"))
 
 
+def _declared_idomain(package, ncpl: int):
+    """The idomain a discretization that holds its own mesh DECLARES, as ``(nlay, ncpl)`` ints.
+
+    ``None`` when it declares none -- MF6 then makes every cell active, so that is the
+    answer and not a gap. ``with_grid(remap=True)`` reads the OLD mesh's activity here
+    when the model's ``context.domain`` is gone (a save drops it, a re-attach and every
+    move set it to ``None``): the stale DISV beside the arrays IS that mesh, and without
+    it every old cell counted as active, so an inactive cell's arbitrary K reached the new
+    mesh (ledger 610).
+
+    Raises ``ValueError`` naming the package when it describes a mesh of another cell
+    count than ``ncpl`` -- the arrays' -- or holds an idomain this cannot read as one value
+    per cell and layer: a guessed mask is the defect this exists to close.
+    """
+
+    import numpy as np
+
+    options = getattr(package, "options", None) or {}
+    name = getattr(package, "name", None) or "the discretization"
+    own = options.get("ncpl")
+    if own is None and options.get("cell2d") is not None:
+        own = len(options["cell2d"])
+    if own is not None and int(own) != int(ncpl):
+        raise ValueError(
+            f"{name!r} describes a mesh of {int(own)} cells and the arrays remap=True "
+            f"carries were declared on {int(ncpl)}, so its idomain cannot say which of "
+            "their cells were active -- it is another mesh's discretization. Put back the "
+            "discretization of the mesh the arrays were declared on, or declare that "
+            "mesh's domain (ModelContext(domain=...))."
+        )
+    value = options.get("idomain")
+    if value is None:
+        return None
+    nlay = options.get("nlay")
+    try:
+        array = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        array = None
+    if array is not None:
+        if array.ndim == 0:
+            return np.full((int(nlay or 1), int(ncpl)), int(array))
+        if array.ndim == 2 and array.shape[1] == ncpl:
+            return array.astype(int)
+        if array.ndim == 1 and nlay is not None:
+            if array.size == int(nlay) * int(ncpl):
+                return array.astype(int).reshape(int(nlay), int(ncpl))
+            if array.size == int(nlay) and int(nlay) != int(ncpl):
+                # One constant per layer, as FloPy accepts a layered array.
+                return np.repeat(array.astype(int)[:, None], int(ncpl), axis=1)
+        if array.ndim == 1 and array.size == ncpl and int(nlay or 1) == 1:
+            return array.astype(int).reshape(1, -1)
+    raise ValueError(
+        f"{name!r} holds an idomain remap=True cannot read as one value per cell and "
+        f"layer of its {int(ncpl)} cells ({type(value).__name__}"
+        + (f", shape {np.shape(value)}" if array is not None else "")
+        + "), so which old cells were active is unknown. Declare the mesh's domain "
+        "(ModelContext(domain=...)) on the model before moving it."
+    )
+
+
 def package_move(
     package, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
 ) -> tuple[str, str]:

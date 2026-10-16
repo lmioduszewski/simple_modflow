@@ -6,7 +6,8 @@ built by `substitute_values`, and the model names it by `mf.ref`) beside an EAGE
 move read the ref; five more rows went wrong on it (ledger 610).
 
 Setup: `rectangular_voronoi` meshes, 4x7 and 7x4 (ncpl 28 each) and 9x9 (ncpl 81), two
-layers, `k` a `(2, 28)` array; no MF6 run. Each row prints what the call did.
+layers, `k` a `(2, 28)` array (the last row: layer 0 inactive over its first 14 cells, whose
+K is 1000 and 1 elsewhere); no MF6 run. Each row prints what the call did.
 
 Measured on 55947911 (before)::
 
@@ -29,6 +30,12 @@ After (ledger 610)::
     reloaded, model-tier with_grid, built          RAISED ValueError (names the recorded mesh)
     remap onto project.grid('new') off the root    dis/old stale, npf remapped
     remap onto mf.grid_ref('new'), library=        dis/old stale, npf remapped
+    reloaded, re-attached, remap=True              layer-0 K max 1000.0 (inactive cells hold 1000)
+
+The last row was measured on the lane's first commit (fdbab145), where a re-attach could
+reach the remap at all; after its review it reads the old mesh's activity off the DISV::
+
+    reloaded, re-attached, remap=True              layer-0 K max 1.0 (inactive cells hold 1000)
 
 Run: `PYTHONPATH=src python docs/reproducers/remap_a_calibrated_ref.py`
 """
@@ -142,6 +149,18 @@ with tempfile.TemporaryDirectory() as scratch:
     saved.add_simulation(_sim(_model(a, mf.ref("dis/old"), mf.ref("npf/cal"))))
     saved.add_simulation(_sim(mf.gwf("m", grid=mf.grid_ref("old"), packages=[
         mf.ref("dis/old"), mf.ref("npf/cal"), mf.ic(strt=90.0)])).derive("s_ref"))
+    # Half of layer 0 inactive, its K marked 1000 (1 elsewhere): a carried 1000 is an
+    # inactive old cell counted as active.
+    holed = _layering(a)
+    holed.idomain[0, : a.ncpl // 2] = 0
+    k_holed = np.ones((2, a.ncpl))
+    k_holed[0, : a.ncpl // 2] = 1000.0
+    saved.add_package("dis/holed", mf.disv(holed))
+    saved.add_package("npf/holed", mf.npf(k=k_holed, icelltype=1))
+    saved.add_simulation(_sim(mf.gwf(
+        "m", context=ModelContext(grid=a, domain=holed.idomain),
+        packages=[mf.ref("dis/holed"), mf.ref("npf/holed"), mf.ic(strt=90.0)],
+    )).derive("s_holed"))
     saved.save()
     elsewhere = scratch / "elsewhere"
     elsewhere.mkdir()
@@ -165,5 +184,13 @@ with tempfile.TemporaryDirectory() as scratch:
             lambda: _how(on_ref.with_grid(q.grid("new"), remap=True, library=q), q))
         row("remap onto mf.grid_ref('new'), library=",
             lambda: _how(on_ref.with_grid(mf.grid_ref("new"), remap=True, library=q), q))
+
+        def _reattached_remap():
+            model = q.simulations["s_holed"].model("m").with_grid(mf.grid_ref("old"), library=q)
+            moved = model.with_grid(mf.grid_ref("new"), remap=True, library=q)
+            npf = next(p for p in moved.packages if getattr(p, "name", None) == "npf")
+            return f"layer-0 K max {npf.options['k'][0].max():.1f} (inactive cells hold 1000)"
+
+        row("reloaded, re-attached, remap=True", _reattached_remap)
     finally:
         os.chdir(here)

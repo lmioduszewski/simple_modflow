@@ -1467,6 +1467,15 @@ was asked to average it and refused the whole move, so no model built with
 `mf.disv(<result>)` could be remapped at all. Nor a package named in `grid_free=`: it moves
 untouched, as the report says.
 
+**Which OLD cells count** (ledger 610): an inactive old cell contributes nothing --
+the engine masks its WEIGHT, never its value. The model's `context.domain` says which cells
+were active when it is there; a save drops it, and a re-attach (like every move) leaves it
+`None`, so the remap then reads the idomain of the discretization beside the arrays -- the
+stale DISV, which IS the old mesh (no idomain there is MF6's all active). Only a model with
+neither -- no domain and a discretization that does not hold its mesh, such as a lazy
+`mf.disv(<stack>)` -- counts every old cell active. A DISV of another cell count than the
+arrays is refused naming it: it cannot say which of THEIR cells were active.
+
 | argument | meaning |
 | --- | --- |
 | `remap` | opt-in. The default does not move — a remap is the inferior route wherever a source exists |

@@ -22838,7 +22838,17 @@ same day, which is the useful part of the result.
       **Measured on Ten Trails copies (the design pass):** the calibrated `ss` simulation
       moved onto the `hm` mesh in 11.2 s (npf/sto/ic `remapped`; dis and rch `stale`), the
       npf alone 1.3 s, and an `hm` fork built in 1.5 s.
-      **Not done:** `coverage_on` takes no `library=`; a remap after a reload treats every
-      old cell as active (the domain is not saved; 101,615 of 101,615 `ss` cells are);
+      **Not done:** `coverage_on` takes no `library=`; ~~a remap after a reload treats every
+      old cell as active (the domain is not saved; 101,615 of 101,615 `ss` cells are);~~
       DIS/DISU are not recognised as discretizations (`with_grid` is DISV-only); no
       one-call verb (the user declined one).
+      **Restated (review, the coordinator's call):** a remap after a reload or a re-attach
+      (`context.domain` is `None`) reads the OLD mesh's activity off the stale eager DISV
+      beside the arrays -- it IS that mesh -- through `grid_identity._declared_idomain`
+      (`idomain > 0` per layer; none declared is MF6's all active). `context.domain` still
+      wins. Only a model with neither (a lazy `mf.disv(<stack>)` resolves at build) counts
+      every old cell active. A DISV of another cell count than the arrays, two
+      discretizations, or an idomain not readable per cell and layer is REFUSED naming it,
+      not guessed -- and read only once a package is carried. Measured: K = 1000 on the
+      inactive half of layer 0 reached the new mesh (max 1000.0) after save, reload and
+      re-attach; it now equals the live move's (max 1.0).

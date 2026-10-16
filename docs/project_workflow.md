@@ -78,7 +78,10 @@ simulation tier skipped it and the model tier moved it unstamped, building the o
 per-cell arrays on the new one. Register the grid it was built on and re-attach it, which
 moves nothing: `project.add_grid(key, mf.GridSpec.from_object(vor))`, then
 `.with_grid(mf.grid_ref(key), library=project)` (ledger 610). Declaring the model
-on `grid=mf.grid_ref(key)` in the first place avoids the step.
+on `grid=mf.grid_ref(key)` in the first place avoids the step. The save dropped the
+context's `domain` as well, and the re-attach leaves it `None`; a following
+`with_grid(..., remap=True)` reads which OLD cells were active off the eager DISV beside the
+arrays (its `idomain`), so an inactive cell's value is not carried (ledger 610).
 
 **Swapping the grid re-maps only what was declared LAZILY.** A GIS-driven helper given
 a `context=` (`mf.drn.gpkg(path, context=ctx, …)`, `mf.rch(context=ctx, …)`,

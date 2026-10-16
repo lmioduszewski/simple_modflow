@@ -485,3 +485,115 @@ def test_a_grid_ref_target_without_the_library_is_refused_naming_it(meshes):
     model = _model(a, mf.disv(_layering(a)), mf.npf(k=_k(a), icelltype=1))
     with pytest.raises(TypeError, match=r"library=project.*not GridRef"):
         model.with_grid(mf.grid_ref("new"), remap=True)
+
+
+# --- the OLD mesh's activity after a reload or a re-attach ----------------------- #
+
+
+def _holed(grid):
+    """A layering of ``grid`` whose first layer is inactive over half its cells, and a K
+    that marks those cells: 1000 where inactive, 1 everywhere else."""
+
+    layers = _layering(grid)
+    removed = np.arange(grid.ncpl) < grid.ncpl // 2
+    layers.idomain[0, removed] = 0
+    k = np.ones((NLAY, grid.ncpl))
+    k[0, removed] = 1000.0
+    return layers, k
+
+
+def _carried_k(spec):
+    return next(p for p in spec.packages if getattr(p, "name", None) == "npf").options["k"]
+
+
+def test_a_reattached_model_remaps_from_its_discretizations_active_cells(
+    tmp_path, two_meshes, quiet
+):
+    """A save drops `context.domain` and a re-attach leaves it `None`, and the remap then
+    counted every old cell active: an inactive cell's K (1000 here) reached the new mesh.
+    The stale DISV beside the arrays IS the old mesh and says which cells were active
+    (ledger 610), so the reloaded move now carries what the live one carries."""
+
+    a, b = two_meshes
+    layers, k = _holed(a)
+    root = tmp_path / "p"
+    project = Project(root, name="p")
+    project.add_package("dis/old", mf.disv(layers))
+    project.add_package("npf/cal", mf.npf(k=k, icelltype=1))
+    live = mf.gwf(
+        "m",
+        context=ModelContext(grid=a, domain=layers.idomain),
+        packages=[mf.ref("dis/old"), mf.ref("npf/cal"), mf.ic(strt=90.0)],
+    )
+    project.add_simulation(_sim(live))
+    expected = _carried_k(live.with_grid(b, remap=True, library=project))
+    assert expected[0].max() == pytest.approx(1.0), "the live move masks by context.domain"
+    assert project.save().simulations == 1
+
+    q = Project.load(root)
+    q.add_grid("old", mf.GridSpec.from_object(a))
+    q.add_grid("new", mf.GridSpec.from_object(b))
+    attached = q.simulations["s"].model("m").with_grid(mf.grid_ref("old"), library=q)
+    assert attached.context.domain is None
+
+    moved = attached.with_grid(mf.grid_ref("new"), remap=True, library=q)
+
+    carried = _carried_k(moved)
+    assert carried[0].max() == pytest.approx(1.0), "an inactive old cell reached the new mesh"
+    np.testing.assert_allclose(carried, expected)
+
+
+def test_the_context_domain_wins_over_the_discretization(meshes, quiet):
+    """`context.domain` is what the caller declared; the DISV is read only without it."""
+
+    a, b, _c = meshes
+    layers, k = _holed(a)
+    declared = ModelContext(grid=a, domain=np.ones((NLAY, a.ncpl), dtype=int))
+    model = mf.gwf("m", context=declared, packages=[mf.disv(layers), mf.npf(k=k, icelltype=1)])
+
+    carried = _carried_k(model.with_grid(b, remap=True))
+
+    assert carried[0].max() > 1.0, "every cell the context calls active contributes"
+
+
+def test_a_discretization_of_another_mesh_is_refused_not_read(meshes, quiet):
+    """A DISV of 81 cells beside arrays declared on 28 cannot say which of THEIR cells
+    were active; the remap refuses naming it rather than guessing a mask."""
+
+    a, b, c = meshes
+    model = mf.gwf(
+        "m", grid=a, packages=[mf.disv(_layering(c)), mf.npf(k=_k(a), icelltype=1)]
+    )
+    with pytest.raises(ValueError, match=r"'disv' describes a mesh of 81 cells.*declared on 28"):
+        model.with_grid(b, remap=True)
+
+    # Read only when a package is carried: a per-LAYER K needs no mask, so no refusal.
+    layered = mf.gwf("m", grid=a, packages=[mf.disv(_layering(c)), mf.npf(k=[1.0, 2.0])])
+    assert layered.with_grid(b, remap=True).grid is not None
+
+
+def test_declared_idomain_reads_each_form_flopy_takes_and_refuses_the_rest():
+    from flopy.mf6 import ModflowGwfdisv
+
+    from myflopy.grid_identity import _declared_idomain
+    from myflopy.specs import PackageSpec
+
+    def disv(**options):
+        return PackageSpec("disv", ModflowGwfdisv, options={"nlay": 2, "ncpl": 3, **options})
+
+    assert _declared_idomain(disv(), 3) is None, "no idomain is MF6's all active"
+    np.testing.assert_array_equal(_declared_idomain(disv(idomain=1), 3), np.ones((2, 3)))
+    np.testing.assert_array_equal(
+        _declared_idomain(disv(idomain=[1, 0]), 3), [[1, 1, 1], [0, 0, 0]]
+    )
+    np.testing.assert_array_equal(
+        _declared_idomain(disv(idomain=[1, 0, 1, 1, 1, 0]), 3), [[1, 0, 1], [1, 1, 0]]
+    )
+    np.testing.assert_array_equal(
+        _declared_idomain(disv(idomain=np.array([[1, 0, 1], [1, 1, 0]])), 3),
+        [[1, 0, 1], [1, 1, 0]],
+    )
+    with pytest.raises(ValueError, match="cannot read as one value per cell"):
+        _declared_idomain(disv(idomain=[1, 0, 1, 1]), 3)
+    with pytest.raises(ValueError, match="describes a mesh of 3 cells"):
+        _declared_idomain(disv(idomain=1), 4)

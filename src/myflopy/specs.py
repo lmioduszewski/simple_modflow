@@ -64,6 +64,7 @@ from myflopy.grid_identity import (
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
     _context_metadata,  # noqa: F401
+    _declared_idomain,
     _describes_its_mesh,
     _discretization_complaint_families,
     _discretization_complaints,  # noqa: F401
@@ -1719,6 +1720,9 @@ def _remapped_package(
     discretization holding its own mesh is that mesh -- ``package_move``'s ``stale``,
     through the same predicate (ledger 610).
 
+    ``domain`` is the OLD idomain, ``None`` (every old cell active), or a zero-argument
+    callable ``_remap_onto`` defers to here, called only once a package is carried.
+
     A refusal from the engine is allowed to propagate. The alternative -- catching it and
     leaving the package stamped ``unverifiable`` -- would make ``remap=True`` silently do
     nothing for an integer flag or a recharge array, which is ledger 295's failure over
@@ -1761,6 +1765,10 @@ def _remapped_package(
         # prevent. Unreachable while a moved model held no mesh; reading `grid=` as the
         # declared mesh (2026-10-15) made it live. It stays stamped, and says so.
         return package, False
+    if callable(domain):
+        # Deferred by `_remap_onto` until a package is carried: read from the old mesh's
+        # discretization, which may refuse.
+        domain = domain()
     moved_options, report = _remap_engine().remap_arrays(
         dict(package.options),
         old_polys=old_polys,
@@ -1784,6 +1792,35 @@ def _remapped_package(
     # them", which is a lie about a correct remap (measured). Nothing was edited.
     remapped = replace(package, options=moved_options)
     return remapped.with_metadata(**{REMAPPED_FROM: stamp}), True
+
+
+def _discretization_domain(packages, ncpl: int, *, model: str):
+    """The OLD mesh's idomain, read off the discretization that holds it, or ``None``.
+
+    ``None`` means every old cell is active: the model holds no discretization that
+    describes its mesh (a lazy ``mf.disv(<stack>)`` resolves only at build), or that
+    discretization declares no idomain, which MF6 reads as all active. Several are
+    refused rather than one picked.
+    """
+
+    meshes = [
+        package for package in packages
+        if isinstance(package, PackageSpec) and _describes_its_mesh(package)
+    ]
+    if not meshes:
+        return None
+    if len(meshes) > 1:
+        raise ValueError(
+            f"{model}: remap=True reads the old mesh's active cells from the "
+            "discretization beside the arrays, and this model holds "
+            + ", ".join(repr(package.name) for package in meshes)
+            + " -- one model has one. Drop the extra, or declare the domain "
+            "(ModelContext(domain=...))."
+        )
+    try:
+        return _declared_idomain(meshes[0], ncpl)
+    except ValueError as error:
+        raise ValueError(f"{model}: with_grid(remap=True): {error}") from None
 
 
 def grid_pin_of_polygons(polys, ncpl) -> str:
@@ -5571,11 +5608,17 @@ class ModelSpec:
             mesh (``mf.disv(<result>)``, a ``.flopy`` DISV, or a ref to one): it
             reads ``stale``; replace it with ``with_packages(..., slot=)``. A
             ref'd package it carries becomes an inline copy (its
-            ``move_report`` row says so). Raises ``ValueError`` when the model
+            ``move_report`` row says so). An inactive OLD cell contributes
+            nothing: which cells were active is ``context.domain``, else -- a
+            save drops it, a re-attach leaves it ``None`` -- the idomain of the
+            discretization that holds the old mesh (none declared is MF6's all
+            active), else every cell. Raises ``ValueError`` when the model
             holds no grid at all, on a re-attach (there is nothing to carry),
             and -- once a package has an array to carry -- when the two meshes
-            are in different frames (CRS, or no overlap), or the array is an
-            integer flag or one with no measured rule. Default ``False``.
+            are in different frames (CRS, or no overlap), the array is an
+            integer flag or one with no measured rule, or that discretization
+            describes another cell count than the arrays (or holds an idomain
+            not readable per cell and layer). Default ``False``.
         rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
@@ -5785,6 +5828,20 @@ class ModelSpec:
             grid, verb="with_grid(remap=True)", library=library, takes_library=True
         )
         old_polys, new_polys = old_mesh.gdf_vorPolys, new_mesh.gdf_vorPolys
+        ncpl = getattr(old_grid, "ncpl", None)
+        # Which OLD cells were active. `context.domain` wins; a save drops it and a
+        # re-attach (like every move) sets it to `None`, and then the discretization beside
+        # the arrays -- the stale DISV, which IS the old mesh -- says it. Counting every old
+        # cell active carried an inactive cell's arbitrary K onto the new mesh (ledger
+        # 610). Read only when a package is actually carried, so a model with
+        # nothing to carry is not refused over its discretization.
+        domain = getattr(self.context, "domain", None)
+        if domain is None:
+            domain = functools.cache(
+                lambda: _discretization_domain(
+                    packages, ncpl or len(old_polys), model=self.name
+                )
+            )
         carried = []
         for package in packages:
             if isinstance(package, PackageSpec) and package.name not in grid_free:
@@ -5794,8 +5851,8 @@ class ModelSpec:
                     new_polys=new_polys,
                     old_grid=old_mesh,
                     new_grid=new_mesh,
-                    ncpl=getattr(old_grid, "ncpl", None),
-                    domain=getattr(self.context, "domain", None),
+                    ncpl=ncpl,
+                    domain=domain,
                     rule=rule,
                     uncovered=uncovered,
                 )
