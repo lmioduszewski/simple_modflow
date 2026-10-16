@@ -20329,7 +20329,7 @@ same day, which is the useful part of the result.
       `_shared._long_values`, serves every family. It keeps `weight` (case-insensitive)
       from a LONG or one-series table: blank means "none of its own", and anything but
       a finite number from 0 raises naming the reading. The build applies the order
-      row > location (heads/conc/DRN zone) > set (lake, SFR) > 1.0, and `get()` shows
+      row > location ~~(heads/conc/DRN zone)~~ > set ~~(lake, SFR)~~ > 1.0, and `get()` shows
       the combined weight. **Behaviour changes for existing sets:** a LONG table that
       carried a `weight` column now has it applied. `HeadTargets.from_records` reads a
       record's `weight` as that reading's; it was the name's FIRST record's, given to
