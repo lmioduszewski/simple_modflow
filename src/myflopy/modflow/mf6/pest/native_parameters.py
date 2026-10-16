@@ -1098,7 +1098,9 @@ class NativeParameterSpec:
         letters, digits and ``_``. Held as ``"month"``, ``None`` or a dict of
         lower-cased labels to sorted tuples of ``int`` (:func:`checked_periods`,
         which refuses anything else, and refuses it on a target whose files are not
-        per period).
+        per period). At build, a group holding steady-state and transient periods
+        together is refused; a group of steady periods alone is legal
+        (ledger 608).
     name : str or None, optional
         Parameter group / name base. Default ``None``: the canonical target with
         dots removed, plus ``_<package>`` when ``package`` is given
@@ -2205,6 +2207,61 @@ def staged_calendar(project, model) -> PeriodCalendar:
     return PeriodCalendar(start, perlen, units, steady_periods(flow, len(perlen)))
 
 
+def _refuse_a_season_holding_a_steady_period(spec, steady) -> None:
+    """Refuse a ``periods=`` group holding steady-state AND transient periods (ledger 608).
+
+    A steady-state period is the long-term average and in no seasonal group (ledger
+    549, the user's rule Q3): ``"month"`` leaves it out, and an explicit group naming it
+    beside transient periods would scale it by a season's multiplier. A group of
+    steady-state periods alone is legal. The DECLARED periods are read, not the ones a
+    file serves, so the refusal does not depend on which of the target's blocks reach
+    the steady period.
+
+    Parameters
+    ----------
+    spec : NativeParameterSpec
+        A spec whose ``periods`` is a mapping (:func:`checked_periods`' form); its
+        target and ``name`` are named by the refusal.
+    steady : tuple of bool or None
+        Each stress period's steady-state flag, zero-based, as
+        :func:`~myflopy.modflow.mf6.period_calendar.steady_periods` reads the staged flow
+        model -- the reading :func:`staged_calendar` (so :func:`month_labels`) uses.
+        ``None`` (a non-flow model) checks nothing. Every period the mapping names is
+        below its length (:func:`period_labels` checks that first).
+
+    Raises
+    ------
+    ValueError
+        Naming the first such group in the mapping's order, its steady and transient
+        periods, ledger 549's Q3, and both fixes.
+    """
+
+    if steady is None:
+        return
+    for label, members in spec.periods.items():
+        still = [period for period in members if steady[period]]
+        moving = [period for period in members if not steady[period]]
+        if not (still and moving):
+            continue
+        one = len(still) == 1
+        shown = ", ".join(str(p) for p in moving[:6]) + (", ..." if len(moving) > 6 else "")
+        target = spec.recipe.canonical
+        raise ValueError(
+            f"periods= group {label!r} of {target!r} (name {spec.name!r}) holds the "
+            f"steady-state period{'' if one else 's'} {still[0] if one else still} with "
+            f"transient period{'' if len(moving) == 1 else 's'} [{shown}]: its multiplier "
+            "would scale the steady period -- the long-term average -- by a season's factor, "
+            "and a steady-state period is in no seasonal group (ledger 549, the user's rule "
+            f"Q3). Take {'it' if one else 'them'} out of the group -- a parameter declared "
+            "without periods= reaches the steady period: stack a plain "
+            f"cal.parameterize({target!r}, name=...) -- or give "
+            f"{'it a group of its own' if one else 'them a group of their own'}, 'ss': {still}. "
+            "model.calendar.table() dates the steady period too (its midpoint's month), so "
+            "leave out its steady rows (~table.steady); an average-year run's "
+            "mf.AverageYear.from_model(model).periods leaves its month <NA>."
+        )
+
+
 def period_labels(project, spec: NativeParameterSpec, model) -> list[str | None]:
     """Each stress period's ``periods=`` group, zero-based (``None``: in no group).
 
@@ -2224,7 +2281,9 @@ def period_labels(project, spec: NativeParameterSpec, model) -> list[str | None]
     Raises
     ------
     ValueError
-        When a mapping names a period the run does not have; or what
+        When a mapping names a period the run does not have, or a group holds
+        steady-state and transient periods together
+        (:func:`_refuse_a_season_holding_a_steady_period`); or what
         :func:`staged_calendar` and :func:`month_labels` refuse.
     """
 
@@ -2240,6 +2299,9 @@ def period_labels(project, spec: NativeParameterSpec, model) -> list[str | None]
                     f"{nper} (0..{nper - 1})."
                 )
             labels[period] = label
+    # A steady period in a season (ledger 608): the STO flags as `staged_calendar`
+    # reads them, but not through it -- an explicit mapping needs no start date or TIME_UNITS.
+    _refuse_a_season_holding_a_steady_period(spec, steady_periods(_StagedFlowModel(model), nper))
     return labels
 
 

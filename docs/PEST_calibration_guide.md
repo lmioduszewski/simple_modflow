@@ -316,7 +316,12 @@ cal.parameterize("sto.ss", bounds=(0.2, 5.0))
   STEADY period is in no seasonal group -- it is the long-term average, and only a
   parameter declared without `periods=` reaches it, so stack a plain call for it as
   above. `{"wet": [1, 2, 3], "dry": [7, 8]}` gives explicit groups of zero-based
-  periods. Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
+  periods. A group holding the steady period beside transient ones is refused at build,
+  naming both fixes: leave it out (the plain call reaches it), or give it a group of its
+  own, `{"ss": [0]}`; a group of steady periods alone is legal (ledger 608).
+  Build seasons from `mf.AverageYear.from_model(model).periods`, whose steady row has no
+  month (`isin` reads it as False); `model.calendar.table()` dates the steady period too
+  (its midpoint's month), so leave out its `steady` rows. Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
   a period's block until the next, so a file serving periods of two groups -- or a
   steady period's block repeated into a month -- is refused at build, naming the fix:
   a block for every period, which `AverageYear.by_month` gives. An EMPTY block
@@ -325,6 +330,13 @@ cal.parameterize("sto.ss", bounds=(0.2, 5.0))
   it is refused as unable to act (ledger 517). The monthly
   multipliers are independent in the prior; a temporal correlation between them is
   not built.
+
+  ```python
+  p = mf.AverageYear.from_model(model).periods   # month <NA> on the steady row
+  cal.parameterize("recharge", name="rchs", bounds=(0.4, 2.5), periods={  # wet / dry
+      "wet": p.loc[p.month.isin([11, 12, 1, 2, 3, 4]), "per"].tolist(),
+      "dry": p.loc[p.month.isin([5, 6, 7, 8, 9, 10]), "per"].tolist()})
+  ```
 - **Storage informs only transient data.** `sto.ss` and `sto.sy` are refused on a run
   whose every period is steady state, and `sto.sy` where every cell of a parameter set
   has `ICONVERT` 0 -- the whole selection, a zone, or a layer of a `grid` or pilot-point

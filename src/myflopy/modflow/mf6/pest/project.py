@@ -1326,7 +1326,14 @@ class PestProject:
               ``parameterize("recharge", name=...)`` for that (the user's rule, Q3).
             - ``{label: [zero-based periods]}``: explicit groups; each label is
               letters, digits and ``_`` (lower-cased); a period in no group is left
-              alone.
+              alone. A group holding a steady-state period beside transient ones is
+              refused at :meth:`build`, naming both fixes -- leave the steady period
+              out (a parameter without ``periods`` reaches it) or give it a group of
+              its own, ``{"ss": [0]}``; a group of steady-state periods alone is legal
+              (ledger 608). ``model.calendar.table()`` dates the steady
+              period (its midpoint's month), so leave out its ``steady`` rows when
+              building seasons from it; ``mf.AverageYear.from_model(model).periods``
+              leaves the steady row's ``month`` ``<NA>``.
 
             MF6 repeats a period's block until the next, so a file serves every
             period up to its package's next block; a file serving periods of two
@@ -1338,7 +1345,8 @@ class PestProject:
             ``uzf.vks``, ``porosity``), for a string but ``"month"``, a label that
             is not letters/digits/``_`` or repeats, an empty group, a period that
             is not a whole number ``>= 0`` or is named twice; and at :meth:`build`
-            for a period the run does not have, a group no file serves, ``"month"``
+            for a period the run does not have, a group mixing steady-state and
+            transient periods, a group no file serves, ``"month"``
             on a transient period longer than 31 days, a TDIS with no
             ``TIME_UNITS``, or a TDIS ``START_DATE_TIME`` that differs from
             ``start_datetime``. A ``TypeError`` for anything but a string, a
@@ -1437,6 +1445,10 @@ class PestProject:
         >>> cal.parameterize("recharge", name="rch", bounds=(0.5, 2.0))  # every period
         >>> cal.parameterize("recharge", name="rchm", periods="month",   # x one per month
         ...                  bounds=(0.5, 2.0))
+        >>> p = mf.AverageYear.from_model(model).periods      # month <NA> on the steady row
+        >>> cal.parameterize("recharge", name="rchs", bounds=(0.4, 2.5), periods={  # wet / dry
+        ...     "wet": p.loc[p.month.isin([11, 12, 1, 2, 3, 4]), "per"].tolist(),
+        ...     "dry": p.loc[p.month.isin([5, 6, 7, 8, 9, 10]), "per"].tolist()})
         >>> cal.parameterize("sto.sy", layers=[0], bounds=(0.5, 2.0), physical=(0.01, 0.35))
         >>> cal.parameterize("bedleak", bounds=(0.1, 10))     # one multiplier per lake
         >>> cal.parameterize("bedleak", features=["keevie"], name="kv")  # one lake

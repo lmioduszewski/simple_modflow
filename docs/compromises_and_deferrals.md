@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 607 entries (612 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 608 entries (613 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 608 | A `periods=` group holding the steady period beside transient ones is refused at build; a group of steady p... | 2026-10-16 |
 | 607 | `run_template` refuses a PEST working directory as `outputs_from=`, and a run with no finite simulated value | 2026-10-16 |
 | 606 | The rehearsal's head weight is `1 / head_noise`, not a literal | 2026-10-16 |
 | 605 | `cal.run_template` is the one run of a built template: myflopy's replay, scored by PEST++'s rule, not PESTP... | 2026-10-16 |
@@ -22714,3 +22715,32 @@ same day, which is the useful part of the result.
       refuses), so the pre-flight certified a template that cannot calibrate. A
       non-finite `values=` entry is refused at the call. Both measured in
       `docs/reproducers/run_template_is_pestpp_once.py`, parts D and E.
+
+608. **A `periods=` group holding the steady period beside transient ones is refused at build; a group of steady periods alone stays legal (2026-10-16).**
+      Finding 5 of the 2026-10-14 recalibration-helpers audit; the user's Q3 (ledger 549).
+      Ledger 549 kept a STEADY period out of `"month"` and never checked an explicit
+      mapping. `model.calendar.table()` dates every period, the steady one included -- an
+      `AverageYear` run's 1-day steady period, 2016-09-30 to 10-01, sits in month 9 -- so
+      seasons built from it with `isin` put period 0 in "dry", and the build multiplied the
+      steady annual-mean block by the dry factor with no refusal. **Chosen:**
+      `period_labels` refuses a group holding steady-state AND transient periods, naming Q3
+      and both fixes: leave it out (a plain stacked call reaches it), or give it a group of
+      its own (`'ss': [0]`). **Judgment calls:** (1) a group of steady periods ALONE stays
+      legal -- the user's explicit statement, and how a steady-only multiplier is declared
+      without stacking. (2) The DECLARED periods are checked, not the ones a file serves: a
+      season naming the steady period is refused even where the target has no block there,
+      since one mapping is routinely reused across targets and its meaning must not depend
+      on which target's blocks reach period 0. (3) The flags are
+      `period_calendar.steady_periods` on the staged model -- the reading
+      `staged_calendar`/`month_labels` and `refuse_storage_that_cannot_act` use -- but NOT
+      read through `staged_calendar`, which needs a start date and `TIME_UNITS` an explicit
+      mapping never needed. (4) A model with no STO is steady throughout, so every mapping
+      on it is steady-only and legal; a non-flow model has no flags and is not checked.
+      **Not built:** a seasons helper (`PeriodCalendar.periods_by_month`) -- a third
+      spelling of period grouping beside `"month"` and the mapping, protecting only its own
+      callers; `parameterize`'s Examples and the PEST guide teach
+      `AverageYear.from_model(model).periods` with `isin`, as `RehearsalCase.month_groups`
+      now does (same output). **Behaviour change:** a template built before keeps its
+      groups; rebuilding one that mixed fails, naming the fix. Ledger 549's `ordinal` test,
+      which grouped the steady block with the transient period repeating it, now runs on an
+      all-transient copy of that run.

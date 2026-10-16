@@ -2010,7 +2010,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   parameter set per calendar month of the TRANSIENT periods, `m01`..`m12` by each
   period's MIDPOINT on the run's calendar (`period_calendar`, ledger 529), shared by
   every cycle; a STEADY period is in no seasonal group (the user's rule, Q3 -- stack a
-  plain call for it); `{label: [periods]}` gives explicit groups. A period repeating
+  plain call for it); `{label: [periods]}` gives explicit groups, and one holding a steady
+  period beside transient ones is REFUSED at build (ledger 608: `model.calendar`
+  dates the steady period, so seasons built from it put period 0 in one) -- a steady-only
+  group is legal. A period repeating
   another group's block (MF6's rule for a period with no block) is REFUSED, naming the
   fix: a block per period (`mf.AverageYear(...).by_month(...)`). **`lak.bedleak` and
   `sfr.rhk` are FEATURE targets** (ledger 558): a row is keyed by its lake

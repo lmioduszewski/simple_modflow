@@ -7,7 +7,8 @@ and ``temporal=`` was read by nothing (finding build-8). ``periods="month"`` now
 each TRANSIENT period by the calendar month of its MIDPOINT (``m01``..``m12``), a
 mapping gives explicit groups, and each group is one ``add_parameters`` call named
 ``<name>_<label>``. A steady-state period is in no seasonal group (the user's answer to
-Q3): only a parameter declared without ``periods`` reaches it. A period that repeats
+Q3): only a parameter declared without ``periods`` reaches it, and an explicit group
+holding it beside transient periods is refused (ledger 608). A period that repeats
 another group's block -- MF6's rule for a period with no block of its own -- is refused,
 since one file cannot carry two groups' multipliers.
 
@@ -85,6 +86,10 @@ def runs(tmp_path_factory):
         # Blocks at periods 0, 2 and 3: FloPy numbers them _1, _2, _3 (ordinal).
         "ordinal": _run(root / "ordinal", rch={0: 1e-4, 2: 2e-4, 3: 3e-4},
                         perioddata=[(1.0, 1, 1.0)] * 4, chd_every_period=False),
+        # The same blocks with no STEADY-STATE block: period 0 is transient too.
+        "ordinal_transient": _run(root / "ordinal_transient", rch={0: 1e-4, 2: 2e-4, 3: 3e-4},
+                                  perioddata=[(1.0, 1, 1.0)] * 4, chd_every_period=False,
+                                  steady=False),
         # One steady day, then a 365-day transient period.
         "long": _run(root / "long", rch={0: 1e-4, 1: 2e-4},
                      perioddata=[(1.0, 1, 1.0), (365.0, 1, 1.0)], chd_every_period=False),
@@ -295,9 +300,13 @@ def test_each_group_records_the_pest_groups_its_parameters_are_in(runs, tmp_path
 
 def test_groups_follow_the_period_flopy_records_not_the_file_number(runs, tmp_path):
     """Blocks at periods 0, 2, 3 are files _1, _2, _3: a group of period 2 scales _2,
-    and period 1 -- which repeats period 0's block -- belongs with period 0."""
+    and period 1 -- which repeats period 0's block -- belongs with period 0.
 
-    cal = _cal(runs, tmp_path, kind="ordinal")
+    On the all-transient copy: on the ``ordinal`` run, whose period 0 is steady, the
+    same mapping is refused (ledger 608,
+    :func:`test_a_steady_block_repeated_into_its_own_group_is_refused`)."""
+
+    cal = _cal(runs, tmp_path, kind="ordinal_transient")
     spec = cal.parameterize("recharge", name="rch", periods={"a": [0, 1], "b": [2]},
                             bounds=(0.2, 5.0))
     pst = _build(cal)
@@ -357,6 +366,93 @@ def test_a_start_date_disagreeing_with_the_tdis_is_refused_for_months(runs, tmp_
     cal.parameterize("recharge", name="rchm", periods="month")
     with pytest.raises(ValueError, match=r"TDIS starts them on '2017-09-30'.*'2020-01-01'"):
         _build(cal)
+
+
+# -- the steady period in an explicit group (ledger 608) --------------------------
+
+
+def _calendar_seasons(model) -> dict[str, list[int]]:
+    """Wet and dry seasons from ``model.calendar.table()``, every row's month included."""
+
+    table = model.calendar.table()
+    return {label: table.loc[table["month"].isin(months), "per"].tolist()
+            for label, months in (("wet", (11, 12, 1, 2, 3, 4)), ("dry", (5, 6, 7, 8, 9, 10)))}
+
+
+@pytest.mark.parametrize("target, name", [("recharge", "rch"), ("chd", "chdm")])
+def test_a_season_holding_the_steady_period_is_refused_naming_both_fixes(runs, tmp_path,
+                                                                          target, name):
+    """``model.calendar.table()`` dates the 1-day steady period by its midpoint, 2017-09-30
+    -- September -- so seasons built from it put period 0 in ``dry``, and the build
+    multiplied the steady annual-mean block by the dry factor. Refused at build. The CHD
+    carries a block every period, so the block rule had nothing to catch."""
+
+    seasons = _calendar_seasons(mf.load_mf6_run(runs["year"]))
+    assert 0 in seasons["dry"]
+    cal = _cal(runs, tmp_path)
+    cal.parameterize(target, name=name, periods=seasons)
+    with pytest.raises(ValueError, match=(
+            rf"(?s)group 'dry' of '{target}' \(name '{name}'\) holds the steady-state period 0 "
+            r"with transient periods.*ledger 549, the user's rule Q3.*"
+            rf"cal\.parameterize\('{target}', name=\.\.\.\).*'ss': \[0\].*~table\.steady")):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cal.build("sea.pst")
+
+
+def test_a_steady_block_repeated_into_its_own_group_is_refused(runs, tmp_path):
+    """The ``ordinal`` run's period 1 repeats the steady period 0's block: a group of
+    both would scale the steady block. The block rule let it through (one group)."""
+
+    cal = _cal(runs, tmp_path, kind="ordinal")
+    cal.parameterize("recharge", name="rch", periods={"a": [0, 1], "b": [2]})
+    with pytest.raises(ValueError, match=r"group 'a'.*holds the steady-state period 0 "
+                                         r"with transient period \[1\]"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cal.build("sea.pst")
+
+
+def test_a_group_of_steady_periods_alone_reaches_only_the_steady_block(runs, tmp_path):
+    """``{"ss": [0]}`` is legal beside seasons built from ``AverageYear.periods`` (whose
+    steady row has no month): ``rch_ss`` scales period 0 alone, ``rch_wet`` the wet ones."""
+
+    p = YEAR.periods
+    wet = p.loc[p["month"].isin([11, 12, 1, 2, 3, 4]), "per"].tolist()
+    assert 0 not in wet
+    cal = _cal(runs, tmp_path)
+    spec = cal.parameterize("recharge", name="rch", periods={"ss": [0], "wet": wet},
+                            bounds=(0.2, 5.0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        pst = cal.build("sea.pst")
+    ss = spec.period_groups[0]
+    assert (ss.label, ss.periods, [t.filename for t in ss.targets]) == (
+        "ss", (0,), ["m.rcha_recharge_1.txt"])
+    base = _forward_run(cal, pst, tmp_path / "base", {})
+    worker = _forward_run(cal, pst, tmp_path / "ss", {"rch_ss": 2.0, "rch_wet": 1.5})
+    ratio = _recharge_by_period(worker) / _recharge_by_period(base)
+    expected = np.ones(YEAR.nper)
+    expected[0] = 2.0
+    expected[wet] = 1.5
+    assert np.allclose(ratio, expected)
+
+
+def test_the_steady_rule_reads_the_declared_groups():
+    def spec(periods):
+        return np_mod.NativeParameterSpec(target="rch", periods=periods)
+
+    refuse = np_mod._refuse_a_season_holding_a_steady_period
+    with pytest.raises(ValueError, match=r"group 'a'.*steady-state period 0 with transient "
+                                         r"periods \[1, 2\].*'ss': \[0\]"):
+        refuse(spec({"a": [0, 1, 2]}), (True, False, False))
+    refuse(spec({"a": [0], "b": [1, 2]}), (True, False, False))
+    refuse(spec({"a": [0, 1, 2]}), None)
+    refuse(spec({"a": [0, 1, 2]}), (True, True, True))
+    with pytest.raises(ValueError, match=r"steady-state periods \[0, 1\] with transient "
+                                         r"period \[2\].*them a group of their own, "
+                                         r"'ss': \[0, 1\]"):
+        refuse(spec({"a": [0, 1, 2]}), (True, True, False))
 
 
 # -- the argument itself --------------------------------------------------------------------

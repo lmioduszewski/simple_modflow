@@ -315,11 +315,9 @@ class RehearsalCase:
             month-grouped multiplier does not reach it; ledger 549).
         """
 
-        months = self.year.periods.dropna(subset=["month"])
-        return {
-            label: [int(row.per) for row in months.itertuples() if int(row.month) in chosen]
-            for label, chosen in (("wet", WET_MONTHS), ("dry", DRY_MONTHS))
-        }
+        p = self.year.periods  # month <NA> on the steady row; isin reads it as False
+        return {label: p.loc[p["month"].isin(chosen), "per"].tolist()
+                for label, chosen in (("wet", WET_MONTHS), ("dry", DRY_MONTHS))}
 
     def zone_spec(self, model):
         """The layer-2 K zones as a ``mf.ZoneSpec`` on ``model``'s grid (labels 1 and 2, else 0).

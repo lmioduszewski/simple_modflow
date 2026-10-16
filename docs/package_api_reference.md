@@ -382,7 +382,9 @@ as K is, refused on an all-steady run and, for SY, on a parameter set whose cell
 `ICONVERT` 0 (ledger 548). **`periods=`** groups a target's per-period files
 into parameter sets (ledger 549): `"month"` is one per calendar month of the
 TRANSIENT periods, `m01`..`m12` by each period's midpoint (`model.calendar`), the steady
-period in none; `{label: [zero-based periods]}` gives explicit groups; each is
+period in none; `{label: [zero-based periods]}` gives explicit groups, one holding the
+steady period beside transient periods refused at build (a steady-only group is legal;
+ledger 608); each is
 `<name>_<label>`, and a file serving two groups' periods (MF6 repeating a block) is
 refused. It replaced `temporal=`.
 
