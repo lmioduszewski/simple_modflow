@@ -22922,8 +22922,14 @@ same day, which is the useful part of the result.
       FloPy-to-spec half); the reopened `run.model()`'s SECOND FloPy simulation, whose edits
       `write()` never sees (F2, measured lost); an opened-then-written run trusts FloPy's
       loader to hold what the files said (IMPLICIT, ledger 326, is the known loss, and is
-      carried); a model whose package files sit in a subdirectory keys its FloPy marks by
-      FloPy's filename while hashes key by the scan's relative path.
+      carried); ~~a model whose package files sit in a subdirectory keys its FloPy marks by
+      FloPy's filename while hashes key by the scan's relative path.~~ -- **RESTATED in
+      review:** that was every COUPLED simulation a `Project` writes (`_materialize_models`
+      puts each model in `<model>/`), and the write-back's narrow rule matched such a mark
+      to no package -- a FloPy-edited `trans/trans.mst` let a calibrated porosity through.
+      The fingerprint now keys each package by its path relative to the simulation folder
+      (the model's folder FloPy's own `get_file_path` uses), the name the scan and the name
+      file give it.
 
 612. **An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration (2026-10-16).**
       The write-backs' fallback for a run with no recorded hashes (`Run._record_departures()`,

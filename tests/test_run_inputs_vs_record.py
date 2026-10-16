@@ -346,6 +346,59 @@ def test_a_bare_workspace_loaded_runs_its_files_without_rewriting_them(tmp_path)
     assert _heads(run) == pytest.approx(5.0)
 
 
+def _coupled(tmp_path):
+    """A GWF+GWT run, written: a Project writes each model into its own folder."""
+
+    dis = dict(nlay=1, nrow=2, ncol=2, delr=1.0, delc=1.0, top=10.0, botm=0.0)
+    flow = mf.gwf("flow", packages=[mf.dis(**dis), mf.ic(strt=1.0), mf.npf(k=1.0)])
+    trans = mf.gwt("trans", packages=[
+        mf.dis(**dis), mf.ic(strt=0.0), mf.adv(scheme="UPSTREAM"), mf.mst(porosity=0.3),
+    ])
+    simulation = mf.SimulationSpec("cpl", models=[flow, trans], packages=[
+        mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),
+        mf.ims(name="ims_flow", models=["flow"]),
+        mf.ims(name="ims_trans", models=["trans"], linear_acceleration="BICGSTAB"),
+    ], exchanges=[mf.ExchangeSpec("gwfgwt", mf.build_gwf_gwt_exchange,
+                                  models=("flow", "trans"))])
+    run = mf.Project(tmp_path / "proj", name="p").prepare_run("cpl", simulation)
+    run.write(silent=True)
+    return run
+
+
+def test_a_flopy_edit_in_a_models_own_folder_is_named_by_the_path_the_scan_names(tmp_path):
+    """A coupled model's files sit in ``<model>/``; its FloPy mark must name that path.
+
+    FloPy's ``filename`` is ``trans.mst`` where the file is ``trans/trans.mst``. Keyed by
+    the bare name, the mark named a file no input scan holds, and the write-back's narrow
+    rule -- which matches a departure to a substituted package through the scan's owner
+    map and the realization's name file, both ``trans/trans.mst`` -- let a calibrated
+    porosity be substituted into a record the files no longer say (ledger 611,
+    as restated).
+    """
+
+    from myflopy.modflow.mf6.pest.calibrated import CalibratedInputs, _Dataset
+
+    run = _coupled(tmp_path)
+    assert run.inputs.verdict == "ok"
+    run.simulation.get_model("trans").mst.porosity.set_data(0.25)
+    with pytest.warns(UserWarning, match=r"edited through FloPy .*\(trans/trans\.mst\)"):
+        run.write(silent=True)
+    scanned = {name.as_posix() for name in _scan_simulation_inputs(run.workspace)[0]}
+    assert "trans/trans.mst" in scanned
+    assert run.inputs.departs == {"trans/trans.mst": "edited through FloPy after run.build()"}
+    # The narrow rule, with the realization's name file naming the package as MF6 reads it.
+    calibrated = CalibratedInputs.__new__(CalibratedInputs)
+    calibrated.run_workspace = run.workspace
+    calibrated._departs = None
+    calibrated._datasets = {("trans", "mst", "porosity"): _Dataset(
+        model="trans", package="mst", variable="porosity", family="array", fields=(),
+        parameters=[], additive=False, file="trans/trans.mst",
+    )}
+    with pytest.raises(ValueError, match=r"package\(s\) this calibration substitutes "
+                                         r"\(trans/trans\.mst: edited through FloPy"):
+        calibrated._refuse_departed_packages(mf.load_run(run.workspace, load=False))
+
+
 # -- the fingerprint -------------------------------------------------------------------
 
 

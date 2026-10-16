@@ -1473,7 +1473,13 @@ def _simulation_fingerprint(simulation: Any) -> dict[str, str]:
     from the one last written or opened (ledger 611): the simulation and model
     name files, every simulation-level package, every model package and every child
     package (OBS, ATS, TS ...), each dataset's ``get_data()`` hashed under the file the
-    package writes -- so an external array counts toward its package's file. Measured
+    package writes -- so an external array counts toward its package's file. Keyed by
+    that file's path RELATIVE TO THE SIMULATION FOLDER, the name the input scan
+    (``run_record._scan_simulation_inputs``) and a model's name file give it: a model
+    with its own folder -- every model of a coupled simulation a ``Project`` writes
+    (``_materialize_models``) -- writes ``trans/trans.mst`` where FloPy's ``filename``
+    says ``trans.mst``, and a mark keyed by the bare name was matched to no file by the
+    write-back's narrow rule (ledger 611, as restated). Measured
     0.10-0.24 s on a 38-period, 20,323-cell Ten Trails run. **Valid within ONE FloPy
     lineage only**: a
     simulation loaded from files and the one that wrote them differ on every file
@@ -1483,27 +1489,31 @@ def _simulation_fingerprint(simulation: Any) -> dict[str, str]:
 
     packages: dict[str, Any] = {}
 
-    def _walk(package: Any) -> None:
+    def _walk(package: Any, folder: str) -> None:
         filename = getattr(package, "filename", None)
         if filename is None or id(package) in seen:
             return
         seen.add(id(package))
-        packages.setdefault(str(filename), package)
+        key = Path(os.path.normpath(Path(folder, str(filename)))).as_posix()
+        packages.setdefault(key, package)
         for child in getattr(package, "_packagelist", None) or []:
-            _walk(child)
+            _walk(child, folder)
 
+    simulation_data = getattr(simulation, "simulation_data", None)
+    # A model's folder, as FloPy's own `get_file_path` resolves a model package.
+    folders = getattr(getattr(simulation_data, "mfpath", None), "model_relative_path", None)
     seen: set[int] = set()
-    _walk(simulation.name_file)
+    _walk(simulation.name_file, ".")
     for package in simulation.sim_package_list:
-        _walk(package)
+        _walk(package, ".")
     for name in simulation.model_names:
         model = simulation.get_model(name)
-        _walk(model.name_file)
+        folder = str((folders or {}).get(name) or ".")
+        _walk(model.name_file, folder)
         for package in model.packagelist:
-            _walk(package)
+            _walk(package, folder)
     # Quiet while sizes are filled: FloPy prints each MAXBOUND it changes otherwise,
     # which `write_simulation(silent=True)` suppresses the same way.
-    simulation_data = getattr(simulation, "simulation_data", None)
     saved = getattr(simulation_data, "verbosity_level", None)
     if saved is not None:
         simulation_data.verbosity_level = flopy.mf6.mfbase.VerbosityLevel.quiet

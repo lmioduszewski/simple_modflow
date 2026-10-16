@@ -341,6 +341,21 @@ def _name_file_packages(model) -> list[str]:
     return [str(row[2] if len(row) > 2 and row[2] else row[0]).lower() for row in rows]
 
 
+def _where_departures_are_read(run_name: str) -> str:
+    """Where a write-back's refusal sends the user to read a run's departures.
+
+    ``run.inputs`` names them for a run that recorded what it wrote; a run written before
+    that reads ``"unfingerprinted"`` there, and the refusal's own list is the full check's
+    (ledger 611).
+    """
+
+    return (
+        f"project.runs[{run_name!r}].inputs says how each file departs; for a run written "
+        "before runs recorded their inputs it reads 'unfingerprinted', and the list above "
+        "is what building its record beside the files found."
+    )
+
+
 def _name_file_files(model) -> list[str]:
     """The model's package FILES, in its name file's order (beside :func:`_name_file_packages`)."""
 
@@ -866,8 +881,7 @@ class CalibratedInputs:
                 "(its frozen snapshot and library copies), so the write-back would "
                 "describe another model. Declare the change the files hold "
                 "(project.packages.fork / project.simulations.fork), prepare and execute "
-                f"that run, and calibrate it; project.runs[{run.name!r}].inputs says how "
-                "each file departs."
+                f"that run, and calibrate it. {_where_departures_are_read(run.name)}"
             )
 
     def _base_package(self, spec, copies, labels, dataset: _Dataset) -> tuple[str, PackageSpec]:
@@ -1109,8 +1123,7 @@ class CalibratedInputs:
                     "RECORD. Pass simulation=False to register the calibrated packages "
                     "alone, or declare the change the files hold (project.packages.fork / "
                     "project.simulations.fork), prepare and execute that run, and "
-                    f"calibrate it; project.runs[{run.name!r}].inputs says how each file "
-                    "departs."
+                    f"calibrate it. {_where_departures_are_read(run.name)}"
                 )
             self._refuse_a_moved_simulation(project, run, source_simulation, swap)
             # Validated before anything is registered: a swap the fork refuses must

@@ -477,9 +477,14 @@ by another program, by FloPy writing directly. `run.inputs` says so, read fresh 
 `run.outcome`, and the summary's `inputs` column carries it:
 
 ```python
-run.inputs
-# InputsVerdict(verdict='edited', departs={'ss.tdis': 'changed outside myflopy after its last write'})
+run.inputs   # a run written since runs recorded their inputs, its TDIS then hand-edited
+# InputsVerdict(verdict='edited', departs={'base.tdis': 'changed outside myflopy after its last write'})
 ```
+
+A run written BEFORE runs recorded their inputs -- every Ten Trails run so far, `ss`
+included -- reads `unfingerprinted`: its hand-edited `ss.tdis` is not named here. The
+write-backs find it by building the record beside the files (below), and name it in
+their refusal.
 
 `ok` -- every file is what the record writes; `edited` -- `departs` names each file and
 how (`edited through FloPy after run.build()` / `after run.open()`, `changed outside
