@@ -313,15 +313,16 @@ cal.parameterize("sto.ss", bounds=(0.2, 5.0))
   TRANSIENT periods, `m01`..`m12`, shared by every cycle: a period's month is its
   MIDPOINT's on the run's calendar (a TDIS starting 2017-09-30 ends each period on the
   last day of its month, so its START date names the month before; ledger 529). The
-  STEADY period is in no seasonal group -- it is the long-term average, and only a
-  parameter declared without `periods=` reaches it, so stack a plain call for it as
-  above. `{"wet": [1, 2, 3], "dry": [7, 8]}` gives explicit groups of zero-based
+  STEADY period is in no seasonal group -- it is the long-term average, and under
+  `"month"` only a parameter declared without `periods=` reaches it, so stack a plain
+  call for it as above. `{"wet": [1, 2, 3], "dry": [7, 8]}` gives explicit groups of zero-based
   periods. A group holding the steady period beside transient ones is refused at build,
   naming both fixes: leave it out (the plain call reaches it), or give it a group of its
   own, `{"ss": [0]}`; a group of steady periods alone is legal (ledger 608).
-  Build seasons from `mf.AverageYear.from_model(model).periods`, whose steady row has no
-  month (`isin` reads it as False); `model.calendar.table()` dates the steady period too
-  (its midpoint's month), so leave out its `steady` rows. Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
+  On an average-year run, build seasons from `mf.AverageYear.from_model(model).periods`,
+  whose steady row has no month (`isin` reads it as False); `model.calendar.table()`
+  dates the steady period too (its midpoint's month), so leave out its `steady` rows.
+  Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
   a period's block until the next, so a file serving periods of two groups -- or a
   steady period's block repeated into a month -- is refused at build, naming the fix:
   a block for every period, which `AverageYear.by_month` gives. An EMPTY block

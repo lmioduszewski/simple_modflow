@@ -379,13 +379,16 @@ def _calendar_seasons(model) -> dict[str, list[int]]:
             for label, months in (("wet", (11, 12, 1, 2, 3, 4)), ("dry", (5, 6, 7, 8, 9, 10)))}
 
 
-@pytest.mark.parametrize("target, name", [("recharge", "rch"), ("chd", "chdm")])
+@pytest.mark.parametrize("target, name, acts", [
+    ("recharge", "rch", "multiplier would scale the steady period .* season's factor"),
+    ("chd", "chdm", "offset would shift the steady period .* season's offset")])
 def test_a_season_holding_the_steady_period_is_refused_naming_both_fixes(runs, tmp_path,
-                                                                          target, name):
+                                                                          target, name, acts):
     """``model.calendar.table()`` dates the 1-day steady period by its midpoint, 2017-09-30
     -- September -- so seasons built from it put period 0 in ``dry``, and the build
     multiplied the steady annual-mean block by the dry factor. Refused at build. The CHD
-    carries a block every period, so the block rule had nothing to catch."""
+    carries a block every period, so the block rule had nothing to catch; its head is an
+    ADDITIVE offset (ledger 518), and the refusal says so."""
 
     seasons = _calendar_seasons(mf.load_mf6_run(runs["year"]))
     assert 0 in seasons["dry"]
@@ -393,7 +396,7 @@ def test_a_season_holding_the_steady_period_is_refused_naming_both_fixes(runs, t
     cal.parameterize(target, name=name, periods=seasons)
     with pytest.raises(ValueError, match=(
             rf"(?s)group 'dry' of '{target}' \(name '{name}'\) holds the steady-state period 0 "
-            r"with transient periods.*ledger 549, the user's rule Q3.*"
+            rf"with transient periods.*its {acts}.*ledger 549, the user's rule Q3.*"
             rf"cal\.parameterize\('{target}', name=\.\.\.\).*'ss': \[0\].*~table\.steady")):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

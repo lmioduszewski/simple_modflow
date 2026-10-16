@@ -2212,7 +2212,8 @@ def _refuse_a_season_holding_a_steady_period(spec, steady) -> None:
 
     A steady-state period is the long-term average and in no seasonal group (ledger
     549, the user's rule Q3): ``"month"`` leaves it out, and an explicit group naming it
-    beside transient periods would scale it by a season's multiplier. A group of
+    beside transient periods would scale it by a season's multiplier -- or, on an
+    elevation (an additive offset, ledger 518), shift it by a season's offset. A group of
     steady-state periods alone is legal. The DECLARED periods are read, not the ones a
     file serves, so the refusal does not depend on which of the target's blocks reach
     the steady period.
@@ -2221,7 +2222,8 @@ def _refuse_a_season_holding_a_steady_period(spec, steady) -> None:
     ----------
     spec : NativeParameterSpec
         A spec whose ``periods`` is a mapping (:func:`checked_periods`' form); its
-        target and ``name`` are named by the refusal.
+        target and ``name`` are named by the refusal, which calls its parameter an
+        offset when ``additive`` and a multiplier otherwise.
     steady : tuple of bool or None
         Each stress period's steady-state flag, zero-based, as
         :func:`~myflopy.modflow.mf6.period_calendar.steady_periods` reads the staged flow
@@ -2246,11 +2248,14 @@ def _refuse_a_season_holding_a_steady_period(spec, steady) -> None:
         one = len(still) == 1
         shown = ", ".join(str(p) for p in moving[:6]) + (", ..." if len(moving) > 6 else "")
         target = spec.recipe.canonical
+        # An elevation is an additive OFFSET (ledger 518): say what its parameter does.
+        acts = ("offset would shift", "offset") if spec.additive else ("multiplier would scale",
+                                                                       "factor")
         raise ValueError(
             f"periods= group {label!r} of {target!r} (name {spec.name!r}) holds the "
             f"steady-state period{'' if one else 's'} {still[0] if one else still} with "
-            f"transient period{'' if len(moving) == 1 else 's'} [{shown}]: its multiplier "
-            "would scale the steady period -- the long-term average -- by a season's factor, "
+            f"transient period{'' if len(moving) == 1 else 's'} [{shown}]: its {acts[0]} "
+            f"the steady period -- the long-term average -- by a season's {acts[1]}, "
             "and a steady-state period is in no seasonal group (ledger 549, the user's rule "
             f"Q3). Take {'it' if one else 'them'} out of the group -- a parameter declared "
             "without periods= reaches the steady period: stack a plain "
