@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 613 entries (618 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 614 entries (619 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 614 | A `grid_ref` to a RECIPE is not compared with a mesh | 2026-10-16 |
 | 613 | A run's own packages, simulation and mesh go into a project's library: `run.to_library(project)`, checked f... | 2026-10-16 |
 | 612 | An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration | 2026-10-16 |
 | 611 | A run's record is not its files: `run.inputs` says when they part, and `execute()` never rebuilds the recor... | 2026-10-16 |
@@ -23002,3 +23003,19 @@ same day, which is the useful part of the result.
       **Not built:** a public `run.packages`; importing a bare MF6 folder; a
       `CalibratedInputs.to_library` return-type change (decisions: no); a one-call remap
       verb (decisions: no).
+
+614. **A `grid_ref` to a RECIPE is not compared with a mesh (2026-10-16).**
+      `_simulation_differences` (ledger 613) labels a model's mesh `ref:<key>` when
+      its `grid_ref` names a recipe (a `GridSpec.voronoi`, a `python` builder) and
+      `pin:<grid_pin>` when a mesh is in hand -- and a run's snapshot always holds the mesh
+      its build resolved. Comparing the two kinds refused `calibrated().to_library`'s fork
+      for EVERY run declared on a deferred `mf.grid_ref` ("mesh ref:vor where the run had
+      pin:..."), measured on a toy. **Chosen: two refs compare by key, two meshes by pin, a
+      ref to a recipe against a mesh not at all** -- building the recipe to compare would
+      triangulate a mesh per call, and a recipe edited since the run is what `drift()`
+      reports. **Given up:** a library model re-pointed at another RECIPE key passes this
+      check; one re-pointed at another BUILT mesh is still refused.
+      **Left as designed (needs the user):** importing such a run into its OWN project
+      collides on the grid key -- the run's recipe declared `grid_ref("vor")`, which holds
+      the recipe there, and a grid key is never prefixed -- so it takes `overwrite=True`,
+      which replaces the recipe with the built mesh.

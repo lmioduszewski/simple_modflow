@@ -1863,7 +1863,9 @@ def _simulation_differences(
     labels and digests, exchanges and options; and each model's mesh -- a
     ``grid_ref`` key, read through ``grids`` (a project's grid library) to the mesh's
     ``grid_pin`` where it holds a built one, else the ``grid_pin`` of the mesh in hand;
-    a side with no mesh to name is not compared. NOT compared: the names, ``run_name``,
+    a side with no mesh to name is not compared, and neither is a ``grid_ref`` to a
+    RECIPE against a mesh -- the recipe names no mesh until it is built (ledger
+    614). NOT compared: the names, ``run_name``,
     lineage, ``derived_from`` and the model context (a project file drops all but its
     metadata). A ``mf.ref`` entry compares by KEY -- what the key means is the
     library's business (``drift()``). ``skip`` names labels per model left out of the
@@ -1917,7 +1919,15 @@ def _simulation_differences(
             problems.append(f"{name}: model options changed")
         here = _model_mesh_label(mine_model, grids, project_root)
         there = _model_mesh_label(their_model, grids, project_root)
-        if here is not None and there is not None and here != there:
+        # A `grid_ref` to a RECIPE names no mesh until it is built, and a snapshot's
+        # model holds the mesh its build resolved -- so "ref:<key>" against "pin:<pin>"
+        # says nothing about whether they are one mesh, and is not a difference (it
+        # refused the write-back of every run declared on a deferred grid_ref; ledger
+        # 614). Two refs compare by key, two meshes by pin.
+        if (
+            here is not None and there is not None
+            and here.split(":", 1)[0] == there.split(":", 1)[0] and here != there
+        ):
             problems.append(f"{name}: mesh {here} where {other} had {there}")
     if _comparable(ours.exchanges) != _comparable(theirs.exchanges):
         problems.append("exchanges changed")

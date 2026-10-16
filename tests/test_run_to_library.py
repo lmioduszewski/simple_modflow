@@ -15,6 +15,7 @@ written input files.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -482,3 +483,44 @@ def test_to_library_never_writes_into_the_run(made):
     fresh = _fresh(made)
     fresh.runs["r"].to_library(fresh)
     assert {path: path.stat().st_mtime_ns for path in made.run.workspace.rglob("*")} == before
+
+
+def test_a_run_on_a_deferred_grid_ref_is_not_refused_by_its_mesh(tmp_path,
+                                                                  triangulated_grid_finer):
+    """A model declared on ``mf.grid_ref(key)`` to a RECIPE: the library names no mesh
+    until it is built, the snapshot names the one the build resolved -- not a difference
+    (ledger 614). It read ``mesh ref:vor where the run had pin:...``."""
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    boundary = root / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["d"]}, geometry=[box(0.0, 0.0, 600.0, 600.0)],
+                     crs=2927).to_file(boundary)
+    project = mf.Project(root, name="p")
+    project.add_grid("vor", mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=40_000.0))
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0))
+    stack.add("sand", thickness=50.0)
+    project.add_package("dis/base", mf.disv(stack))
+    project.add_package("npf/base", mf.npf(k=1.0))
+    project.add_package("ic/base", mf.ic(strt=95.0))
+    project.add_simulation(mf.simulation(
+        mf.gwf("m", grid=mf.grid_ref("vor"),
+               packages=[mf.ref(key) for key in ("dis/base", "npf/base", "ic/base")]),
+        name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+    ))
+    run = project.prepare_run("r", "s")
+    run.write(silent=True)
+    _refusal(project, run)
+    # A fresh library takes the mesh under the run's own grid_ref key.
+    fresh = _fresh(SimpleNamespace(root=root))
+    report = fresh.runs["r"].to_library(fresh)
+    assert report.grids == {"m": "vor"} and report.inputs.verdict == "ok"
+    _refusal(fresh, fresh.runs["r"])
+    # A ref to another BUILT mesh still differs, by pin.
+    fresh.add_grid("finer", triangulated_grid_finer)
+    model = fresh.simulations["s"].models[0]
+    fresh.simulations["s"] = replace(fresh.simulations["s"], models=(
+        replace(model, grid=GridRef("finer")),))
+    with pytest.raises(ValueError, match=r"mesh pin:\w+ where the run had pin:"):
+        _refusal(fresh, fresh.runs["r"])

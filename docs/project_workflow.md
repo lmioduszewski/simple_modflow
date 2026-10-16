@@ -399,6 +399,15 @@ out of MF6 files is the unbuilt half of Phase-2 decision D2, and a bare MF6 fold
   forks the simulation under the run's own name and keeps the keys the run recorded.
 - **A relative source path** (after `save(bundle_sources=True)`) is refused when the
   project is rooted elsewhere: there it names another file.
+- **`mf.Project(root)` is an EMPTY library even where one is saved**, and its `save()`
+  writes over that `project_spec.json` with only what it holds (measured: two saved
+  packages read back as none). Where a project is saved, add to it through
+  `mf.Project.load(root)`. A second live `Project` at one root also takes over the
+  areas of interest its models read (ledger 312, newest wins).
+- **A model declared on `mf.grid_ref(key)` to a RECIPE** keeps that key, and in the
+  project that holds the recipe the import collides on it (a grid key is never
+  prefixed); `overwrite=True` replaces the recipe with the run's built mesh (ledger
+  614).
 
 ### A calibration back into the library
 
