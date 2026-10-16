@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 import base64
 import io
 import mimetypes
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import numpy as np
@@ -117,6 +118,100 @@ def _as_cell_vector(values, *, ncpl: int, label: str):
     if arr.size == int(ncpl):
         return arr.reshape(-1)
     raise ValueError(f"{label} must contain one value per cell; got shape={arr.shape}, ncpl={ncpl}.")
+
+
+def _checked_cell_values(values, *, ncpl: int, layer: int | None) -> list:
+    """``values=`` as the cell trace carries it: ONE layer's field, one value per cell.
+
+    The one check behind every map's ``values=`` -- the free verb, ``model.plot.map``,
+    ``vor.plot.map``, ``model.hfb.inputs.map`` and every panel a composer is handed --
+    because each reaches :class:`Choro` through ``__init__``, which calls this, and so
+    does each backend: Plotly pairs ``z`` with ``locations`` BY POSITION and drew
+    whatever ``list(values)`` held (ledger 601).
+
+    Accepted: anything :func:`_as_cell_vector` collapses to ``ncpl`` values in cell
+    order -- a sequence, an array, a ``Series`` (read by POSITION, not by its index),
+    a single ``(1, ncpl)`` row, a structured model's ``(nrow, ncol)``. A masked
+    array's masked cells become ``NaN``, which draws as a gap.
+
+    Parameters
+    ----------
+    values : array-like
+        What the caller passed as ``values=`` (``custom_zs`` inside :class:`Choro`).
+    ncpl : int
+        The cells the map draws (``vor.ncpl``).
+    layer : int or None
+        The map's ``layer=`` when a model is bound, named in the refusal; ``None``
+        on a bare grid, whose ``layer`` is only a label.
+
+    Returns
+    -------
+    list
+        One value per cell, in cell order.
+
+    Raises
+    ------
+    TypeError
+        A dict (a per-period dataset), a ``DataFrame``, or a single number.
+    ValueError
+        Any other shape whose size is not ``ncpl`` -- a field for every layer
+        naming ``values=array[layer], layer=layer``, else naming the length.
+    """
+
+    ncpl = int(ncpl)
+    named = layer is not None and layer >= 0
+    head = (
+        f"values= takes one value per cell of ONE layer, the one layer= names ({layer}) -- "
+        if named
+        else "values= takes one value per cell of ONE layer -- "
+    ) + f"{ncpl} numbers in cell order, shape ({ncpl},)"
+    if isinstance(values, pd.DataFrame):
+        raise TypeError(
+            f"{head} -- not a table ({len(values)} rows x {values.shape[1]} columns). "
+            "Pass one column of one layer, in cell order."
+        )
+    if isinstance(values, Mapping):
+        raise TypeError(
+            f"{head} -- not a dict. A per-period dataset, such as "
+            "ies.calibrated().get('rch', 'recharge'), is {period: array}: map one period "
+            "at a time, values=data[period]."
+        )
+    if np.ma.isMaskedArray(values):
+        values = np.ma.filled(np.ma.asarray(values, dtype=float), np.nan)
+    elif isinstance(values, Iterable) and not isinstance(
+        values, (np.ndarray, pd.Series, pd.Index, list, tuple, str, bytes)
+    ):
+        # A generator, `dict.values()`, a `map` object: `list()` read them before,
+        # and `np.asarray` makes each a 0-d object array.
+        values = list(values)
+    try:
+        array = np.asarray(values)
+    except ValueError:
+        raise ValueError(f"{head} -- and got a ragged sequence numpy cannot make one array of.") from None
+    if array.ndim == 0:
+        raise TypeError(f"{head} -- not the single value {array.item()!r}.")
+    if array.size == ncpl:
+        return _as_cell_vector(array, ncpl=ncpl, label="values").tolist()
+    if array.size > ncpl and array.size % ncpl == 0:
+        count = array.size // ncpl
+        # `array[i]` is one layer only when the first axis IS the layers -- an
+        # `(nlay, ncpl)` or a structured `(nlay, nrow, ncol)`; anything else
+        # (flattened, a column) is named through the reshape that makes it so.
+        squeezed = np.squeeze(array)
+        row = (
+            "array"
+            if squeezed.ndim > 1 and squeezed.shape[0] == count
+            else f"array.reshape({count}, {ncpl})"
+        )
+        fix = f"values={row}[{layer}], layer={layer}" if named else f"values={row}[i]"
+        raise ValueError(
+            f"{head} -- and got shape {array.shape}: {count} values per cell, a field for "
+            f"every layer (or every period). Pass one layer's row: {fix}."
+        )
+    raise ValueError(
+        f"{head} -- and got shape {array.shape}, which is not a whole number of layers "
+        f"of this grid's {ncpl} cells."
+    )
 
 
 def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, height: int = 700) -> float:
@@ -371,7 +466,10 @@ class Choro(Picture):
         'custom'); anything else raises at the call.
         :param custom_hover: custom dictionary of hover labels to use for choropleth.
         Must be same length as no. of cells in model.
-        :param custom_zs: custom list of z values to use for choropleth. Must be same length as no. of cells in model.
+        :param custom_zs: the per-cell values to draw instead of what ``type`` reads --
+        array-like, ONE layer's field, one value per cell of ``vor`` in cell order.
+        Checked here by :func:`_checked_cell_values` (ledger 601): any other
+        shape raises, a masked cell becomes NaN (a gap).
         :param zmin: minimum z value to use for choropleth colorscale.
         :param zmax: maximum z value to use for choropleth colorscale.
         :param zoom: zoom level for choropleth map. Default is 13.
@@ -444,7 +542,10 @@ class Choro(Picture):
         self._layer = self._checked_layer(layer, show_mounding=show_mounding)
         self.type = type
         self._custom_hover = custom_hover
-        self._custom_zs = custom_zs
+        self._custom_zs = None if custom_zs is None else _checked_cell_values(
+            custom_zs, ncpl=self.vor.ncpl,
+            layer=self._layer if self._inputs is not None else None,
+        )
         self._zmin = zmin
         self._overlays = []
         self._zmax = zmax
@@ -1024,12 +1125,15 @@ class Choro(Picture):
 
     @custom_zs.setter
     def custom_zs(self, custom_zs):
-        """Set explicit per-cell color values (a list with one entry per grid cell)."""
+        """Set explicit per-cell color values, checked by :func:`_checked_cell_values`.
 
-        if not isinstance(custom_zs, list):
-            raise ValueError('custom_zs must be an instance of list')
-        assert len(custom_zs) == self.vor.ncpl, 'customs zs must be provided for every cell'
-        self._custom_zs = custom_zs
+        ONE layer's field, one value per cell in cell order; ``None`` clears it.
+        """
+
+        self._custom_zs = None if custom_zs is None else _checked_cell_values(
+            custom_zs, ncpl=self.vor.ncpl,
+            layer=self._layer if self._inputs is not None else None,
+        )
 
     @staticmethod
     def _logscaled(values):

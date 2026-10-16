@@ -2648,10 +2648,21 @@ class StackPlots:
             raises ``TypeError``.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
-        values : sequence of float, optional
-            One value per cell -- heads, drawdown, K, a zone id, a residual, any
-            per-cell array. Overrides whatever ``type`` would have read. Length must
-            equal ``vor.ncpl``.
+        values : array-like of float, optional
+            ONE layer's field, one value per cell in cell order -- heads, drawdown, K,
+            a zone id, a residual. Shape ``(ncpl,)``, ``ncpl`` being the cells the map
+            draws (``vor.ncpl``); a single ``(1, ncpl)`` row is read as that row, a
+            structured model's ``(nrow, ncol)`` in node order, and a ``pandas.Series``
+            by POSITION, not by its index. A masked array's masked cells draw as gaps.
+            Overrides whatever ``type`` would have read; ``layer=`` still names the
+            layer the values belong to, which the hover and the contour clip read.
+            Anything else RAISES at the call, on both backends, naming ``(ncpl,)``: a
+            field for every layer -- ``(nlay, ncpl)``, as ``ies.calibrated().get("npf",
+            "k")`` returns, or flattened -- names ``values=array[layer], layer=layer``
+            (``ValueError``); a dict, which is how a per-period dataset arrives, names
+            ``values=data[period]`` (``TypeError``); a ``DataFrame`` or a single number
+            is a ``TypeError``, and any other length a ``ValueError`` (ledger
+            601). Default ``None``: the field ``type`` names.
         per : int, optional
             Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
             with neither, the model's first output time is used.
@@ -2878,7 +2889,8 @@ class StackPlots:
         >>> model.plot.map(values=drawdown, layer=0)         # any per-cell array
         >>> model.plot.map(layer=0, contours=True, contour_levels=8)
         >>> model.plot.map(layer=0, features="wells.gpkg", hillshade_path="hs.tif")
-        >>> model.plot.map(values=k, logscale=True, colorscale="Viridis")  # K over decades
+        >>> model.plot.map(values=k[2], layer=2, logscale=True,
+        ...                colorscale="Viridis")  # one layer of K, over decades
         >>> model.plot.map(layer=0, features={"Wells": "wells.gpkg",
         ...                                   "Ponds": plot.Feature("ponds.gpkg", fill=True)})
         >>> model.plot.map(layer=0, zmin=100, zmax=125).save("heads.png")

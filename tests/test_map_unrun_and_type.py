@@ -206,3 +206,164 @@ def test_layer_minus_one_keeps_its_mounding_meaning(canonical_run):
     picture = canonical_run.plot.map(layer=-1, show_mounding=True)
     assert picture._show_mounding_above_ground
     assert picture.layer == 0
+
+
+# --- values= is ONE layer's field, checked at the call (ledger 601) -------
+#
+# `ies.calibrated().get("npf", "k")` is `(nlay, ncpl)`, and `map(values=)` took it:
+# both verbs did `custom_zs = list(values)`, which made it nlay ROWS, and Plotly pairs
+# z with locations by position, so it drew z of length 4 against 441 cells, a
+# flattened field's LAYER 0 under `layer=1`, a dict's keys and a DataFrame's column
+# names -- while Matplotlib raised pandas' "Length of values" error naming neither.
+# The check lives in `Choro.__init__`, the funnel every map reaches.
+
+
+def _k(model):
+    return np.asarray(model.gwf.npf.k.array, dtype=float)
+
+
+# The four spellings that take values=: the free verb on a model and on a grid, the
+# bound model namespace, and the grid namespace (its own path -- it calls
+# `_choropleth_factory` directly, and `model.hfb.inputs.map` delegates to it).
+VALUES_SCOPES = {
+    "free_model": lambda m, v, **kw: plot.map(m, v, layer=1, **kw),
+    "bound_model": lambda m, v, **kw: m.plot.map(values=v, layer=1, **kw),
+    "free_grid": lambda m, v, **kw: plot.map(m.vor, v, **kw),
+    "grid": lambda m, v, **kw: m.vor.plot.map(values=v, **kw),
+}
+MODEL_SCOPES = {"free_model", "bound_model"}
+
+
+def _render(picture):
+    """Force the picture to draw (a Choro builds its trace lazily)."""
+
+    return picture.fig if hasattr(picture, "fig") else picture
+
+
+def _mpl_drawn(figure):
+    """The per-cell values a static map coloured its cells by."""
+
+    return np.ma.filled(np.ma.asarray(figure.axes[0].collections[0].get_array(), dtype=float), np.nan)
+
+
+@pytest.mark.parametrize("backend", ["plotly", "mpl"])
+@pytest.mark.parametrize("scope", sorted(VALUES_SCOPES))
+@pytest.mark.parametrize("flatten", [False, True], ids=["stacked", "flattened"])
+def test_a_field_for_every_layer_raises_naming_one_layer(unrun_model, scope, backend, flatten):
+    """Plotly drew z of length 4 against 441 cells, and a flattened field painted
+    LAYER 0 under `layer=1`; the refusal names the one-layer spelling."""
+
+    k = _k(unrun_model)
+    values = k.reshape(-1) if flatten else k
+    row = r"array\.reshape\(4, 441\)" if flatten else "array"
+    expected = rf"values={row}\[1\], layer=1" if scope in MODEL_SCOPES else rf"values={row}\[i\]"
+    with pytest.raises(ValueError, match=r"ONE layer.* 441 numbers in cell order") as caught:
+        _render(VALUES_SCOPES[scope](unrun_model, values, backend=backend))
+    assert caught.match(expected)
+
+
+@pytest.mark.parametrize("backend", ["plotly", "mpl"])
+@pytest.mark.parametrize("scope", sorted(VALUES_SCOPES))
+@pytest.mark.parametrize("size", [100, 442])
+def test_a_wrong_length_raises_naming_the_cell_count(unrun_model, scope, backend, size):
+    with pytest.raises(ValueError, match=rf"ONE layer.*shape \(441,\).*got shape \({size},\).*441 cells"):
+        _render(VALUES_SCOPES[scope](unrun_model, np.ones(size), backend=backend))
+
+
+@pytest.mark.parametrize("scope", sorted(VALUES_SCOPES))
+def test_a_per_period_dict_raises_naming_one_period(unrun_model, scope):
+    """`get("rch", "recharge")` is `{period: array}`; plotly drew its KEYS."""
+
+    k = _k(unrun_model)
+    with pytest.raises(TypeError, match=r"not a dict.*values=data\[period\]"):
+        _render(VALUES_SCOPES[scope](unrun_model, {0: k[0], 1: k[1]}))
+
+
+def test_a_table_raises(unrun_model):
+    """Plotly drew a one-column DataFrame as its column NAME."""
+
+    import pandas as pd
+
+    table = pd.DataFrame({"k": _k(unrun_model)[1]})
+    with pytest.raises(TypeError, match=r"not a table \(441 rows x 1 columns\)"):
+        _render(unrun_model.plot.map(values=table, layer=1))
+
+
+def test_a_single_number_raises(unrun_model):
+    with pytest.raises(TypeError, match="not the single value 3.0"):
+        _render(unrun_model.plot.map(values=3.0, layer=1))
+
+
+@pytest.mark.parametrize("spelling", ["list", "ndarray", "series", "row"])
+@pytest.mark.parametrize("backend", ["plotly", "mpl"])
+def test_one_layer_draws_that_layer(unrun_model, spelling, backend):
+    """Every one-layer spelling draws exactly that layer -- a single `(1, ncpl)` row
+    too, which is what a ONE-layer model's `calibrated().get("npf", "k")` returns
+    (plotly drew it as z of length 1; mpl raised)."""
+
+    import pandas as pd
+
+    row = _k(unrun_model)[1]
+    values = {
+        "list": list(row),
+        "ndarray": row,
+        "series": pd.Series(row, index=np.arange(row.size)[::-1]),  # read by POSITION
+        "row": row[None, :],
+    }[spelling]
+    picture = unrun_model.plot.map(values=values, layer=1, backend=backend)
+    drawn = (
+        np.asarray(picture.fig.data[0].z, dtype=float) if backend == "plotly" else _mpl_drawn(picture)
+    )
+    assert drawn.shape == row.shape  # allclose alone broadcasts a (1, 441) row
+    assert np.array_equal(drawn, row)
+
+
+def test_a_masked_cell_draws_as_a_gap(unrun_model):
+    """A mask means "no value": plotly painted masked cells 0.0 (measured, 63 of 63)."""
+
+    row = _k(unrun_model)[1]
+    mask = np.arange(row.size) % 7 == 0
+    picture = unrun_model.plot.map(values=np.ma.masked_array(row, mask=mask), layer=1)
+    drawn = np.asarray(picture.fig.data[0].z, dtype=float)  # the TRACE: 0.0 before
+    assert np.isnan(drawn[mask]).all()
+    assert np.array_equal(drawn[~mask], row[~mask])
+
+
+def test_the_choro_funnel_refuses_a_mis_shaped_custom_zs(unrun_model):
+    """Every map reaches `Choro.__init__`, the nouns' own `custom_zs` included, so the
+    check lives there; the setter goes through the same rule, not an `assert`."""
+
+    from myflopy.modflow.mf6.grid.plotting import _choropleth_factory
+
+    with pytest.raises(ValueError, match="441"):
+        _choropleth_factory(unrun_model.vor, custom_zs=[1.0] * 5)
+    picture = _choropleth_factory(unrun_model.vor, custom_zs=np.ones(441))
+    with pytest.raises(ValueError, match="441"):
+        picture.custom_zs = [1.0] * 5
+    picture.custom_zs = np.full((1, 441), 2.0)
+    assert picture.custom_zs == [2.0] * 441
+
+
+def test_a_mosaic_panel_refuses_too(unrun_model):
+    """`model.plot.mosaic([...])` composed a garbled panel without a word."""
+
+    with pytest.raises(ValueError, match="ONE layer"):
+        unrun_model.plot.mosaic([unrun_model.plot.map(values=_k(unrun_model), layer=1)])
+
+
+@pytest.mark.parametrize("spelling", ["generator", "dict_values", "map_object", "range", "tuple"])
+def test_every_iterable_list_read_still_draws(unrun_model, spelling):
+    """`list(values)` read any iterable; `np.asarray` makes a generator a 0-d object
+    array, so the check materializes one first. A guard: these drew before the fix."""
+
+    row = _k(unrun_model)[1]
+    values = {
+        "generator": lambda: (x for x in row),
+        "dict_values": lambda: dict(enumerate(row)).values(),
+        "map_object": lambda: map(float, row),
+        "range": lambda: range(row.size),
+        "tuple": lambda: tuple(row),
+    }[spelling]()
+    expected = np.arange(row.size, dtype=float) if spelling == "range" else row
+    drawn = np.asarray(unrun_model.plot.map(values=values, layer=1).fig.data[0].z, dtype=float)
+    assert np.array_equal(drawn, expected)

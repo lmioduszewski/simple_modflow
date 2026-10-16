@@ -2104,7 +2104,7 @@ plot.grid(vor)                # or  vor.plot.grid()   -- or just vor.plot()
 
 | verb | draws | notes |
 |---|---|---|
-| `map(source, values=, backend=)` | plan view | contours, locations, hillshade, pathlines are **options**, not verbs; `"plotly"` or `"mpl"` |
+| `map(source, values=, backend=)` | plan view | `values=` is ONE layer's `(ncpl,)` -- a whole `(nlay, ncpl)` raises naming `values=k[layer], layer=layer`, a dict naming `values=data[period]` (ledger 601); contours, locations, hillshade, pathlines are **options**, not verbs; `"plotly"` or `"mpl"` |
 | `section(source, backend=, fill=)` | vertical slice | line profile by default; `fill="layer"`/`"results"`/array draws the CELLS (grid + layers + a field), `backend="mpl"` only |
 | `surface(source, ...)` | 3-D height field `z(x, y)` | Plotly only — there is no matplotlib rendering of a height field here |
 | `grid(source, backend=)` | the mesh itself | `"plotly"` flat 2-D (no CRS needed), `"mpl"` FloPy's patch renderer, `"vtk"` the 3-D volume |

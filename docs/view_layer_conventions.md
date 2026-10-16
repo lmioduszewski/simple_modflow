@@ -357,8 +357,12 @@ every INPUT read goes through `_inputs`. So an input map (`type='ks'`, every
 package noun, `values=`) draws before a run, a region name resolves before a run,
 and a RESULTS map (`hds`/`conc`/`temp`/`rch`) of an unrun model raises by name.
 `type` is checked against `choros.MAP_TYPES` at the call and `layer` against the
-model's layers; both used to fall through to drawing node numbers. **Add a new
-map type to `MAP_TYPES`**, saying whether it needs results -- an unknown one
+model's layers; both used to fall through to drawing node numbers. `values=` is
+checked against the grid's cells in `Choro.__init__` (ledger 601): ONE
+layer's `(ncpl,)`, on every scope and both backends. A noun or composer that hands
+`Choro` its own `custom_zs` passes the array as it is -- never `list()` it first,
+which is what turned a `(nlay, ncpl)` field into nlay rows nothing could check.
+**Add a new map type to `MAP_TYPES`**, saying whether it needs results -- an unknown one
 raises.
 
 ### Colour scales and custom geometry are options on `map`

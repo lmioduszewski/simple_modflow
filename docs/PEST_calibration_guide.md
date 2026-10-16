@@ -1296,10 +1296,11 @@ What you're checking for:
 ```python
 cal_inputs = ies.calibrated()            # the posterior 'base' realization
 cal_inputs.summary()                     # what moved, and by how much
-cal_inputs.get("npf", "k")               # the (nlay, ncpl) K its MF6 read
+k = cal_inputs.get("npf", "k")           # the (nlay, ncpl) K its MF6 read
 keys = cal_inputs.to_library(project)    # {'npf/base': 'npf/base/calib', 'riv': 'riv/calib', ...}
 run = project.prepare_run("calibrated", project.simulations["baseline/calib"])
 run.execute()                            # simulates the base realization's heads
+run.model().plot.map(values=k[2], layer=2, logscale=True)  # ONE layer of K: all of k raises
 ```
 
 `calibrated()` does not re-apply the multipliers: it REPLAYS the realization's own

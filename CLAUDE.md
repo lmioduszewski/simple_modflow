@@ -352,6 +352,9 @@ names" and falls back to the input-only model the free verb passes. Do not fake 
 results binding for an unrun model -- the heads hover, timing reader and animation
 clock all assume results. A results `type` on an unrun model RAISES; a new map type
 goes in `choros.MAP_TYPES` with whether it needs results. `'input_rch'` is retired.
+**`values=` is checked at the call too** (ledger 601): ONE layer's `(ncpl,)`, in
+`Choro.__init__`, so on every scope and both backends; a field for every layer raises naming
+`values=array[layer], layer=layer`, a dict `values=data[period]`.
 **Log colour scales and custom geometry are OPTIONS on `map`, at EVERY scope**
 (ledger 252–254, 2026-09-13). `logscale=True` colours log10 but LABELS the
 colorbar in real units at whole decades on both backends (`viz.log_decade_colorbar`;

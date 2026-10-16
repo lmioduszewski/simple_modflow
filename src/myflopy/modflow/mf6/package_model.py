@@ -1014,9 +1014,11 @@ class HfbPackageExplorer:
         Parameters
         ----------
         values : array-like, optional
-            Per-cell values to colour the cells by -- heads, K, a zone id, any
-            array of length ``vor.ncpl``. With none, the cells are coloured by
-            their cell number, not left plain.
+            Per-cell values to colour the cells by -- heads, K, a zone id: ONE
+            layer's array, length ``vor.ncpl``, in cell order. A field for every
+            layer raises ``ValueError`` naming ``values=array[i]``, and any other
+            shape raises too, as on ``vor.plot.map`` (ledger 601). With
+            none, the cells are coloured by their cell number, not left plain.
         per : int, optional
             The zero-based stress period whose barriers to draw: those MODFLOW 6
             has in force then (:meth:`segments` -- the last block at or before
@@ -1197,7 +1199,7 @@ class HfbPackageExplorer:
         >>> model.hfb.inputs.map()
         >>> model.hfb.inputs.map(values=model.hds.array(layer=0))
         >>> model.hfb.inputs.map(layer=1, per=0)
-        >>> model.hfb.inputs.map(values=k, logscale=True)
+        >>> model.hfb.inputs.map(values=k[0], logscale=True)
         >>> model.hfb.inputs.map(select="all_streams", select_style="both")
         >>> model.hfb.inputs.map(backend="mpl").savefig("barriers.png")
         """

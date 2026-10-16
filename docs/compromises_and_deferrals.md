@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 600 entries (605 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 601 entries (606 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 601 | `values=` on a map is ONE layer's field, checked at the call on every scope and backend; a field for every... | 2026-10-16 |
 | 600 | `with_grid(remap=True)` carries an input `ic.strt` linear between cell centres -- one rule for moving heads | 2026-10-15 |
 | 599 | `coverage_on` and `Run.resolution` read a model's `grid=` too, and `GridSpec.resolve()` writes only where i... | 2026-10-15 |
 | 598 | `model.hds`/`.conc`/`.temp` read the file the OC declares, are ONE reader per model while that file is unch... | 2026-10-15 |
@@ -22524,3 +22525,30 @@ same day, which is the useful part of the result.
       remap now needs the two meshes' centres and vertex rings, not their polygons alone:
       `specs._mesh_parts` copies them out of a `GridSpec` before its temporary directory is
       removed, and `_polygons_of` reads its polygons through it.
+
+601. **`values=` on a map is ONE layer's field, checked at the call on every scope and backend; a field for every layer raises naming `values=array[layer], layer=layer` (2026-10-16).**
+      The rule is `choros._checked_cell_values`, called in `Choro.__init__` (and the
+      `custom_zs` setter, which had an `assert`) -- the funnel the free verb,
+      `model.plot.map`, `vor.plot.map`, `hfb.inputs.map`, composer panels and the nouns'
+      own `custom_zs` all reach. The verbs hand `values` through untouched: their
+      `list(values)` made a `(4, 441)` K four rows, a dict its keys, a DataFrame its
+      column names, and Plotly pairs z with locations by position, so all of them drew
+      (measured at 55947911: z of length 4 against 441 cells; a flattened field painted
+      LAYER 0 under `layer=1`), while Matplotlib raised pandas' "Length of values".
+      **Accepted:** what `_as_cell_vector` (the existing per-cell rule) collapses to `ncpl`
+      values in cell order -- a sequence, an array, a `Series` by POSITION, any iterable
+      `list()` read before (a generator, `dict.values()`), a DIS `(nrow, ncol)`.
+      **Judgment calls:** a single `(1, ncpl)` row is that row (unambiguous; what a
+      one-layer model's `calibrated().get("npf", "k")` returns; it drew z of length 1
+      before, so no working call moves). A `(nlay, ncpl)` array is REFUSED, not indexed
+      by `layer=`, or `values=` would mean two things; `layer=` still says which layer the
+      hover and the contour clip read. A masked array's masked cells draw as gaps (NaN,
+      ledger 315's no-value): `np.asarray` drops a mask, so leaving it would draw the
+      hidden data, where Plotly painted 0.0 before (63 of 63).
+      **Refused:** a dict naming `values=data[period]`, a DataFrame, a single number, a
+      ragged sequence, any other size naming the cell count.
+      **Not done:** a `Series` is still read by position, not aligned on its index
+      (documented). `contour_values=` keeps its own refusal at render (`_cell_vector`),
+      which is loud. Two IES map builders still `list()` an `(ncpl,)` vector they built
+      themselves before handing it to `Choro`; harmless, left.
+      `docs/reproducers/map_values_shape.py`.
