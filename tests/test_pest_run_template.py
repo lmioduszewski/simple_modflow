@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import re
 import shutil
@@ -331,6 +332,22 @@ def test_overwrite_deletes_only_an_earlier_run_template_of_this_calibration(pref
     assert sorted(path.name for path in master.iterdir()) == held
 
 
+@pytest.mark.parametrize("overwrite", ["no", 1, None])
+def test_overwrite_takes_only_a_bool(preflight, tmp_path, overwrite):
+    """``overwrite=True`` DELETES a folder, so it is never read off another value:
+    ``bool("no")`` is ``True`` (review of ledger 605)."""
+
+    folder = (tmp_path / "earlier").resolve()
+    folder.mkdir()
+    (folder / TEMPLATE_RUN_MARKER).write_text(json.dumps({
+        "written_by": "myflopy PestProject.run_template", "directory": str(folder),
+        "template": str(preflight.cal.template_workspace.resolve())}))
+    (folder / "kept.txt").write_text("an earlier run's file")
+    with pytest.raises(TypeError, match=r"takes True or False"):
+        preflight.cal.run_template(folder, overwrite=overwrite)
+    assert (folder / "kept.txt").read_text() == "an earlier run's file"
+
+
 @pytest.mark.parametrize("where", ["template", "template_child", "run", "run_child"])
 def test_a_workspace_in_the_template_or_the_run_is_refused(preflight, where):
     template = preflight.cal.template_workspace.resolve()
@@ -397,6 +414,18 @@ def test_an_observation_with_no_finite_simulated_value_is_refused(preflight, tmp
     assert (tmp_path / "w" / output).is_file()  # left for inspection
 
 
+@pytest.mark.parametrize("bad", [True, np.bool_(False), "0.5"])
+def test_a_value_that_is_not_a_real_number_is_refused(preflight, tmp_path, bad):
+    """``float()`` read ``True`` as 1.0 and ``"0.5"`` as 0.5 in silence (review of ledger
+    605); a numpy number is a real number and is taken."""
+
+    values = dict.fromkeys(preflight.cal.pst.adj_par_names, np.float32(1.0))
+    values[_kl0(preflight.cal)] = bad
+    with pytest.raises(TypeError, match=r"a parameter's value is a real number"):
+        preflight.cal.run_template(tmp_path / "w", values=values)
+    assert not (tmp_path / "w").exists()
+
+
 def test_one_parameter_named_twice_is_refused(preflight, tmp_path):
     name = _kl0(preflight.cal)
     values = {name: 1.0, name.upper(): 2.0}
@@ -432,3 +461,62 @@ def test_run_ies_refuses_what_is_not_a_number_of_iterations(preflight, iteration
         preflight.cal.run_ies(reals=4, iterations=iterations)
     assert control.stat().st_mtime_ns == before
     assert not (preflight.cal.template_workspace / "t.phi.actual.csv").exists()
+
+
+# -- a real Voronoi mesh: the triangulated grids (ledgers 263/265) -----------------------
+
+
+def _triangulated_run(root: Path, grid):
+    """A two-layer, two-period model on ``grid``, run in a Project; the run."""
+
+    import myflopy as mf
+    from myflopy.specs import ModelContext
+
+    xc = np.array([row[1] for row in grid.get_disv_gridprops()["cell2d"]], dtype=float)
+    west = [int(c) for c in np.flatnonzero(xc < 80.0)]
+    east = [int(c) for c in np.flatnonzero(xc > 520.0)]
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0)).add("sand", thickness=50.0).add(
+        "clay", thickness=50.0)
+    model = mf.gwf("m", context=ModelContext(grid=grid), packages=[
+        mf.disv(stack), mf.ic(strt=95.0), mf.npf(k=10.0),
+        mf.chd(stress_period_data={0: [[(0, c), 98.0] for c in west]
+                                   + [[(0, c), 92.0] for c in east]}),
+        mf.rch(nper=2, recharge=1e-3),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=2, perioddata=[(1.0, 1, 1.0)] * 2)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = mf.Project(root, name="p").prepare_run("r", simulation)
+        run.execute()
+    assert run.success
+    return run, xc
+
+
+def test_outputs_from_on_a_triangulated_mesh_reads_its_own_run_and_refuses_a_finer_one(
+        tmp_path, triangulated_grid, triangulated_grid_finer):
+    """The mesh check compares the TEMPLATE's DISV, written by the build, with the run's:
+    on a real Voronoi mesh (ragged rings, ``int64`` vertex ids in memory) the model's own
+    run must pin the same and another mesh of the same model name must not."""
+
+    run, xc = _triangulated_run(tmp_path / "coarse", triangulated_grid)
+    finer, _ = _triangulated_run(tmp_path / "fine", triangulated_grid_finer)
+    cells = [int(c) for c in np.flatnonzero((xc > 200.0) & (xc < 400.0))[:3]]
+    targets = HeadTargets.from_cells(cells=cells, values=np.full((2, len(cells)), 95.0),
+                                     layers=0, names=[f"w{i}" for i in range(len(cells))])
+    cal = run.model("m").pest("t", start_datetime="2020-01-01", workspace=tmp_path / "pest")
+    cal.parameterize("k", style="constant", name="k")
+    cal.observe(targets, prefix="hd")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("t.pst")
+    ran = cal.run_template(tmp_path / "mf6")
+    read = cal.run_template(tmp_path / "outputs", outputs_from=run)
+    np.testing.assert_allclose(read["simulated"], ran["simulated"], rtol=0, atol=1e-8)
+    assert ((ran["simulated"] > 92.0) & (ran["simulated"] < 98.0)).all()  # not a CHD cell
+    with pytest.raises(ValueError, match=r"model 'm': its mesh is DISV, 2 layer\(s\), "
+                                         r"fingerprint \w{16} against the template's DISV, "
+                                         r"2 layer\(s\), fingerprint \w{16} \(another mesh\)"):
+        cal.run_template(tmp_path / "w", outputs_from=finer)
+    assert not (tmp_path / "w").exists()

@@ -13,6 +13,7 @@ import time
 import warnings
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from numbers import Real
 from pathlib import Path
 
 import flopy
@@ -3523,9 +3524,10 @@ class PestProject:
             starting value (1 for a multiplier, 0 for an offset, ``initial_value=``
             where given). A mapping or Series must name every ADJUSTABLE parameter; a
             FIXED one left out is at its ``parval1``. A name the control file lacks,
-            two names for one parameter, a value that is not a finite number, a TIED
-            parameter and one carrying a ``scale``/``offset`` are refused
-            (``ValueError``). ``ies.calibrated(...)``
+            two names for one parameter, a value that is not finite, a TIED parameter
+            and one carrying a ``scale``/``offset`` are refused (``ValueError``); a
+            value that is not a real number -- a ``bool``, a string -- is refused
+            (``TypeError``) rather than read through ``float()``. ``ies.calibrated(...)``
             passes that realization's values as its replay filled them
             (:attr:`CalibratedInputs.parameters
             <myflopy.modflow.mf6.pest.calibrated.CalibratedInputs.parameters>`); the
@@ -3572,7 +3574,9 @@ class PestProject:
             carrying only the build's ``myflopy_pest_build.json`` (an IES master and
             its workers carry that, and hold IES results), never anything else:
             those are refused (``FileExistsError``) whatever ``overwrite`` says.
-            Everything else is checked before anything is deleted.
+            Everything else is checked before anything is deleted. Only ``True`` or
+            ``False`` (a numpy bool too): anything else is refused (``TypeError``),
+            since ``bool("no")`` is ``True``.
 
         Returns
         -------
@@ -3596,7 +3600,9 @@ class PestProject:
             a ``workspace`` that is, contains or sits inside the template, the run
             directory or ``outputs_from``.
         TypeError
-            When ``values`` or ``outputs_from`` is none of the accepted types.
+            When ``values`` or ``outputs_from`` is none of the accepted types, when a
+            value of ``values`` is not a real number, or when ``overwrite`` is not a
+            bool.
         FileExistsError
             When ``workspace`` is a file, or a non-empty folder that ``overwrite=True``
             may not delete (or ``overwrite`` is ``False``).
@@ -3615,6 +3621,14 @@ class PestProject:
         template = self.template_workspace.resolve()
         target = Path(workspace).resolve()
         source = None if outputs_from is None else self._completed_run(outputs_from, template)
+        if not isinstance(overwrite, (bool, np.bool_)):
+            # True DELETES a folder, so it is never read off another value: bool("no")
+            # is True (review of ledger 605).
+            raise TypeError(
+                f"run_template(overwrite={overwrite!r}) takes True or False, not "
+                f"{type(overwrite).__name__}: True deletes an earlier run_template() folder "
+                "of this calibration."
+            )
         self._run_template_workspace(target, template, source, overwrite=bool(overwrite))
         # user -> run_template -> _refuse_a_live_run -> warnings.warn
         self._refuse_a_live_run(template, "template", method="run_template", instead="",
@@ -3728,6 +3742,13 @@ class PestProject:
                     f"{str(key)!r}); pyEMU's names are compared without regard to case."
                 )
             seen[lower] = str(key)
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+                # float() would read True as 1.0 and "0.5" as 0.5 in silence.
+                raise TypeError(
+                    f"values= gives parameter {str(key)!r} the value {value!r} "
+                    f"({type(value).__name__}): a parameter's value is a real number (a "
+                    "multiplier, or an additive offset in model units)."
+                )
             converted[lower] = float(value)
             if not np.isfinite(converted[lower]):
                 raise ValueError(
