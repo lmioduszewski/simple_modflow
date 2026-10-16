@@ -1341,7 +1341,8 @@ an inline copy, and the discretization beside it reads `stale` and is swapped:
 ```python
 moved = project.simulations["s/cal"].with_grid(mf.grid_ref("fine"), remap=True, library=project)
 project.add_package("npf/base/cal/fine", moved.model("m").package("npf"))   # save it by ref
-moved = moved.with_packages(mf.ref("dis/fine"), slot="dis/base", on="m")
+moved = moved.with_packages(mf.ref("npf/base/cal/fine"), slot="npf", on="m")
+moved = moved.with_packages(mf.ref("dis/fine"), slot="dis/base", on="m")   # forgotten: refused at build
 ```
 
 A calibrated list package keeps its pin, drops its `.gpkg` move recipe and reads

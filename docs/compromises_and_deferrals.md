@@ -22807,8 +22807,11 @@ same day, which is the useful part of the result.
       - `grid_free=` names were remapped anyway; the report asked with the same names then
         read `unchanged`. Now neither carried nor stamped (one `_grid_free_names` for both).
       - A stamped array on a mesh of ANOTHER size died in FloPy (`MFDataException: Unable
-        to set data "k" layer 0`) before the stamp check ran. Only `MFDataException` from
-        a STAMPED package is translated (chained), naming the move; and the stamp's
+        to set data "k" layer 0`) before the stamp check ran. Only `MFDataException` is
+        translated (chained), and only when the build's own checks, run over what is built
+        so far, find something -- a stamped package, or (found in review) a REMAPPED array
+        beside the old mesh's DISV left `stale` and not swapped, which died the same way on a
+        mesh of another size and is now refused naming the DISV; and the stamp's
         refusal names `remap=True` (`library=project` for a ref) only for a package whose
         per-cell arrays the engine carries (`REMAPPABLE_ARRAYS`, restated from
         `remap.py`'s layer-2 sets in layer 1; a test holds them equal) -- not a typed

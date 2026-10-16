@@ -6013,19 +6013,37 @@ class ModelSpec:
                     )
                 ) from error
             except MFDataException as error:
-                # A package `with_grid` stamped, whose per-cell arrays a mesh of another
-                # size cannot hold: FloPy refuses it while building, before the stamp
-                # check below can name the move -- the caller read "Unable to set data
-                # 'k' layer 0" about a move it never saw named (ledger 610).
-                if not moved_package_complaints([package]):
+                # FloPy refuses a per-cell array the BUILT discretization cannot hold
+                # before the checks below can name why: a package `with_grid` stamped,
+                # whose arrays still mean the old mesh, or a remapped one beside the old
+                # mesh's DISV that a `with_grid(remap=True)` left `stale` and nobody
+                # swapped (ledger 610). Either way the
+                # caller read "Unable to set data 'k' layer 0" about a move it never saw
+                # named, so the same refusal the checks below would raise is raised now,
+                # over what has been built so far; FloPy's error is re-raised untouched
+                # when they find nothing -- and when no discretization has been built
+                # yet, since a DISV FloPy refused half-way is registered on the model and
+                # the checks cannot read it.
+                if not any(
+                    getattr(built, "package_type", None) in ("dis", "disv", "disu")
+                    for built in built_packages.values()
+                ):
                     raise
+                so_far = [p for p in packages if p.name in built_packages]
+                complaints = _discretization_complaint_families(
+                    model,
+                    getattr(model, "myflopy_context", context),
+                    so_far,
+                    built_packages=built_packages,
+                )
+                complaints["mesh"] += moved_package_complaints(packages)
                 built_grid = _built_grid(model)
-                raise ValueError(
-                    _build_refusal(
-                        self.name, {"mesh": moved_package_complaints(packages)},
-                        built_grid.name if built_grid else "DISV",
-                    )
-                ) from error
+                refusal = _build_refusal(
+                    self.name, complaints, built_grid.name if built_grid else "DISV"
+                )
+                if refusal is None:
+                    raise
+                raise ValueError(refusal) from error
             if built is not None:
                 built_packages[package.name] = built
         # RE-READ the context: a lazy DISV resolves the layer stack against the grid

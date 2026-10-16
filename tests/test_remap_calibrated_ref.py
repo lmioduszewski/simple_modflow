@@ -223,6 +223,56 @@ def test_a_stamped_array_another_mesh_cannot_hold_is_refused_naming_the_move(
     assert isinstance(raised.value.__cause__, MFDataException)
 
 
+@pytest.mark.parametrize("form", ["inline", "ref"])
+def test_a_remapped_array_beside_the_stale_discretization_is_refused_naming_it(
+    tmp_path, meshes, quiet, form
+):
+    """The swap `remap=True` leaves to the caller, forgotten, on a mesh of another size.
+
+    The carried npf holds 81 values per layer and the DISV beside it still describes the
+    28-cell mesh, so FloPy refused the npf (`MFDataException: Unable to set data "k"`)
+    before the build's DISV-against-grid check could say the DISV was never swapped
+    (found in the review of ledger 610).
+    """
+
+    a, _b, c = meshes
+    project = Project(tmp_path / "p", name="p")
+    dis = mf.disv(_layering(a))
+    project.add_package("dis/old", dis)
+    entry = mf.ref("dis/old") if form == "ref" else dis
+    moved = _model(a, entry, mf.npf(k=_k(a), icelltype=1)).with_grid(
+        c, remap=True, library=project
+    )
+    assert _rows(moved, project)["npf"]["how"] == "remapped"
+
+    with pytest.raises(ValueError, match=r"DISV package has ncpl=28 but .* 81 cells") as raised:
+        project.prepare_run("r", _sim(moved))
+    assert isinstance(raised.value.__cause__, MFDataException)
+
+
+@pytest.mark.parametrize("broken", ["disv", "npf"])
+def test_flopy_refusing_a_package_no_move_touched_is_left_as_flopy_said(
+    tmp_path, meshes, quiet, broken
+):
+    """Only a refusal the build's own checks can explain is translated.
+
+    A DISV FloPy refuses half-way is still registered on the model, and reading it there
+    raised an unrelated `AttributeError` in place of FloPy's error (found in the review
+    of ledger 610).
+    """
+
+    a, _b, _c = meshes
+    dis = mf.disv(_layering(a))
+    npf = mf.npf(k=1.0, icelltype=1)
+    if broken == "disv":
+        dis = dis.with_options(top=np.ones(5))
+    else:
+        npf = mf.npf(k=np.ones((NLAY, 5)), icelltype=1)
+
+    with pytest.raises(MFDataException):
+        _sim(_model(a, dis, npf)).build_flopy(tmp_path / "w")
+
+
 def test_the_move_refusal_names_remap_only_for_arrays_it_carries(meshes):
     a, _b, _c = meshes
     k_array = mf.npf(k=_k(a), icelltype=1).with_metadata(**{MOVED_FROM: "x"})
