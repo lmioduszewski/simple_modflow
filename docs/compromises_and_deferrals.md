@@ -22974,7 +22974,9 @@ same day, which is the useful part of the result.
         (ledger 612) does not use `_declared_spec()` and is unchanged.
       - **The mesh is registered** (decisions item 2) in `project.grids` under
         `"<model>/<grid_pin>"` -- the run's own `grid_ref` key when its recipe declared one
-        -- NEVER prefixed (ss and the sw_* runs share meshes), no `@` (`save()` flattens
+        -- NEVER prefixed (the ten sw_* runs share one mesh, pin 9bff04dd4b9fedba, which a
+        second prefixed import finds `identical`, measured on copies; ss's is its own,
+        ef6fd28083bdc82b, against what the design assumed), no `@` (`save()` flattens
         it), the model declared on `mf.grid_ref(key)` with a context of metadata and units
         only, so it builds the same in session as after `save()`/`load()` and
         `with_grid(remap=True)` still finds what its arrays are on. Same pin, vertices and
