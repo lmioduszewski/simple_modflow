@@ -450,6 +450,56 @@ library and run (ledger 589). Copy its declaration cell for Ten Trails,
 and keep its two round trips: the template at hand-set values before any IES, and the
 rebuilt model against what IES ran.
 
+### A calibration onto another mesh
+
+The Ten Trails route end to end: a run into the library, calibrated, written back, and its
+calibrated K carried onto another run's mesh. Each step is one of the sections above.
+
+```python
+project = mf.Project.load("/models/tentrails")          # else mf.Project(root, name=...)
+
+# 1. The run to calibrate goes in WITHOUT prefix= (the write-back matches its name and keys).
+project.runs["ss"].to_library(project, files_differ="keep_record")
+project.add_simulation(project.simulations["ss"].with_packages(   # what MF6 ran (above)
+    mf.tdis(nper=1, perioddata=[(1.0, 1, 1.1)], time_units="days",
+            start_date_time="2017-09-30")), overwrite=True)
+
+# 2. Calibrate the run (docs/PEST_calibration_guide.md).
+cal = project.runs["ss"].model("tentrails").pest("cal", start_datetime="2017-09-30")
+...                                                     # parameterize, observe, build
+ies = cal.run_ies(...)
+
+# 3. Back into the library. ss's TDIS file departs from its record, so the simulation
+#    fork is refused (ledger 611): register the packages alone and fork by hand.
+keys = ies.calibrated().to_library(project, simulation=False)   # {"npf/base": "npf/base/cal", ...}
+project.simulations.fork("ss", "ss/cal", swap=keys)
+
+# 4. Onto hm's mesh. hm goes in prefixed: it is not calibrated, and its npf/base is not ss's.
+hm = project.runs["hm_mounding_final_flow"].to_library(project, prefix="hm/")
+on_hm = project.simulations["ss/cal"].with_grid(
+    mf.grid_ref(hm.grids["tentrails"]), remap=True, library=project)
+project.add_package("npf/base/cal/hm", on_hm.model("tentrails").package("npf"))
+project.simulations.fork(hm.simulation, "hm/cal", swap={"hm/npf/base": "npf/base/cal/hm"})
+project.prepare_run("hm_cal", "hm/cal").execute()
+```
+
+- **Step 1's TDIS correction is why step 3 forks by hand.** The library now says what MF6
+  ran and the run's record does not; PEST calibrated the run's FILES. `packages()` still
+  writes K back, since `ss.tdis` is not a package the calibration substitutes. A run whose
+  files agree with its record forks in one call, `to_library(project)`.
+- **Step 4 moves the whole calibrated simulation only to take its `npf`.** The remap
+  carries the per-cell arrays (`npf`/`sto`/`ic`) onto hm's mesh as inline copies (ledgers
+  300, 610), the eager DISV reads `stale`, and nothing of the moved simulation is built --
+  `sim.move_report(library=project)` before it says what each package reads.
+- **The swap replaces hm's WHOLE NPF** -- its `icelltype`, and any K edit made on hm alone.
+  hm's own K is not ss's (why it goes in prefixed), so compare the remapped K with hm's
+  before trusting the swap: the run moves wherever the two differ, not only where the
+  calibration moved K.
+- **The grid key is never prefixed** (ledger 613): runs on one mesh share one entry,
+  `"tentrails/<grid_pin>"`, and a run on ss's own mesh takes the calibrated packages with a
+  `fork(..., swap=keys)` alone. The `sw_*` runs share one mesh, which is not ss's (ledger
+  613), so they take step 4.
+
 ## The run ledger
 
 `project.runs` is every run under the project — with a manifest, without one, or

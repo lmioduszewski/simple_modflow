@@ -1387,26 +1387,35 @@ refused naming this.
 `to_library` starts from what the RUN built -- its frozen snapshot and its own library
 copies -- not from the library as it is now, and forks to new keys: earlier runs and
 `project.runs.drift()` are untouched, and drift's `source` column follows the parameter
-file the values came from. The forked simulation keeps the library's OTHER packages, so it
-is refused when one of them was edited since the run (ledger 562):
-`simulation=False` registers the calibrated packages alone, to fork by hand. PEST
-calibrated the run's FILES (a build copies them, ledger 356), so a run whose files are
-not what its record writes is refused too (ledger 611): `packages()` when a
-file of a package it substitutes departs, the simulation fork when any file does --
-`project.runs[<run>].inputs` says which and how (a hand-edited TDIS, a FloPy edit
-written). A run written before runs recorded their inputs is checked by building and
-writing its frozen snapshot beside its files -- so a lazy package whose `.gpkg` was edited
-or removed since is not a departure: the snapshot holds what the run resolved (ledger
-612). A calibrated array is `unverifiable` on a grid move, and
+file the values came from. Two things refuse the fork; `simulation=False` then registers
+the calibrated packages alone, to fork by hand (`project.simulations.fork(<run's
+simulation>, <name>, swap=keys)`):
+
+- **The library moved on.** The forked simulation keeps the library's OTHER packages, so
+  it is refused when one of them was edited since the run (ledger 562).
+- **The run's files moved on.** PEST calibrated the run's FILES (a build copies them,
+  ledger 356), so a run whose files are not what its record writes is refused too (ledger
+  611): the simulation fork when any file departs, and `packages()` -- so `to_library`
+  whatever `simulation=` says -- when a file of a package it substitutes does;
+  `project.runs[<run>].inputs` says which and how (a hand-edited TDIS, a FloPy edit
+  written). A run written before runs recorded their inputs is checked by building and
+  writing its frozen snapshot beside its files -- so a lazy package whose `.gpkg` was
+  edited or removed since is not a departure: the snapshot holds what the run resolved
+  (ledger 612).
+
+What comes back is resolved arrays and records; a RECIPE form -- a pilot-point multiplier
+recipe on a K recipe -- is not built. A lake's `bedleak` and a stream's `rhk`
+(`style="feature"`) come back the same way, record by record; a `NONE` bedleak on a lake
+the calibration did not select stays `NONE` (ledger 563).
+
+**Onto another mesh.** A calibrated array is `unverifiable` on a grid move, and
 `with_grid(<new grid>, remap=True, library=project)` is its route (ledger 300): the
 registered package is carried as an inline copy, the new grid may be `mf.grid_ref(key)`,
 and an eager discretization beside it reads `stale` and is swapped with
-`with_packages(mf.ref(<new dis>), slot=...)` (ledger 610). Register the carried
-copy (`project.add_package`) and `mf.ref` it to save it. Written back as resolved arrays and
-records; a RECIPE form -- a pilot-point multiplier recipe on a K recipe -- is not built.
-A lake's `bedleak` and a stream's `rhk` (`style="feature"`) come back the same way, record
-by record; a `NONE` bedleak on a lake the calibration did not select stays `NONE`
-(ledger 563).
+`with_packages(mf.ref(<new dis>), slot=...)` (ledger 610). Register the carried copy
+(`project.add_package`) and `mf.ref` it to save it. The Ten Trails route -- a run into
+the library, calibrated, written back, and its K carried onto another run's mesh -- is
+in `docs/project_workflow.md`, "A calibration onto another mesh".
 
 ---
 
