@@ -29,6 +29,11 @@ run, never by re-applying the multipliers in Python:
 RUN built -- its frozen snapshot (ledger 251), its own library copies (ledger 230) --
 never the library as it stands now; :meth:`CalibratedInputs.to_library` registers them
 under new keys and forks the run's simulation onto them.
+
+Steps 3 and 4 -- the values completed, the templates filled, the cut script run -- are
+the ones :meth:`PestProject.run_template
+<myflopy.modflow.mf6.pest.project.PestProject.run_template>` takes too; they live once,
+in :mod:`~myflopy.modflow.mf6.pest.replay` (ledger 605).
 """
 
 from __future__ import annotations
@@ -36,11 +41,7 @@ from __future__ import annotations
 import ast
 import csv
 import json
-import os
-import re
 import shutil
-import subprocess
-import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -51,10 +52,15 @@ import numpy as np
 import pandas as pd
 
 from myflopy._logging import get_logger
-from myflopy._pythonpath import pythonpath_for_children
 from myflopy.grid_identity import SOURCE_SHA, source_fingerprint
 from myflopy.modflow.mf6.pest.ies import IesResults
 from myflopy.modflow.mf6.pest.project import _simulation_input_files
+from myflopy.modflow.mf6.pest.replay import (
+    complete_values,
+    fill_templates,
+    replay_script,
+    run_script,
+)
 from myflopy.project.freeze import thaw_simulation
 from myflopy.specs import PackageRef, PackageSpec, package_digest, substitute_values
 from myflopy.workspace import Run, _read_package_snapshot
@@ -64,11 +70,6 @@ logger = get_logger(__name__)
 #: The build-metadata version whose parameter records a write-back reads: each names
 #: its model, dataset and written fields (ledger 560).
 METADATA_VERSION = 2
-
-#: Where a replay's forward run stops: the first statement calling this (the model
-#: command pyEMU writes into ``main()``).
-_MODEL_COMMAND = ("pyemu", "os_utils", "run")
-
 
 @dataclass
 class _Dataset:
@@ -167,147 +168,6 @@ def _parameter_values(results: IesResults, realization, iteration: int) -> tuple
     return values, path
 
 
-def _complete_values(pst, values: pd.Series) -> dict[str, float]:
-    """A value for every parameter of the control file, or a refusal.
-
-    A FIXED parameter a file leaves out is at its ``parval1``; a TIED one is refused
-    (its value is its parent's times a ratio this does not reconstruct), and so is an
-    adjustable one the file does not hold. So is one whose ``scale`` is not 1 or whose
-    ``offset`` is not 0: PEST writes ``value * scale + offset`` into a template, and
-    the templates are filled here with the value alone. myflopy never sets either, so
-    one is a hand edit of the control file, and filling past it would rebuild what
-    the run did not run.
-    """
-
-    data = pst.parameter_data
-    tied = sorted(data.index[data["partrans"] == "tied"])
-    if tied:
-        raise ValueError(
-            f"Parameter(s) {tied[:5]} are TIED; a write-back reads each parameter's own "
-            "value and does not reconstruct a tie. Untie them and run again."
-        )
-    scale = (pd.to_numeric(data["scale"], errors="coerce") if "scale" in data.columns
-             else pd.Series(1.0, index=data.index))
-    offset = (pd.to_numeric(data["offset"], errors="coerce") if "offset" in data.columns
-              else pd.Series(0.0, index=data.index))
-    moved = sorted(data.index[((scale != 1.0) | (offset != 0.0)).to_numpy()])
-    if moved:
-        first = moved[0]
-        raise ValueError(
-            f"Parameter(s) {moved[:5]}{' ...' if len(moved) > 5 else ''} carry a scale or "
-            f"offset -- {first!r}: scale {float(scale[first]):g}, offset "
-            f"{float(offset[first]):g} -- so PEST wrote value * scale + offset into "
-            "their templates, which a write-back, filling each template with the value, "
-            "does not reproduce. myflopy sets neither; set scale 1 and offset 0 in the "
-            "control file and run again."
-        )
-    complete: dict[str, float] = {}
-    missing = []
-    for name in data.index:
-        key = str(name).lower()
-        if key in values.index:
-            complete[key] = float(values[key])
-        elif data.loc[name, "partrans"] == "fixed":
-            complete[key] = float(data.loc[name, "parval1"])
-        else:
-            missing.append(key)
-    if missing:
-        raise ValueError(
-            f"Adjustable parameter(s) {missing[:5]}{' ...' if len(missing) > 5 else ''} "
-            "are not in the realization's parameter file, so what it ran cannot be rebuilt."
-        )
-    return complete
-
-
-def _fill_templates(pst, values: Mapping[str, float], source: Path, target: Path) -> None:
-    """Fill every template of ``pst`` from ``source`` into ``target`` at full precision.
-
-    The marker span is replaced by ``repr`` of the value -- the shortest text that reads
-    back as the same float -- whatever the span's width: the forward run's own readers
-    (pyEMU's multiplier files, the pilot-point CSVs) split on separators, not columns.
-    pyEMU's ``Pst.write_input_files`` instead fits a pilot-point template's
-    15-character span at 4 significant digits, 4.5e-4 relative
-    (``docs/reproducers/write_back_template_precision.py``).
-    """
-
-    for tpl, model_file in zip(pst.template_files, pst.input_files, strict=True):
-        text = (source / tpl).read_text(encoding="utf-8")
-        header, _, body = text.partition("\n")
-        parts = header.split()
-        if len(parts) != 2 or parts[0].lower() != "ptf":
-            raise ValueError(f"{source / tpl} does not start with 'ptf <marker>'.")
-        marker = re.escape(parts[1])
-        pattern = re.compile(f"{marker}([^{marker}]*){marker}")
-
-        def _value(match, tpl=tpl):
-            name = match.group(1).strip().lower()
-            if name not in values:
-                raise ValueError(f"{tpl} names parameter {name!r}, which the control file lacks.")
-            return repr(float(values[name]))
-
-        destination = target / model_file
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(pattern.sub(_value, body), encoding="utf-8")
-
-
-def _is_model_command(node: ast.AST) -> bool:
-    """Whether ``node`` contains a call of ``pyemu.os_utils.run``."""
-
-    for inner in ast.walk(node):
-        if not isinstance(inner, ast.Call):
-            continue
-        chain = []
-        func = inner.func
-        while isinstance(func, ast.Attribute):
-            chain.append(func.attr)
-            func = func.value
-        if isinstance(func, ast.Name):
-            chain.append(func.id)
-        if tuple(reversed(chain)) == _MODEL_COMMAND:
-            return True
-    return False
-
-
-def replay_script(forward_run: Path) -> tuple[str, list[str]]:
-    """``forward_run.py`` with ``main()`` cut before the model command, and the lines kept.
-
-    Parameters
-    ----------
-    forward_run : pathlib.Path
-        The calibration's generated forward run.
-
-    Returns
-    -------
-    tuple of (str, list of str)
-        The script's source with ``main()``'s statements from the first one calling
-        ``pyemu.os_utils.run`` on removed, and the kept statements as source text.
-
-    Raises
-    ------
-    RuntimeError
-        When the file has no ``main()``, or no statement of it calls
-        ``pyemu.os_utils.run``: there is then no point at which the model inputs are
-        known to be complete.
-    """
-
-    tree = ast.parse(forward_run.read_text(encoding="utf-8"))
-    main = next(
-        (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"),
-        None,
-    )
-    if main is None:
-        raise RuntimeError(f"{forward_run} defines no main(), so it cannot be replayed.")
-    cut = next((i for i, statement in enumerate(main.body) if _is_model_command(statement)), None)
-    if cut is None:
-        raise RuntimeError(
-            f"{forward_run}'s main() never calls pyemu.os_utils.run, so nothing marks "
-            "where its inputs are complete; it cannot be replayed."
-        )
-    kept = main.body[:cut]
-    main.body = kept or [ast.Pass()]
-    return ast.unparse(tree) + "\n", [ast.unparse(statement) for statement in kept]
-
-
 def _named_paths(statements: list[str], workspace: Path) -> set[Path]:
     """Every file or directory of ``workspace`` a replayed statement names as a string."""
 
@@ -399,21 +259,9 @@ def _replay(results: IesResults, values: Mapping[str, float], target: Path) -> l
             wanted |= _manifest_paths(source / path, source)
     for relative in sorted(wanted):
         _copy(source, target, relative)
-    _fill_templates(results.pst, values, source, target)
+    fill_templates(results.pst, values, source, target)
     (target / "replay_inputs.py").write_text(script, encoding="utf-8")
-    environment = dict(os.environ)
-    pythonpath = pythonpath_for_children()
-    if pythonpath is not None:
-        environment["PYTHONPATH"] = pythonpath
-    done = subprocess.run(
-        [sys.executable, "replay_inputs.py"], cwd=target, env=environment,
-        capture_output=True, text=True, check=False,
-    )
-    if done.returncode != 0:
-        raise RuntimeError(
-            f"Replaying the forward run of {source} failed (exit {done.returncode}):\n"
-            f"{done.stderr[-4000:]}"
-        )
+    run_script(target, "replay_inputs.py", what=f"Replaying the forward run of {source}")
     return kept
 
 
@@ -702,6 +550,23 @@ class CalibratedInputs:
             f"CalibratedInputs({self.case!r}, realization={self.realization!r}, "
             f"iteration={self.iteration}: {touched})"
         )
+
+    @property
+    def parameters(self) -> pd.Series:
+        """Every parameter's value as the replay filled it, by lower-cased pyEMU name.
+
+        In the control file's order: an adjustable parameter's value from the
+        realization's file (:attr:`parameter_file`), a fixed one's ``parval1``. It is what
+        ``cal.run_template(workspace, values=ies.calibrated())`` fills the templates with
+        (ledger 605).
+
+        Returns
+        -------
+        pandas.Series
+            A copy: float values indexed by parameter name, named ``"parval1"``.
+        """
+
+        return pd.Series(self._values, dtype=float, name="parval1")
 
     # -- reading -------------------------------------------------------------
 
@@ -1275,7 +1140,10 @@ def calibrated_inputs(results: IesResults, realization="base", *, iteration=None
     records = _refuse_old_metadata(results)
     iteration = _iteration(results, iteration)
     values, parameter_file = _parameter_values(results, realization, iteration)
-    complete = _complete_values(results.pst, values)
+    complete = complete_values(
+        results.pst, values, source="the realization's parameter file",
+        remedy=", so what it ran cannot be rebuilt.",
+    )
     datasets = _datasets(records)
     with tempfile.TemporaryDirectory(prefix="myflopy-calibrated-") as scratch:
         directory = Path(scratch)
@@ -1306,4 +1174,4 @@ def calibrated_inputs(results: IesResults, realization="base", *, iteration=None
     )
 
 
-__all__ = ["CalibratedInputs", "calibrated_inputs", "replay_script"]
+__all__ = ["CalibratedInputs", "calibrated_inputs"]

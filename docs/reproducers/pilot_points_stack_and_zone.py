@@ -96,7 +96,7 @@ def _case(demo, root, label, declarations, values):
     cal.observe(demo.head_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{label}.pst", noptmax=0)
+        cal.build(f"{label}.pst")
     par = cal.pst.parameter_data
     for group, value in values.items():
         par.loc[par["pargp"] == group, "parval1"] = value
@@ -160,7 +160,7 @@ def main():
             cal.observe(demo.head_targets)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                cal.build("d.pst", noptmax=0)
+                cal.build("d.pst")
             groups = sorted(set(cal.pst.parameter_data["pargp"]))
             print(f"D  two calls under one name on layers 0 and 1: groups {groups}")
     finally:

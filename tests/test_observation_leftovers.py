@@ -271,7 +271,7 @@ def screened_ies(tmp_path_factory):
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("scr.pst", noptmax=0)
+        cal.build("scr.pst")
         results = cal.run_ies(reals=3, iterations=1)
     return cal, results, model
 
@@ -328,7 +328,7 @@ def test_two_head_sets_put_one_definition_of_the_writer_in_the_forward_run(toy, 
     cal.observe(_head_targets([("V", 15)], pd.DataFrame({"time": [0], "V": [96.0]})), prefix="hdb")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        cal.build("twice.pst", noptmax=0)
+        cal.build("twice.pst")
     assert not [w for w in caught if "already in forward run python functions" in str(w.message)]
     script = (cal.template_workspace / "forward_run.py").read_text()
     assert script.count("def _write_head_target_csv(") == 1

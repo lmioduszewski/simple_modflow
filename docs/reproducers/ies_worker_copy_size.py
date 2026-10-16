@@ -69,7 +69,7 @@ def main() -> None:
             cal = demo.model.pest("cal", start_datetime="2024-01-01")
             cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 1000.0))
             cal.observe(demo.head_targets)
-            cal.build("cal.pst", noptmax=0)
+            cal.build("cal.pst")
         template = pathlib.Path(cal.template_workspace)
         built, built_files = _size(template)
         as_built = {path.relative_to(template) for path in template.rglob("*") if path.is_file()}

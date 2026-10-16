@@ -91,7 +91,7 @@ def main():
             values=pd.DataFrame({"time": [0, 1, 2], "W": [98.0] * 3, "V": [97.0] * 3})))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            cal.build("bounds.pst", noptmax=0)
+            cal.build("bounds.pst")
         np.random.seed(0)
         results = cal.prior(reals=50)
         bounds = cal.pst.parameter_data

@@ -17,11 +17,13 @@ from pathlib import Path
 
 import flopy
 import numpy as np
+import pandas as pd
 from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy._pythonpath import pythonpath_for_children
+from myflopy.grid_identity import disv_pin
 from myflopy.modflow.mf6.lak_implicit import keep_implicit
 from myflopy.modflow.mf6.observations import (
     ConcDifferences,
@@ -36,7 +38,7 @@ from myflopy.modflow.mf6.observations import (
 )
 from myflopy.modflow.mf6.observations.registry import bare_targets
 from myflopy.modflow.mf6.package_registry import model_packages_of_type
-from myflopy.modflow.mf6.period_end import period_lengths
+from myflopy.modflow.mf6.period_end import END_RTOL, period_lengths, tdis_period_records
 from myflopy.modflow.mf6.pest.geostats import build_geostruct, checked_nugget, unit_sill
 from myflopy.modflow.mf6.pest.native_parameters import (
     DEFAULT_PP_NEAREST,
@@ -70,6 +72,12 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     emit_pilot_point_commands,
     register_pilot_point_parameters,
 )
+from myflopy.modflow.mf6.pest.replay import (
+    complete_values,
+    fill_templates,
+    run_script,
+    without_model_command,
+)
 from myflopy.modflow.mf6.pest.run_outputs import OUTPUTS_SNAPSHOT, RUN_OUTPUT_KINDS
 from myflopy.modflow.mf6.pest.run_state import (
     RESUME_RECORD,
@@ -91,6 +99,7 @@ from myflopy.modflow.mf6.pest.runs import (
     default_pest_root,
     pestpp_ies_outputs,
 )
+from myflopy.modflow.mf6.pest.scoring import observation_phi
 from myflopy.modflow.mf6.pest.specs import (
     ConcDifferenceObservationSpec,
     ConcObservationSpec,
@@ -104,6 +113,8 @@ from myflopy.modflow.mf6.pest.specs import (
     SfrStageObservationSpec,
 )
 from myflopy.modflow.mf6.pest.summary import PestSettings
+from myflopy.modflow.utils.validators import whole_number
+from myflopy.run_record import read_listing_outcome
 
 METADATA_FILENAME = "myflopy_pest_metadata.json"
 
@@ -126,6 +137,15 @@ STAGING_SUFFIX = ".staging"
 
 #: The ``written_by`` value of a :data:`BUILD_MARKER`.
 _MARKER_WRITER = "myflopy PEST build"
+
+#: The file :meth:`PestProject.run_template` writes into each folder it runs the
+#: template in, naming that folder and the template (ledger 605). The one sign by
+#: which ``run_template(overwrite=True)`` may delete a folder: never the
+#: :data:`BUILD_MARKER` it also carries, which an IES master and its workers carry too.
+TEMPLATE_RUN_MARKER = "myflopy_template_run.json"
+
+#: The ``written_by`` value of a :data:`TEMPLATE_RUN_MARKER`.
+_TEMPLATE_RUN_WRITER = "myflopy PestProject.run_template"
 
 #: What a :data:`BUILD_MARKER` says about itself, for the person who finds one.
 _MARKER_NOTE = (
@@ -431,6 +451,75 @@ def _scan_simulation_inputs(
     return list(found), outside, list(written), written_outside
 
 
+def _copy_run_outputs(source: Path, target: Path) -> list[str]:
+    """Copy a completed run's OUTPUT files into ``target``, replacing a file of the same name.
+
+    Every top-level file of ``source`` that is not one of its simulation's inputs
+    (:func:`_simulation_input_files`) and not a dot-file -- the listings, every
+    ``FILEOUT``, the binary grid file -- and every output its simulation names in a
+    subdirectory (``FILEOUT out/m.cbc``). A file of the same name in ``target`` is
+    replaced: a template built before ledger 383 still holds the build-time run's
+    outputs, and they must not win over the run asked for (ledger 605).
+
+    Returns
+    -------
+    list of str
+        The files copied, relative POSIX paths.
+    """
+
+    inputs, _outside, written, _written_outside = _scan_simulation_inputs(source)
+    inputs = {path.as_posix() for path in inputs}
+    copied = []
+    for item in sorted(source.iterdir()):
+        if item.is_file() and item.name not in inputs and not item.name.startswith("."):
+            shutil.copy2(item, target / item.name)
+            copied.append(item.name)
+    for relative in written:
+        if relative.parent == Path(".") or not (source / relative).is_file():
+            continue
+        (target / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / relative, target / relative)
+        copied.append(relative.as_posix())
+    return copied
+
+
+def _discretization_identity(model) -> tuple[str, tuple] | None:
+    """A model's mesh as a run-template compares it: its kind and identity, or ``None``.
+
+    DISV: ``(nlay, disv_pin)`` (:func:`~myflopy.grid_identity.disv_pin`, the
+    connectivity fingerprint); DIS: ``(nlay, nrow, ncol)``; DISU: ``(nodes,)``.
+    """
+
+    for package in model.packagelist:
+        kind = str(getattr(package, "package_type", "")).lower()
+        if kind == "disv":
+            return kind, (int(package.nlay.get_data()), disv_pin(package))
+        if kind == "dis":
+            return kind, (int(package.nlay.get_data()), int(package.nrow.get_data()),
+                          int(package.ncol.get_data()))
+        if kind == "disu":
+            return kind, (int(package.nodes.get_data()),)
+    return None
+
+
+def _describe_mesh(kind: str, identity: tuple) -> str:
+    """One mesh identity in words, for a refusal."""
+
+    if kind == "disv":
+        return f"DISV, {identity[0]} layer(s), fingerprint {identity[1]}"
+    if kind == "dis":
+        return f"DIS, {identity[0]} layer(s) x {identity[1]} row(s) x {identity[2]} column(s)"
+    return f"DISU, {identity[0]} node(s)"
+
+
+def _load_discretization(sim_ws: Path):
+    """The simulation in ``sim_ws`` with each model's discretization and the TDIS loaded alone."""
+
+    return flopy.mf6.MFSimulation.load(
+        sim_ws=str(sim_ws), load_only=["dis", "disv", "disu"], verbosity_level=0,
+    )
+
+
 def _record_control_file(archive: Path, noptmax: int, options: dict) -> None:
     """Add to ``archive``'s resume record what the run's control file said before the restart.
 
@@ -680,11 +769,13 @@ class PestProject:
         cal.forecast(prediction_targets)   # predictions of interest (zero weight)
         print(cal.settings())              # review the resolved configuration
         pst = cal.build("calib.pst")       # -> native .pst + forward_run.py
+        start = cal.run_template("preflight")   # the template once: phi by group
         cal.run_ies()                      # PESTPP-IES ensemble smoother
 
     Use :meth:`parameterize` (styles ``constant`` / ``zone`` / ``grid`` /
     ``pilotpoints`` across every target), :meth:`observe`, :meth:`forecast`,
-    :meth:`build`, :meth:`run_ies`/:meth:`prior` (and :meth:`resume_ies` for an
+    :meth:`build`, :meth:`run_template` (one run of the template, scored),
+    :meth:`run_ies`/:meth:`prior` (and :meth:`resume_ies` for an
     interrupted history match) and :meth:`settings`. The runs
     land beside the model and are reopened for review via ``model.pest_runs``
     (or ``run.pest_runs``) -> :meth:`~...runs.PestRunHandle.review`
@@ -2697,7 +2788,7 @@ class PestProject:
                 mask = index.str.contains(f"oname:{prefix.lower()}_", regex=False)
                 obs.loc[mask.to_numpy(), "weight"] = 0.0
 
-    def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
+    def build(self, filename: str | Path | None = None):
         """Compile the declarations into a runnable PEST(++) control file.
 
         In order it: deletes the template and staging directories a previous
@@ -2728,7 +2819,11 @@ class PestProject:
         After this call the workspace contains a self-contained PEST setup:
         the ``.pst``, ``forward_run.py``, template/instruction files, and the
         ``mult/`` multiplier files. Run it with PEST++ (e.g. ``pestpp-ies`` /
-        ``pestpp-glm``) or via :meth:`run_ies` / :meth:`prior`.
+        ``pestpp-glm``) or via :meth:`run_ies` / :meth:`prior`, once via
+        :meth:`run_template`. The control file is written with ``NOPTMAX 0`` --
+        PESTPP-IES's run-once mode, for a hand run of ``pestpp-ies`` on a copy;
+        :meth:`run_ies`, :meth:`prior` and :meth:`resume_ies` write their own. To run
+        the template once, use :meth:`run_template` (ledger 605).
 
         Parameters
         ----------
@@ -2740,11 +2835,6 @@ class PestProject:
             :meth:`prior` always write and run ``<name>.pst`` instead, so a
             stem other than ``name`` leaves ``review()`` reading the wrong
             case.
-        noptmax : int, optional
-            Initial ``NOPTMAX`` written to the control file. ``0`` (default)
-            means "run the model once and compute residuals" -- the standard
-            way to sanity-check a fresh setup before launching a real run.
-            :meth:`run_ies`/:meth:`prior` overwrite it.
 
         Returns
         -------
@@ -2835,7 +2925,7 @@ class PestProject:
             finalize_observations(self, self._prepared_observations)
             self._apply_forecasts()
             self._finalize_capture_fields()
-            self.pst.control_data.noptmax = int(noptmax)
+            self.pst.control_data.noptmax = 0  # a hand run on a copy runs once
             with self._quiet_pyemu_context():
                 self.pst.write(self.template_workspace / target_name, version=2)
             self._record_template_files()
@@ -3068,8 +3158,13 @@ class PestProject:
             100-300. Also the size of the correlated prior drawn for
             ``correlation=`` parameters.
         iterations : int, optional
-            Number of smoother iterations (``NOPTMAX``). Default ``3``, a
-            common choice; PESTPP-IES may stop earlier if it converges.
+            Number of history-matching iterations (``NOPTMAX``), a whole number
+            from 1. Default ``3``, a common choice; PESTPP-IES may stop earlier if it
+            converges. ``0`` -- PESTPP-IES's run-once mode -- is refused
+            (``ValueError``) naming :meth:`run_template`, the one spelling of a single
+            run of the template: it ran PEST++ once at the starting values and handed
+            back a review with no iteration in it (ledger 605). A negative
+            number is refused naming :meth:`prior` (``NOPTMAX -1``).
         workers : int or None, optional
             Number of parallel agents. ``None`` (default) or ``1`` runs
             serially in the template workspace, where the results then are;
@@ -3180,7 +3275,9 @@ class PestProject:
         Raises
         ------
         ValueError
-            When :meth:`build` has not run, or ``cal.pst`` has been put in
+            When ``iterations`` is below 1 (``0`` naming :meth:`run_template`, a
+            negative number naming :meth:`prior`); when :meth:`build` has not run, or
+            ``cal.pst`` has been put in
             ``regularization`` mode, which PESTPP-IES cannot parse; when
             ``ies_restart_obs_en`` is set while a correlated prior would be drawn
             into ``ies_par_en`` (ledger 509); when ``seed`` is given and nothing is
@@ -3189,7 +3286,7 @@ class PestProject:
             master or its worker directory is, contains or sits inside the run
             directory or the template (ledger 361).
         TypeError
-            When ``seed`` is not a whole number.
+            When ``iterations`` or ``seed`` is not a whole number.
         RuntimeError
             Before anything is written, when a run may still be going in the
             template, or (parallel) in the master or its worker directory: its
@@ -3208,6 +3305,23 @@ class PestProject:
             run's results and ``overwrite`` is ``False`` (ledger 532).
         """
 
+        iterations = whole_number(iterations, what="number of iterations")
+        if iterations == 0:
+            raise ValueError(
+                "run_ies(iterations=0) would start PESTPP-IES for ONE run at every "
+                "parameter's starting value and hand back a review with no iteration in "
+                "it. Run the template once with cal.run_template(<a new folder>): each "
+                "observation's simulated value, residual and phi by PEST group "
+                "(outputs_from=<a completed run> scores that run's outputs without "
+                "running MODFLOW 6). iterations= counts history-matching iterations, "
+                "from 1."
+            )
+        if iterations < 0:
+            raise ValueError(
+                f"run_ies(iterations={iterations}) is not a number of iterations: NOPTMAX "
+                "-1 is a prior Monte Carlo, cal.prior(reals=...). iterations= counts "
+                "history-matching iterations, from 1."
+            )
         results_dir = self._launch_pestpp_ies(
             reals=reals,
             noptmax=iterations,
@@ -3357,6 +3471,405 @@ class PestProject:
             pestpp_options=pestpp_options,
         )
         return self._review(results_dir)
+
+    def run_template(
+        self,
+        workspace: str | Path,
+        *,
+        values=None,
+        outputs_from=None,
+        overwrite: bool = False,
+    ) -> pd.DataFrame:
+        """Run the built template once, as a PESTPP-IES worker runs it, and score every observation.
+
+        The one pre-flight of a calibration, and the check of a write-back (ledger
+        605). ``workspace`` receives a copy of the template -- what a launch hands
+        its workers: what the build left there and nothing a run left since (ledger
+        588) -- every template file is filled at full precision (``repr`` of each value,
+        as the write-back's replay fills them; pyEMU's filler writes a pilot point at 4
+        significant digits, ``docs/reproducers/write_back_template_precision.py``), and
+        ``forward_run.py`` runs there in a subprocess with the absolute ``PYTHONPATH``
+        (ledger 454): pyEMU's multipliers, pilot-point interpolation, physical clamps,
+        MODFLOW 6 and the observation readers. Each instruction file then reads its
+        output, and every observation is scored as PEST++ scores it
+        (:func:`~myflopy.modflow.mf6.pest.scoring.observation_phi`, the rule the review
+        reads too). PEST++ itself does not run: on the canonical testing model this
+        reproduces PESTPP-IES's run of the same values to 5e-10 in every simulated
+        value and its ``<case>.phi.group.csv`` to that file's six figures
+        (``docs/reproducers/run_template_is_pestpp_once.py``). The template, the run
+        directory and ``cal.pst`` are left as they were. The build's control file is
+        written at ``NOPTMAX 0``, but nothing myflopy launches reads that: this is the
+        one spelling of a single run (``run_ies(iterations=0)`` is refused naming it).
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            The folder the copy is made and run in, resolved when called. Must be
+            absent or empty -- or, with ``overwrite=True``, a folder an earlier
+            ``run_template`` of this calibration made (``FileExistsError`` otherwise)
+            -- and must not be, contain or sit inside the template, the model's run
+            directory or ``outputs_from``'s directory (``ValueError``). Left in place
+            afterwards -- the filled inputs, the forward run's outputs and, without
+            ``outputs_from``, MODFLOW 6's -- for inspection, with a
+            ``myflopy_template_run.json`` naming it and the template.
+        values : None, mapping of str to float, pandas.Series or CalibratedInputs, optional
+            Each parameter's value by pyEMU name (``cal.pst.parameter_data.parnme``,
+            compared without regard to case), as the parameter carries it -- a
+            multiplier, an additive offset in model units -- never the model value.
+            ``None`` (default): every parameter at ``cal.pst``'s ``parval1``, its
+            starting value (1 for a multiplier, 0 for an offset, ``initial_value=``
+            where given). A mapping or Series must name every ADJUSTABLE parameter; a
+            FIXED one left out is at its ``parval1``. A name the control file lacks,
+            two names for one parameter, a TIED parameter and one carrying a
+            ``scale``/``offset`` are refused (``ValueError``). ``ies.calibrated(...)``
+            passes that realization's values as its replay filled them
+            (:attr:`CalibratedInputs.parameters
+            <myflopy.modflow.mf6.pest.calibrated.CalibratedInputs.parameters>`); the
+            calibration it came from must have this template's parameters. With
+            ``outputs_from``, the values still fill the templates and pyEMU still
+            writes the input files they change, but MODFLOW 6 does not run on them:
+            they reach the result only through a reader of an INPUT -- a screened
+            well's head, weighted by this realization's K (ledger 556). Every other
+            simulated value is the run's.
+        outputs_from : Run, model, str, pathlib.Path or None, optional
+            ``None`` (default): MODFLOW 6 runs in the copy. Otherwise a COMPLETED run --
+            a ``Run`` (``project.prepare_run(...)``, ``mf.load_run(...)``), a model
+            (``run.model(...)``, ``mf.load_mf6_run(...)``), anything carrying its
+            directory as ``.workspace``, or the directory itself -- and MODFLOW 6 does
+            not run: the run's output files (every top-level file of its directory that
+            is not one of its simulation's inputs, and every output its simulation
+            names in a subdirectory) are copied in, replacing a file of the same name,
+            and the rest of the forward run reads them. Two uses: phi by group of the
+            run the template was built from with no MODFLOW 6 run (the weights to
+            balance before :meth:`run_ies`); and the write-back check, a model rebuilt
+            from ``ies.calibrated().to_library(...)`` scored by the calibration's own
+            readers (pass ``values=`` the same realization). Refused: a directory with
+            no ``mfsim.nam`` (``FileNotFoundError``); the template or a directory
+            holding or inside it; a run whose ``mfsim.lst`` does not read normal
+            termination, or one of whose inputs was written after it; and a run of
+            another model -- no model of the template's name, another TDIS (stress
+            period count, then each period's length, steps and multiplier to
+            ``period_end.END_RTOL``), or another mesh (DISV: layers and
+            :func:`~myflopy.grid_identity.disv_pin`; DIS: layers, rows, columns; DISU:
+            nodes) -- ``ValueError``: the instruction files read cells and periods by
+            position, so another run would be read in silence (measured: a 484-cell
+            run against a 441-cell template read 48 heads up to 48.8 ft off). The check
+            loads each simulation's discretization: 1.2-1.5 s a side on a 5 x 20,323-cell
+            model (``docs/reproducers/run_template_is_pestpp_once.py``).
+        overwrite : bool, default False
+            ``True`` deletes ``workspace`` first when it is a folder an earlier
+            ``run_template`` of THIS calibration made -- it carries the
+            ``myflopy_template_run.json`` this method writes, naming that folder and
+            this template -- so re-running a notebook cell reruns. Never a folder
+            carrying only the build's ``myflopy_pest_build.json`` (an IES master and
+            its workers carry that, and hold IES results), never anything else:
+            those are refused (``FileExistsError``) whatever ``overwrite`` says.
+            Everything else is checked before anything is deleted.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per observation of ``cal.pst``, in its order, indexed by its name
+            (``obsnme``, pyEMU's lower case): ``group`` (``obgnme``), ``obsval``,
+            ``weight``, ``simulated``, ``residual`` (simulated minus ``obsval`` as
+            PEST++ scores it: 0 for a bound observation -- nonzero weight in an
+            ``l_``/``g_`` group, ledger 564 -- where the bound holds), ``raw_residual``
+            (simulated minus ``obsval`` throughout) and ``phi`` (``(weight * residual)
+            ** 2``; 0 at weight 0, forecasts included). The sign is myflopy's, as
+            ``compare()``'s -- the opposite of PEST++'s ``.rei``.
+            ``table.groupby("group")["phi"].sum()`` is PESTPP-IES's phi per group at
+            the control file's weights; under an ``ies_phi_factor_file`` PESTPP-IES
+            reports its adjusted weights instead.
+
+        Raises
+        ------
+        ValueError
+            Before :meth:`build`; for ``values`` or ``outputs_from`` as described; for
+            a ``workspace`` that is, contains or sits inside the template, the run
+            directory or ``outputs_from``.
+        TypeError
+            When ``values`` or ``outputs_from`` is none of the accepted types.
+        FileExistsError
+            When ``workspace`` is a file, or a non-empty folder that ``overwrite=True``
+            may not delete (or ``overwrite`` is ``False``).
+        FileNotFoundError
+            When ``outputs_from`` holds no ``mfsim.nam``.
+        RuntimeError
+            When a PESTPP-IES run may still be going in the template (ledger 532), when
+            a relative ``PYTHONPATH`` entry can no longer be resolved (ledger 454), or
+            when the forward run fails, with the end of its error output.
+        """
+
+        if self.pst is None:
+            raise ValueError("Call build() before run_template(): it runs the template build() writes.")
+        template = self.template_workspace.resolve()
+        target = Path(workspace).resolve()
+        source = None if outputs_from is None else self._completed_run(outputs_from, template)
+        self._run_template_workspace(target, template, source, overwrite=bool(overwrite))
+        # user -> run_template -> _refuse_a_live_run -> warnings.warn
+        self._refuse_a_live_run(template, "template", method="run_template", instead="",
+                                stacklevel=3)
+        complete = complete_values(
+            self.pst, self._template_values(values), source=self._values_source(values),
+            remedy=(
+                ": name every adjustable parameter by its pyEMU name "
+                "(cal.pst.parameter_data.parnme; a FIXED one left out stays at its "
+                "parval1), or leave values=None to run every parameter at its starting "
+                "value."
+            ),
+        )
+        if source is not None:
+            self._refuse_outputs_of_another_model(source, template)
+        if target.exists():
+            shutil.rmtree(target)  # empty, or an earlier run_template's (checked above)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # user -> run_template -> _launch_copy -> warnings.warn
+        self._launch_copy(target, method="run_template", stacklevel=3)
+        (target / TEMPLATE_RUN_MARKER).write_text(json.dumps({
+            "written_by": _TEMPLATE_RUN_WRITER,
+            "directory": str(target),
+            "template": str(template),
+            "outputs_from": None if source is None else str(source),
+            "note": (
+                "Written by PestProject.run_template(). While this file names this "
+                "directory and the template, run_template(overwrite=True) may DELETE "
+                "this directory and everything in it."
+            ),
+        }, indent=2), encoding="utf-8")
+        fill_templates(self.pst, complete, template, target)
+        script = "forward_run.py"
+        if source is not None:
+            _copy_run_outputs(source, target)
+            (target / "forward_run_outputs.py").write_text(
+                without_model_command(target / "forward_run.py"), encoding="utf-8"
+            )
+            script = "forward_run_outputs.py"
+        run_script(target, script, what=f"The forward run in {target}")
+        pyemu = self.pyemu or _import_pyemu()
+        simulated = pd.concat([
+            pyemu.pst_utils.InstructionFile(str(target / instruction))
+            .read_output_file(str(target / output))["obsval"]
+            for instruction, output in zip(self.pst.instruction_files, self.pst.output_files,
+                                           strict=True)
+        ]).astype(float)
+        simulated.index = simulated.index.str.lower()
+        names = self.pst.observation_data.index
+        simulated = simulated.reindex([str(name).lower() for name in names])
+        simulated.index = names
+        table = observation_phi(self.pst, simulated)
+        logger.info(
+            "run_template(): %d observations in %s, phi %.6g (%s)", len(table), target,
+            float(table["phi"].sum()),
+            "outputs of " + str(source) if source is not None else "MODFLOW 6 run in the copy",
+        )
+        return table
+
+    @staticmethod
+    def _values_source(values) -> str:
+        """Where ``values`` came from, in the words of :func:`complete_values`' refusals."""
+
+        parameters = getattr(values, "parameters", None)
+        if isinstance(parameters, pd.Series) and not isinstance(values, (Mapping, pd.Series)):
+            return (
+                f"values=ies.calibrated() (calibration {getattr(values, 'case', '?')!r}, "
+                f"realization {getattr(values, 'realization', '?')!r}, iteration "
+                f"{getattr(values, 'iteration', '?')})"
+            )
+        return "values="
+
+    def _template_values(self, values) -> pd.Series:
+        """``values`` as a Series of float by lower-cased name: the four accepted forms."""
+
+        if values is None:
+            data = self.pst.parameter_data
+            return pd.Series(
+                data["parval1"].astype(float).to_numpy(),
+                index=[str(name).lower() for name in data.index], dtype=float,
+            )
+        parameters = getattr(values, "parameters", None)
+        if isinstance(parameters, pd.Series) and not isinstance(values, (Mapping, pd.Series)):
+            values = parameters
+        elif isinstance(values, pd.DataFrame) or not isinstance(values, (Mapping, pd.Series)):
+            raise TypeError(
+                "values= takes None (every parameter at its starting value), a mapping or "
+                "pandas.Series of parameter name to value, or ies.calibrated(...); not "
+                f"{type(values).__name__}."
+            )
+        seen: dict[str, str] = {}
+        converted: dict[str, float] = {}
+        for key, value in values.items():
+            lower = str(key).lower()
+            if lower in seen:
+                raise ValueError(
+                    f"values= names parameter {lower!r} twice ({seen[lower]!r} and "
+                    f"{str(key)!r}); pyEMU's names are compared without regard to case."
+                )
+            seen[lower] = str(key)
+            converted[lower] = float(value)
+        return pd.Series(converted, dtype=float)
+
+    def _run_template_workspace(self, target: Path, template: Path, source: Path | None, *,
+                                overwrite: bool) -> None:
+        """Refuse a ``run_template`` workspace this method may not use (nothing is deleted here)."""
+
+        if target.is_file():
+            raise FileExistsError(
+                f"run_template(workspace={str(target)!r}) is a FILE; pass a new or empty folder."
+            )
+        others = [
+            (template, "this calibration's template"),
+            (Path(self.original_workspace).resolve(), "the model's run directory"),
+        ]
+        if source is not None:
+            others.append((source, "the outputs_from= run's directory"))
+        for other, what in others:
+            relation = _relation(target, other)
+            if relation is not None:
+                raise ValueError(
+                    f"run_template(workspace={str(target)!r}) {relation} {what}"
+                    + ("" if relation == "IS" else f" {other}")
+                    + ". The template is copied into the workspace and run there; pass a "
+                    "new or empty folder outside it."
+                )
+        if not target.is_dir():
+            return
+        held = sorted(entry.name for entry in target.iterdir())
+        if not held:
+            return
+        if overwrite and self._written_by_run_template(target, template):
+            return
+        shown = ", ".join(held[:5]) + (" ..." if len(held) > 5 else "")
+        one = len(held) == 1
+        if self._written_by_run_template(target, template):
+            advice = (
+                "it is an earlier run_template() of this calibration: pass overwrite=True "
+                "to run there again, or a new or empty folder."
+            )
+        else:
+            advice = (
+                "pass a new or empty folder. overwrite=True deletes only a folder an earlier "
+                f"run_template() of this calibration made (its {TEMPLATE_RUN_MARKER} names "
+                "it and this template), never one a build or a PESTPP-IES launch made."
+            )
+        raise FileExistsError(
+            f"run_template(workspace={str(target)!r}) already holds {len(held)} "
+            f"entr{'y' if one else 'ies'} ({shown}); {advice}"
+        )
+
+    @staticmethod
+    def _written_by_run_template(directory: Path, template: Path) -> bool:
+        """Whether ``directory`` carries a :data:`TEMPLATE_RUN_MARKER` naming it and ``template``."""
+
+        try:
+            marker = json.loads((directory / TEMPLATE_RUN_MARKER).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Absent, a directory, unreadable, not UTF-8 or not JSON: not ours.
+            return False
+        return (
+            isinstance(marker, dict)
+            and marker.get("written_by") == _TEMPLATE_RUN_WRITER
+            and marker.get("directory") == str(directory)
+            and marker.get("template") == str(template)
+        )
+
+    def _completed_run(self, outputs_from, template: Path) -> Path:
+        """``outputs_from``'s directory, refused unless it is a completed, current MF6 run."""
+
+        if isinstance(outputs_from, (str, os.PathLike)):
+            directory = outputs_from
+        else:
+            directory = getattr(outputs_from, "workspace", None)
+            if not isinstance(directory, (str, os.PathLike)):
+                raise TypeError(
+                    "outputs_from= takes a completed run -- a Run (project.prepare_run(...), "
+                    "mf.load_run(...)), a model (run.model(...), mf.load_mf6_run(...)) or its "
+                    "directory -- or None to run MODFLOW 6 in the copy; not "
+                    f"{type(outputs_from).__name__}."
+                )
+        directory = Path(directory).resolve()
+        if not (directory / "mfsim.nam").is_file():
+            raise FileNotFoundError(
+                f"outputs_from={str(directory)!r} holds no mfsim.nam: it is not a MODFLOW 6 "
+                "run directory."
+            )
+        relation = _relation(directory, template)
+        if relation is not None:
+            raise ValueError(
+                f"outputs_from={str(directory)!r} {relation} this calibration's template"
+                + ("" if relation == "IS" else f" {template}")
+                + ": the template holds the outputs of whichever realization a serial run "
+                "left there, not of a run you chose. Pass the run the template was built "
+                f"from ({self.original_workspace}), or a run rebuilt from a write-back."
+            )
+        listing = read_listing_outcome(directory)
+        if listing.outcome != "normal":
+            what = ("holds no mfsim.lst" if listing.outcome == "absent"
+                    else f"its mfsim.lst reads {listing.outcome!r}, not a normal termination")
+            raise ValueError(
+                f"outputs_from={str(directory)!r}: {what}, so its output files are not a "
+                "completed run of the inputs it holds. Run it (run.execute()), or leave "
+                "outputs_from=None to run MODFLOW 6 in the copy."
+            )
+        if listing.stale:
+            raise ValueError(
+                f"outputs_from={str(directory)!r}: an input file there was written after its "
+                "mfsim.lst, so its output files are not those of the inputs it holds now "
+                "(written and not run again?). Run it again (run.execute()), or leave "
+                "outputs_from=None to run MODFLOW 6 in the copy."
+            )
+        return directory
+
+    def _refuse_outputs_of_another_model(self, source: Path, template: Path) -> None:
+        """Refuse ``source`` when it is a run of another model, clock or mesh than the template's."""
+
+        mine = _load_discretization(template)
+        theirs = _load_discretization(source)
+        differences = []
+        their_names = list(theirs.model_names)
+        for name in mine.model_names:
+            if name not in their_names:
+                differences.append(f"it has no model {name!r} (its models: {their_names})")
+                continue
+            own = _discretization_identity(mine.get_model(name))
+            other = _discretization_identity(theirs.get_model(name))
+            if own != other and own is not None:
+                differences.append(
+                    f"model {name!r}: its mesh is "
+                    + ("not given (no discretization)" if other is None
+                       else _describe_mesh(*other))
+                    + f" against the template's {_describe_mesh(*own)} (another mesh)"
+                )
+        own_clock = tdis_period_records(mine.tdis) or []
+        other_clock = tdis_period_records(theirs.tdis) or []
+        if len(own_clock) != len(other_clock):
+            differences.append(
+                f"its TDIS holds {len(other_clock)} stress period(s) against the "
+                f"template's {len(own_clock)}"
+            )
+        else:
+            for period, (ours, its) in enumerate(zip(own_clock, other_clock, strict=True)):
+                if not all(
+                    (a is None and b is None)
+                    or (a is not None and b is not None
+                        and abs(float(a) - float(b)) <= END_RTOL * max(abs(float(a)), 1.0))
+                    for a, b in zip(ours, its, strict=True)
+                ):
+                    differences.append(
+                        f"stress period {period}: {its[0]:g} long in {its[1]} step(s) x "
+                        f"{its[2]:g} there, {ours[0]:g} in {ours[1]} step(s) x {ours[2]:g} "
+                        "in the template"
+                    )
+                    break
+        if differences:
+            raise ValueError(
+                f"outputs_from={str(source)!r} is a run of another model than this "
+                "calibration's template:\n  - " + "\n  - ".join(differences)
+                + "\nThe instruction files read its heads, flows and stages at the "
+                "template's cells and periods, by position, so another mesh or clock is "
+                f"read in silence. Pass the run the template was built from "
+                f"({self.original_workspace}), or one rebuilt on its mesh and clock "
+                "(ies.calibrated().to_library(project), then project.prepare_run(...))."
+            )
 
     #: The PEST++ options :meth:`resume_ies` sets itself, to restart from the
     #: interrupted run's ensembles (ledger 533).
@@ -4463,12 +4976,17 @@ class PestProject:
         if by_hand and announce:
             shown = ", ".join(by_hand[:8]) + (" ..." if len(by_hand) > 8 else "")
             one = len(by_hand) == 1
+            if method == "run_template":
+                reach = f"{'is' if one else 'are'} not in the copy"
+                rule = "A template run copies what the build left, as a parallel launch does"
+            else:
+                reach = f"reach{'es' if one else ''} neither the master nor the workers"
+                rule = "A parallel launch copies what the build left"
             message = (
                 f"{method}(): {len(by_hand)} entr{'y' if one else 'ies'} in the template "
                 f"{template} that build() did not leave there and no launch recorded "
-                f"writing -- put there by hand? -- reach{'es' if one else ''} neither the "
-                f"master nor the workers: {shown}. A parallel launch copies what the build "
-                f"left (ledger 588). For the model to read a file, make it part of the run "
+                f"writing -- put there by hand? -- {reach}: {shown}. {rule} (ledger 588). "
+                f"For the model to read a file, make it part of the run "
                 f"and rebuild with cal.build(), which includes it; a rebuild makes the "
                 f"template afresh, without what was put in it by hand."
             )

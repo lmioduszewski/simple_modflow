@@ -1356,7 +1356,7 @@ def test_two_named_calibrations_on_one_model_coexist_at_the_default_location():
         cal = model.pest(name, start_datetime="2024-01-01")
         cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
         cal.observe(targets)
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
         assert model.workspace not in cal.template_workspace.parents, (
             "the template is inside the tree PstFrom copies; it will recurse"
         )
@@ -1425,7 +1425,7 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     assert settings_before.built is False
     assert len(settings_before.parameters) == 2
 
-    pst = cal.build("native_demo.pst", noptmax=0)
+    pst = cal.build("native_demo.pst")
 
     template = workspace / "template"
     forward_run_text = (template / "forward_run.py").read_text(encoding="utf-8")
@@ -1516,7 +1516,7 @@ def test_named_series_drn_observation_forward_run_end_to_end():
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
     cal.observe(drn_targets)  # a bare named-series target set
     template = cal.template_workspace
-    cal.build("ns_drn_demo.pst", noptmax=0)
+    cal.build("ns_drn_demo.pst")
 
     # The named-series post-processor is wired into the forward run (not the
     # deleted legacy build_pst path).
@@ -1585,7 +1585,7 @@ def test_prior_monte_carlo_and_conflict_end_to_end():
     )
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
     cal.observe(targets)
-    cal.build("prior_demo.pst", noptmax=0)
+    cal.build("prior_demo.pst")
 
     # Prior Monte Carlo: run the prior ensemble once (NOPTMAX=-1), no iterations.
     prior = cal.prior(reals=6)
@@ -1653,7 +1653,7 @@ def test_run_ies_end_to_end_and_assess_with_ies_results():
     cal.parameterize("recharge", style="grid", bounds=(0.5, 1.5), physical=(0.0, 1e-2))
     cal.observe(targets)
     cal.forecast(forecast)
-    cal.build("run_ies_demo.pst", noptmax=0)
+    cal.build("run_ies_demo.pst")
 
     # iterations=1 + lambda_scale_fac=1.0 cut pestpp forward runs 82 -> 20
     # while still exercising prior + posterior; workers=4 also covers the
@@ -1760,7 +1760,7 @@ def test_ies_capture_field_and_spatial_maps_end_to_end():
     )
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0), capture=True)
     cal.observe(targets)
-    pst = cal.build("cap_demo.pst", noptmax=0)
+    pst = cal.build("cap_demo.pst")
 
     # The resolved K field is captured as zero-weight observations.
     captured = pst.observation_data[pst.observation_data.index.str.contains("oname:kfield", regex=False)]
@@ -1862,7 +1862,7 @@ def test_canonical_calibration_demo_builds_native_pst_with_multilayer_k(tmp_path
     cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)
     cal.forecast(demo.forecast_targets)
-    pst = cal.build("cc.pst", noptmax=0)
+    pst = cal.build("cc.pst")
 
     # Two adjustable parameters: one constant K multiplier + one constant recharge.
     assert pst.npar_adj == 2
@@ -1897,7 +1897,7 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
                              bounds=(0.02, 50.0), physical=(0.001, 300.0), capture=True)
     cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)
-    pst = cal.build("gk.pst", noptmax=0)
+    pst = cal.build("gk.pst")
 
     ncpl = int(demo.model.vor.ncpl)
     # Two unconfined layer files -> one grid parameter per cell on each, + recharge.
@@ -1941,7 +1941,7 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
                      bounds=(0.05, 20.0), physical=(0.001, 300.0), capture=True)
     cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)
-    pst = cal.build("ppk.pst", noptmax=0)
+    pst = cal.build("ppk.pst")
 
     # One parameter per pilot point on each of the two layers, plus recharge.
     assert pst.parameter_data["pargp"].nunique() == 3  # kl0, kl1, recharge
@@ -1999,7 +1999,7 @@ def test_pilot_points_scale_their_own_target_not_the_k_field(tmp_path):
     cal.parameterize("recharge", style="constant", bounds=(0.5, 1.5),
                      physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)
-    cal.build("k33pp.pst", noptmax=0)
+    cal.build("k33pp.pst")
 
     result = subprocess.run(
         [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
@@ -2062,7 +2062,7 @@ def test_a_pilot_points_only_calibration_runs(tmp_path):
     cal.parameterize("k", style="pilotpoints", pp_spacing=600.0,
                      bounds=(0.5, 2.0), physical=(1e-3, 300.0))
     cal.observe(demo.head_targets)
-    pst = cal.build("pponly.pst", noptmax=0)
+    pst = cal.build("pponly.pst")
 
     assert pst.npar_adj > 0
     result = subprocess.run(

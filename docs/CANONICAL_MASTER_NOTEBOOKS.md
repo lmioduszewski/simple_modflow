@@ -51,7 +51,7 @@ next topic.
    average-year mode, the equilibrium check, zoned pilot-point K + month-group recharge
    + Sy + crisp's conductance + per-lake bed leakance, heads + differences + lake stages
    + crisp's baseflow + a one-sided bound, **the truth round trip before any IES**
-   (`run_template` at `truth_parameter_values` reproduces the noise-free data), PESTPP-IES,
+   (`cal.run_template` at `truth_parameter_values` reproduces the noise-free data), PESTPP-IES,
    recovery against the truth, and the write-back (`ies.calibrated().to_library()`)
    rebuilt, run and checked against what IES ran. It ends in a `rehearsal_report`.
    **It is EXECUTED**, unlike 04-06: `tests/test_recalibration_rehearsal.py` runs it

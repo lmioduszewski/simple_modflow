@@ -397,7 +397,8 @@ cal.parameterize("recharge", style="constant",    bounds=(0.5, 2.0))
 cal.observe(obs)               # the HeadTargets from above
 cal.forecast(forecast_targets) # the predictions you actually care about
 
-cal.build("valley.pst", noptmax=0)            # compile to PstFrom + forward run
+cal.build("valley.pst")            # compile to PstFrom + forward run
+cal.run_template("preflight")      # the template once: phi by PEST group
 cal.run_ies(reals=50, iterations=3, workers=12)   # PESTPP-IES, 12 parallel agents
 ```
 

@@ -208,7 +208,7 @@ def test_parameterize_accepts_one_per_cell_definition_for_either_family(tmp_path
     cal.parameterize(target, style="zone", zones=_halves(demo.model),
                      bounds=(0.5, 2.0))
     cal.observe(demo.head_targets)
-    pst = cal.build("zoned.pst", noptmax=0)
+    pst = cal.build("zoned.pst")
 
     assert pst.npar_adj >= 1
     zone_ids = {

@@ -413,7 +413,7 @@ def test_the_pest_build_hands_pest_the_zone_and_every_realization_rewrites_it(ri
     cal.observe(losing, prefix="crisp_flow")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("riv.pst", noptmax=0)
+        pst = cal.build("riv.pst")
     template = Path(cal.template_workspace)
     obs = pst.observation_data
     rock = obs.loc[obs["weight"] > 0]
@@ -466,7 +466,7 @@ def test_pestpp_ies_runs_a_riv_flow_calibration_end_to_end(rivers, tmp_path):
                                   values={"time": [0], "losers": [150.0]}), prefix="crisp_flow")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("ies.pst", noptmax=0)
+        cal.build("ies.pst")
     result = cal.run_ies(reals=3, iterations=1, ies_lambda_mults=1.0, lambda_scale_fac=1.0)
     assert result.iterations == [0, 1]
     posterior = result.posterior._df

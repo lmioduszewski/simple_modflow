@@ -288,7 +288,7 @@ def staged(tmp_path_factory):
         cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("inputs.pst", noptmax=0)
+        cal.build("inputs.pst")
     return model, cal
 
 

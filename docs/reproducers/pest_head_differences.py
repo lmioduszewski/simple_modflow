@@ -68,7 +68,7 @@ def main() -> None:
                 cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
                 cal.observe(targets)
                 cal.observe(targets.differences(kind))
-                cal.build(f"d_{kind}.pst", noptmax=0)
+                cal.build(f"d_{kind}.pst")
                 ies = cal.prior(reals=3)
                 table = pd.read_csv(ies.workspace / f"d_{kind}.phi.group.csv")
                 print(f'kind="{kind}":')

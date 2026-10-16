@@ -132,7 +132,7 @@ def main() -> None:
         cal = demo.model.pest("inputs", start_datetime="2024-01-01")
         cal.parameterize("k", style="grid", correlation=3000, layers=[0], bounds=(0.5, 2.0))
         cal.observe(demo.head_targets)
-        cal.build("inputs.pst", noptmax=0)
+        cal.build("inputs.pst")
         template = cal.template_workspace
         inputs = {str(path) for path in _simulation_input_files(template)}
         classes = _classify(template, inputs)

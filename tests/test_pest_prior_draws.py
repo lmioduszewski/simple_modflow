@@ -61,7 +61,7 @@ def _calibration(demo, name: str, *, k33: str):
     cal.observe(demo.head_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 
@@ -123,7 +123,7 @@ def test_draw_prior_draws_by_default_on_a_disv_model_and_refuses_specsim_there(d
     cal.observe(demo.head_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("specsim.pst", noptmax=0)
+        cal.build("specsim.pst")
     assert isinstance(cal.pf.spatial_reference, flopy.discretization.VertexGrid)
 
     drawn = cal.draw_prior(5)

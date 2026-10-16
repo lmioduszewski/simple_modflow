@@ -190,7 +190,7 @@ def _calibration(model, workspace, name):
 def _built(cal, name):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 def section_a(model, root):

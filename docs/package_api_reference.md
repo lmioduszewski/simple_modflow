@@ -1168,9 +1168,17 @@ carry no layer); `spec.pilot_point_sets` and
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`, `mf.RivFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /
-`cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)` (`observe`/`forecast` take a
+`cal.forecast(...)` / `cal.build(...)` / `cal.run_template(folder)` / `cal.run_ies(...)`
+(`observe`/`forecast` take a
 set registered on the model too, `cal.observe(model.targets.heads)`); discovery via
-`model.pest_runs` or `run.pest_runs`. **`model.pest(...)` is the front door** — it
+`model.pest_runs` or `run.pest_runs`. **`cal.run_template(folder, values=, outputs_from=,
+overwrite=)` runs the template once** (ledger 605) -- in a launch copy, the
+templates filled at full precision, the forward run in a subprocess, every observation
+scored by PEST++'s rule (`group`, `obsval`, `weight`, `simulated`, `residual`,
+`raw_residual`, `phi`; `groupby("group")["phi"].sum()` is PESTPP-IES's `phi.group.csv`):
+the one pre-flight and the write-back check. `outputs_from=<completed run>` skips MF6 and
+refuses a run that is not a normal, current run of the template's model, clock and mesh;
+`run_ies(iterations=0)` is refused naming it, and `build()` takes no `noptmax`. **`model.pest(...)` is the front door** — it
 fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
 `mf.PestProject(...)` can be constructed directly, but that is the advanced path.
 **`cal.build()` only READS the run** (ledger 356): it stages a copy of the run's INPUT
@@ -1306,6 +1314,7 @@ returns a `CalibratedInputs`:
 | `get(package, variable, *, model=None)` | one dataset as MF6 read it: `k` an `(nlay, ncpl)` array, an array RCH's `recharge` `{period: array}`, a list package's records as a table (a LAK's `connectiondata`, an SFR's `packagedata`: the calibrated `bedleak`/`rhk` as floats even though FloPy reads `bedleak` as text, a `NONE` kept as `'none'`; ledger 563) |
 | `summary()` | one row per dataset: the parameters scaling it, layers/periods, and how far it moved from the run (`ratio`, or `offset` for an elevation) |
 | `packages()` | `{label: PackageSpec}`: the packages the RUN built (its frozen snapshot and library copies, never the library as it is now) with the values substituted -- an array replaced whole, a list package's calibrated fields only, after every record's cell is checked -- pin and lake rules kept, `metadata["calibrated_from"]` and the parameter file as `source_path` |
+| `parameters` | every parameter's value as the replay filled it, by lower-cased pyEMU name -- what `cal.run_template(folder, values=ies.calibrated())` fills |
 | `to_library(project, *, keys=None, simulation=None, overwrite=False, note=None)` | registers them under NEW keys (`f"{label}/{pest}"`) and forks the run's simulation onto them (`f"{simulation}/{pest}"`; `simulation=False` forks none); returns `{label: key}` |
 
 Refused by name: an unknown realization (`base` naming `best(criterion="min_phi")`), an

@@ -165,7 +165,7 @@ def test_a_bound_sets_measured_observations_are_in_pestpp_ies_inequality_groups(
     cal.observe(cap)
     cal.observe(floor, prefix="floor")
     cal.observe(stage)
-    pst = cal.build("bounds.pst", noptmax=0)
+    pst = cal.build("bounds.pst")
     groups = _groups(pst)
     usecol = "oname:hds_otype:lst_usecol:{}"
     assert groups["l_north"] == [usecol.format("w1_per:0"), usecol.format("w1_per:1")]
@@ -200,7 +200,7 @@ def test_a_prefix_that_reads_as_an_inequality_is_still_refused_naming_inequality
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(_heads({"time": [0], "W1": [90.0], "W2": [91.0]}), prefix="l_wells")
     with pytest.raises(ValueError, match=r"INEQUALITY.*inequality='at_most' or 'at_least'"):
-        cal.build("ineq.pst", noptmax=0)
+        cal.build("ineq.pst")
 
 
 def test_a_forecast_of_a_bound_set_is_refused(toy, tmp_path):
@@ -227,7 +227,7 @@ def bound_run(toy, tmp_path_factory):
     cal.observe(_heads({"time": [2], "W3": [1.0]}, names=("W3",), cells=(34,), groups=(None,),
                        inequality="at_most"), prefix="low")
     cal.observe(_heads({"time": [0], "W4": [95.0]}, names=("W4",), cells=(23,), groups=(None,)))
-    cal.build("bounded.pst", noptmax=0)
+    cal.build("bounded.pst")
     return cal, cal.prior(reals=3)
 
 

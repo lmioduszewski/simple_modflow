@@ -139,7 +139,7 @@ def _build(model, workspace: Path, *, observe=(), forecast=()):
         cal.forecast(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("handed.pst", noptmax=0)
+        pst = cal.build("handed.pst")
     return cal, pst
 
 
@@ -572,7 +572,7 @@ def test_the_named_series_forward_run_reads_the_calibrated_model_not_the_first(t
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("two.pst", noptmax=0)
+        cal.build("two.pst")
     template = cal.template_workspace
     table = template / "drn_flow_simulated_drn_flow.csv"
     base = table.read_text()

@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 604 entries (609 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 606 entries (611 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 606 | The rehearsal's head weight is `1 / head_noise`, not a literal | 2026-10-16 |
+| 605 | `cal.run_template` is the one run of a built template: myflopy's replay, scored by PEST++'s rule, not PESTP... | 2026-10-16 |
 | 604 | A contour surface's staged copies carry only what GRASS reads -- the geometry and `z` -- and a contour file... | 2026-10-16 |
 | 603 | A contour surface's inputs are in the location's frame when reprojecting would not move them, not only when... | 2026-10-16 |
 | 602 | `mf.Contours` interpolates where its contours ARE: its inputs reach GRASS in the location's CRS, and the fr... | 2026-10-16 |
@@ -21959,9 +21961,12 @@ same day, which is the useful part of the result.
         `periods=` group never reaches the steady period (ledger 549, Q3).
         `truth_parameter_values` reads which parameter is which from the build's own
         `parameters` record (zone, period label, package, lake), never from file names.
-      - The truth round trip agrees to 2e-10 ft and 4e-8 of a flow (`run_template`, a
+      - The truth round trip agrees to 2e-10 ft and 4e-8 of a flow (~~`run_template`, a
         module helper over the write-back's own template filler -- a public
-        `PestProject.evaluate` is not added); the write-back rebuild to 8e-7 ft and
+        `PestProject.evaluate` is not added~~ **Restated by ledger 605:** the
+        helper moved to `cal.run_template(workspace, values=truth_parameter_values(case,
+        cal))`, the one public run of a template, and `canonical_rehearsal.run_template`
+        is gone); the write-back rebuild to 8e-7 ft and
         2.7e-7 of a flow (FloPy's 9-digit list values and solver closure). The tolerance is
         `1e-3 + 1e-6 |value|`. Four library mutants -- `package="crisp"` routed to `riv`,
         the wet and dry month groups swapped, the average-year targets binned onto the
@@ -22639,3 +22644,56 @@ same day, which is the useful part of the result.
       `set_crs`. NOT done: an engineering CRS is not read as "no CRS" -- it is a declared
       frame, and guessing it is the location's is the guess ledger 602
       refuses for every other declared CRS.
+
+605. **`cal.run_template` is the one run of a built template: myflopy's replay, scored by PEST++'s rule, not PESTPP-IES at NOPTMAX 0 (2026-10-16).**
+      `PestProject.run_template(workspace, *, values=None, outputs_from=None,
+      overwrite=False)` was MOVED from `canonical_rehearsal.run_template` (deleted, no
+      alias) and returns one row per observation: `group`, `obsval`, `weight`,
+      `simulated`, `residual` (PEST++'s: a held bound is 0), `raw_residual`, `phi`.
+      **Chosen:**
+      - **The engine is the replay**, not PESTPP-IES at NOPTMAX 0: only the replay can skip
+        MODFLOW 6 (`outputs_from=`). Measured equal on the canonical testing model with an
+        `at_most` (weight 2) and an `at_least` (weight 3) set: every simulated value within
+        5e-10 of PESTPP-IES's `.base.rei`, phi per group equal to its `phi.group.csv` (hd
+        11.1921, l_land 72, g_floor 108), at the start and at `kl0 = 0.5`
+        (`docs/reproducers/run_template_is_pestpp_once.py`); that file is the oracle
+        `tests/test_pest_run_template.py` compares against. The copy is `_launch_copy`
+        (ledger 588), what a worker runs; the one bound rule moved to `pest/scoring.py`
+        (the review reads it too) and the replay primitives to `pest/replay.py`, because
+        `pest.project` (L10) cannot import `pest.calibrated` (L13).
+      - **One spelling.** `run_ies(iterations=0)` is REFUSED naming it (measured: it ran
+        PEST++ once and returned an `IesResults` with `iterations == []` whose
+        `phi_contributions` raised, which `model.pest_runs` offered for review); a
+        negative count is refused naming `prior()`. `build(noptmax=)` is REMOVED -- nothing
+        myflopy launches read it -- and the control file is still written at NOPTMAX 0 for a
+        hand `pestpp-ies` run on a copy, which `runs.execution_kind` now reads as no
+        execution.
+      - **`outputs_from=` refuses** a run whose `mfsim.lst` is not a normal, current
+        termination, the template itself, and a run of another model, TDIS (to
+        `period_end.END_RTOL`) or mesh (DISV: layers + `disv_pin`; DIS: layers, rows,
+        columns; DISU: nodes). The instruction files read by position: a 484-cell run
+        against a 441-cell template returned 48 heads up to 48.8 ft off (median 20.9 ft)
+        with no error. The check loads each side's discretization at the call (1.15-1.53 s
+        on a copy of Ten Trails `ss`), so templates built earlier get it too.
+      - **`values=`**: a name the control file lacks is now REFUSED (a misspelt fixed
+        parameter ran at its `parval1` in silence); `CalibratedInputs.parameters` is public
+        so no private name crosses modules; `values=` with `outputs_from=` is allowed and
+        reaches the result only through a reader of an input (ledger 556's K weights).
+        A run's outputs REPLACE same-named files in the copy (a template built before
+        ledger 383 still holds the build-time run's).
+      - **`overwrite=True`** (the user's yes to the fork) deletes a folder only when it
+        carries `myflopy_template_run.json` naming that folder AND this template -- never
+        the build marker, which IES masters and workers carry beside their results.
+      **NOT built:** `IesResults.base_observations` (`ies.obs_ensemble(it).loc["base"]`
+      exists; the 16-digit `.rei` reader stays in the rehearsal for its 1e-6 flow
+      tolerance); a `phi_by_group` verb (the `groupby` is visible pandas); a default
+      `workspace`; PESTPP-IES as a second engine. The residual sign is myflopy's
+      (simulated minus measured, as `compare()`), opposite to PEST++'s `.rei`.
+
+606. **The rehearsal's head weight is `1 / head_noise`, not a literal (2026-10-16).**
+      `build_rehearsal(head_noise=0.05)` sets every well's `weight` to `1 / head_noise`, and
+      nb08 passes its `NOISE["head"]` -- the knob that already drew the data's noise. The
+      weight was `1.0 / 0.05` in the library, so editing the notebook's knob moved the
+      noise and left every head weight at 20, silently falsifying "weights are 1 / the
+      noise". A keyword on `build_rehearsal`, not a read of the notebook: the case is
+      built before the data, and the default keeps every stored rehearsal's weights.

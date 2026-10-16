@@ -63,7 +63,7 @@ def test_pilot_points_on_porosity_interpolate_the_porosity_array(tmp_path):
     cal.parameterize("porosity", style="pilotpoints", pp_spacing=600.0,
                      bounds=(0.5, 2.0), physical=(0.01, 0.9))
     cal.observe(demo.conc_targets)
-    cal.build("pp_poros.pst", noptmax=0)
+    cal.build("pp_poros.pst")
 
     result = subprocess.run(
         [sys.executable, "forward_run.py"], cwd=cal.template_workspace,
@@ -260,7 +260,7 @@ def test_a_porosity_calibration_builds_and_the_multiplier_reaches_the_model(tmp_
         "porosity", style="constant", bounds=(0.5, 2.0), physical=(0.01, 0.9)
     )
     cal.observe(demo.conc_targets)
-    pst = cal.build("poros.pst", noptmax=0)
+    pst = cal.build("poros.pst")
 
     transport_name = demo.transport.transport_name
     assert all(name.startswith(transport_name) for name in spec.resolved_files), (
@@ -320,7 +320,7 @@ def test_a_scalar_griddata_array_is_re_stored_one_file_per_layer(tmp_path):
     cal = demo.model.pest("relayer", start_datetime="2024-01-01")
     spec = cal.parameterize("porosity", style="constant", bounds=(0.5, 2.0))
     cal.observe(demo.conc_targets)
-    cal.build("relayer.pst", noptmax=0)
+    cal.build("relayer.pst")
 
     assert len(spec.resolved_files) == int(transport.modelgrid.nlay)
     after = np.loadtxt(cal.template_workspace / spec.resolved_files[0])
@@ -340,7 +340,7 @@ def test_capture_on_a_whole_grid_array_records_every_layer(tmp_path):
     cal = demo.model.pest("captured", start_datetime="2024-01-01")
     cal.parameterize("porosity", style="constant", bounds=(0.5, 2.0), capture=True)
     cal.observe(demo.conc_targets)
-    cal.build("captured.pst", noptmax=0)
+    cal.build("captured.pst")
 
     metadata = json.loads(
         (cal.template_workspace / METADATA_FILENAME).read_text()

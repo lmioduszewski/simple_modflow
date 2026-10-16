@@ -38,9 +38,11 @@ one back to the other with the API the Ten Trails recalibration will use. Pinned
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -52,6 +54,7 @@ from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
 from tests.test_examples_run import execute_notebook
 
 NOTEBOOK = "canonical_08_recalibration_rehearsal"
+ROOT = Path(__file__).resolve().parents[1]
 NEEDS_MF6 = pytest.mark.skipif(shutil.which("mf6") is None, reason="needs mf6 on PATH")
 NEEDS_PEST = pytest.mark.skipif(
     shutil.which("mf6") is None or shutil.which("pestpp-ies") is None,
@@ -140,10 +143,34 @@ def test_two_rivers_are_never_picked_in_silence(case):
     ({"cycles": 1}, "at least 2 cycles"),
     ({"nlay": 2}, "3 to 5 layers"),
     ({"nlay": 6}, "3 to 5 layers"),
+    ({"head_noise": 0.0}, "head_noise=0.0"),
+    ({"head_noise": float("nan")}, "head_noise=nan"),
+    ({"head_noise": True}, "head_noise=True"),
 ])
 def test_build_rehearsal_refuses(tmp_path, kwargs, match):
     with pytest.raises(ValueError, match=match):
         rehearsal.build_rehearsal(tmp_path, **kwargs)
+
+
+def test_the_head_weight_follows_the_head_noise(case, tmp_path):
+    """Each well's weight is 1 / the noise drawn on its readings (ledger 606).
+
+    It was a literal 1 / 0.05: editing the notebook's ``NOISE["head"]`` moved the data's
+    noise and left every head weight at 20.
+    """
+
+    assert (case.wells["weight"] == 1.0 / 0.05).all(), "the default is 0.05 ft"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        noisier = rehearsal.build_rehearsal(tmp_path, head_noise=0.2)
+    assert (noisier.wells["weight"] == 5.0).all()
+    # The notebook hands its one knob to both: the data's noise and the weights.
+    source = "\n".join(
+        "".join(cell["source"]) for cell in json.loads(
+            (ROOT / "examples" / "mf6" / "notebooks" / f"{NOTEBOOK}.ipynb").read_text(
+                encoding="utf-8"))["cells"])
+    assert 'build_rehearsal(WORKSPACE, cycles=CYCLES, head_noise=NOISE["head"])' in source
+    assert 'synthetic_hydrographs(case, noise_sd=NOISE["head"]' in source
 
 
 @pytest.mark.parametrize(("kwargs", "match"), [

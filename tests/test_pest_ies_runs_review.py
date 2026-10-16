@@ -444,10 +444,13 @@ def test_execution_kind_reads_the_launched_noptmax(tmp_path):
     _control_file(tmp_path, "a", noptmax=-1)
     _control_file(tmp_path, "b", noptmax=3)
     _control_file(tmp_path, "c", noptmax=3)
-    for case in ("a", "b"):
+    # NOPTMAX 0, PESTPP-IES's run-once: it writes a phi file and no ensemble, so no
+    # review can open it (ledger 605; it read "ies" and was offered for review).
+    _control_file(tmp_path, "d", noptmax=0)
+    for case in ("a", "b", "d"):
         _phi(tmp_path, case, [0])
 
-    assert [execution_kind(tmp_path, case) for case in "abc"] == ["prior", "ies", None]
+    assert [execution_kind(tmp_path, case) for case in "abcd"] == ["prior", "ies", None, None]
 
 
 def test_an_interrupted_runs_workers_are_not_listed_as_runs(tmp_path):
@@ -518,7 +521,7 @@ def _calibration(toy, workspace: Path, name: str, *, correlated: bool = False):
     cal.observe(mf.HeadTargets(locations=locations, values=HEADS))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}_build.pst", noptmax=0)
+        cal.build(f"{name}_build.pst")
     return cal
 
 
@@ -636,7 +639,7 @@ def test_reruns_in_one_template_review_their_own_iterations(toy, tmp_path):
     cal.observe(mf.HeadTargets(locations=locations, values=HEADS))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("valley.pst", noptmax=0)
+        cal.build("valley.pst")
     fast = {"ies_lambda_mults": 1.0, "lambda_scale_fac": 1.0}
 
     first = cal.run_ies(reals=3, iterations=2, **fast)

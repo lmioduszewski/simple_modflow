@@ -376,7 +376,7 @@ def test_the_forward_run_weights_with_the_realizations_k(run, tmp_path):
     cal.parameterize("k", layers=[2], bounds=(0.1, 20.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("scr.pst", noptmax=0)
+        pst = cal.build("scr.pst")
     template = cal.template_workspace
     mapping = pd.read_csv(template / "hds_head_target_map.csv")
     assert mapping["obsname"].tolist() == ["W1"] * 3
@@ -423,7 +423,7 @@ def test_a_screened_set_from_hydrographs_builds_and_its_forward_run_reads_it(tmp
     cal.parameterize("k", layers=[2], bounds=(0.1, 20.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("hy.pst", noptmax=0)
+        pst = cal.build("hy.pst")
     expected = [_by_hand(_heads(workspace)[per], K, 70.0, 20.0) for per in (0, 1)]
     measured = pst.observation_data.loc[pst.observation_data["weight"] > 0]
     assert measured["obsval"].tolist() == [85.0, 86.0]

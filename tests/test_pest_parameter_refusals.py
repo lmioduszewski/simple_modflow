@@ -58,7 +58,7 @@ def _cal(run: Path, tmp_path: Path, name: str = "pr"):
 def _build(cal, name: str = "pr"):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 # -- riv.stage: a lower bound may not carry a river bottom through its cell -------------

@@ -185,7 +185,7 @@ def test_a_reach_no_named_stream_covers_is_left_alone_and_said_to_be(runs, tmp_p
     cal.parameterize("rhk", style="feature")
     with pytest.warns(UserWarning, match=r"1 reach\(es\) of SFR package 'sfr' carry no "
                                          r"boundname -- \[4\]"):
-        pst = cal.build("feat.pst", noptmax=0)
+        pst = cal.build("feat.pst")
     worker = forward_run(cal, pst, tmp_path, {"sfrrhk_creek_a": 2.0, "sfrrhk_creek_b": 2.0})
     rhk, _man = _columns(worker)
     assert np.allclose(rhk, [1.0, 1.2, 1.4, 1.6, 0.9])

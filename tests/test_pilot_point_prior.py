@@ -71,7 +71,7 @@ def test_the_variogram_range_shapes_the_pilot_point_prior(
     cal.parameterize("k", style="pilotpoints", pp_spacing=500.0, correlation=correlation,
                      bounds=(0.1, 10.0), physical=(1e-3, 300.0))
     cal.observe(demo.head_targets)
-    cal.build("pp.pst", noptmax=0)
+    cal.build("pp.pst")
 
     measured = _prior_correlation_by_distance(cal)
     assert measured is not None, "no prior ensemble was written for pilot points"
@@ -101,7 +101,7 @@ def test_no_correlation_means_no_injected_prior(tmp_path):
     cal = demo.model.pest("nocorr", start_datetime="2024-01-01")
     cal.parameterize("k", style="pilotpoints", pp_spacing=500.0, bounds=(0.1, 10.0))
     cal.observe(demo.head_targets)
-    cal.build("nocorr.pst", noptmax=0)
+    cal.build("nocorr.pst")
 
     cal._inject_geostatistical_prior(20)
     assert not (cal.template_workspace / "nocorr.prior_par.csv").exists()
@@ -244,7 +244,7 @@ def test_zoned_pilot_points_are_drawn_correlated_within_a_zone_and_not_across(tm
     cal.parameterize("k", style="pilotpoints", pp_spacing=300.0, correlation=3000.0,
                      zones=zones, layers=[0], bounds=(0.1, 10.0))
     cal.observe(demo.head_targets)
-    cal.build("ppzone.pst", noptmax=0)
+    cal.build("ppzone.pst")
     np.random.seed(5)
     cal._inject_geostatistical_prior(500)
     ensemble = pd.read_csv(cal.template_workspace / "ppzone.prior_par.csv", index_col=0)

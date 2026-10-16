@@ -151,7 +151,7 @@ def _build(model, workspace, observe=(), forecast=()):
         cal.forecast(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("handed.pst", noptmax=0)
+        pst = cal.build("handed.pst")
     return cal, pst
 
 
@@ -280,7 +280,7 @@ def section_c(root):
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("two.pst", noptmax=0)
+        cal.build("two.pst")
     table = pathlib.Path(cal.template_workspace) / "drn_flow_simulated_drn_flow.csv"
     base = pd.read_csv(table)["seep"].tolist()
     subprocess.run([sys.executable, "forward_run.py"], cwd=table.parent, check=True,

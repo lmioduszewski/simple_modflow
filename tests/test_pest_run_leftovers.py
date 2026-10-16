@@ -51,7 +51,7 @@ def _calibration(toy, workspace: Path, name: str, *, correlated: bool):
     cal.observe(mf.HeadTargets(locations=LOCATIONS, values=HEADS))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 
@@ -204,7 +204,7 @@ def test_a_master_given_elsewhere_is_found_and_survives_a_rebuild(plain, monkeyp
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("plain.pst", noptmax=0)
+        cal.build("plain.pst")
     assert find_pest_runs(tmp_path / "pest")[0].executions == {"ies": master.resolve()}
     # Scanning a root that holds the master too lists the run once, not the copy.
     assert [run.name for run in find_pest_runs(tmp_path)] == ["plain"]

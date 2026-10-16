@@ -2248,6 +2248,15 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   Every named-series set goes through ONE `write_named_series_targets(sets=[...])` call that
   opens the run once (ledger 540: one full reload PER SET cost ~7 s each beside
   a 17-20 s Ten Trails `ss` run); do not add a per-set call back.
+- **One run of the template is `cal.run_template(folder, values=, outputs_from=,
+  overwrite=)`** (ledger 605): a launch copy, templates filled at full precision,
+  the forward run in a subprocess (no PEST++), every observation scored by the ONE bound
+  and phi rule in `pest/scoring.py`, which `IesResults` reads too -- equal to PESTPP-IES's
+  own `phi.group.csv` (`tests/test_pest_run_template.py` is that oracle). The replay
+  steps it shares with the write-back live once in `pest/replay.py`. `outputs_from=<run>`
+  skips MF6 and refuses a run that is not a normal, current run of the template's model,
+  clock and mesh (another mesh was read in silence, 20.9 ft median). `run_ies(iterations=0)`
+  is refused naming it and `build()` takes no `noptmax`; do not add another run-once route.
 - **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,
   `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens
   one as `IesResults` (`ies.py`, `open_ies_run`) — phi, ensemble-vs-obs, forecasts,
@@ -2292,7 +2301,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   through the package-first API, never through PEST) and
   `canonical_08_recalibration_rehearsal.ipynb`, executed by
   `tests/test_recalibration_rehearsal.py`. Its TRUTH ROUND TRIP --
-  `run_template(cal, truth_parameter_values(case, cal), ws)` against the noise-free data --
+  `cal.run_template(ws, values=truth_parameter_values(case, cal))` against the noise-free data --
   catches a parameter or observation routed to the wrong package, lake, month, layer or
   row before any IES; extend the rehearsal when a parameter or observation family is
   added. A flux target (crisp's baseflow) is mandatory: heads alone left recharge at

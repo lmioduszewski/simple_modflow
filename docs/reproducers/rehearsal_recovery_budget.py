@@ -336,7 +336,7 @@ def _phi_at_truth_and_base(namespace, workspace):
 
     cal = namespace["cal"]
     truth = rehearsal.truth_parameter_values(namespace["case"], cal)
-    at_truth = rehearsal.run_template(cal, truth, workspace / "truth_on_noisy_data")
+    at_truth = cal.run_template(workspace / "truth_on_noisy_data", values=truth)["simulated"]
     return _weighted_phi(cal, at_truth), _weighted_phi(cal, rehearsal.base_observations(namespace["ies"]))
 
 
@@ -416,7 +416,7 @@ def linear_check(cal, master, case, scalars, scratch, *, workers=4, head_noise=N
 
     A finite-difference Jacobian of every measured equality observation (the bound
     left out: it holds) against every adjustable parameter in log10, at the posterior
-    ``base`` realization -- one template run per parameter (:func:`run_template`) --
+    ``base`` realization -- one template run per parameter (``cal.run_template``) --
     and a prior covariance from the prior ensemble IES drew (``<case>.0.par.csv``;
     the scalars' cross terms set to 0, as drawn). For each scalar parameter group:
 
@@ -440,7 +440,6 @@ def linear_check(cal, master, case, scalars, scratch, *, workers=4, head_noise=N
     import numpy as np
     import pandas as pd
 
-    from myflopy.modflow.mf6 import canonical_rehearsal as rehearsal
 
     pst = cal.pst
     master = pathlib.Path(master)
@@ -479,7 +478,7 @@ def linear_check(cal, master, case, scalars, scratch, *, workers=4, head_noise=N
 
     def forward(item):
         key, values = item
-        return key, rehearsal.run_template(cal, values, scratch / re.sub(r"\W", "_", key))
+        return key, cal.run_template(scratch / re.sub(r"\W", "_", key), values=values)["simulated"]
 
     with ThreadPoolExecutor(max(1, int(workers))) as pool:
         simulated = dict(pool.map(forward, jobs.items()))

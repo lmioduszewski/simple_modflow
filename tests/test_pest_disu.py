@@ -81,7 +81,7 @@ def _observe(cal):
 def _build(cal, name: str):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 @pytest.fixture(scope="module")

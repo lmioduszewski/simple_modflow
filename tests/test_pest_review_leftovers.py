@@ -28,9 +28,9 @@ import pytest
 
 import myflopy as mf
 from myflopy.modflow.mf6.pest import forward_run
-from myflopy.modflow.mf6.pest.calibrated import _complete_values
 from myflopy.modflow.mf6.pest.ies import IesResults
 from myflopy.modflow.mf6.pest.pilot_points import PILOT_POINT_MANIFEST, idw_factors
+from myflopy.modflow.mf6.pest.replay import complete_values
 from tests.test_pest_handed_targets import DRN_CELLS, run_toy
 
 pyemu = pytest.importorskip("pyemu")
@@ -115,7 +115,7 @@ def test_pestpp_drops_failed_realizations_from_the_ensembles_the_review_counts(
     cal.observe(mf.HeadTargets(locations=LOCATIONS, values=HEADS))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("drop.pst", noptmax=0)
+        cal.build("drop.pst")
     template = cal.template_workspace
     script = template / "forward_run.py"
     script.write_text(
@@ -148,15 +148,36 @@ def test_a_write_back_refuses_a_parameter_with_a_scale_or_offset():
                          "offset": [0.0, 0.0]}).set_index("parnme", drop=False)
     pst = SimpleNamespace(parameter_data=data)
     values = pd.Series({"a": 1.5, "b": 0.25})
-    assert _complete_values(pst, values) == {"a": 1.5, "b": 0.25}
+    assert _complete(pst, values) == {"a": 1.5, "b": 0.25}
     data.loc["b", "offset"] = 100.0
     with pytest.raises(ValueError, match=r"\['b'\] carry a scale or offset -- 'b': scale 1, "
                                          r"offset 100"):
-        _complete_values(pst, values)
+        _complete(pst, values)
     data.loc["b", "offset"] = 0.0
     data.loc["a", "scale"] = 2.0
     with pytest.raises(ValueError, match=r"'a': scale 2, offset 0"):
-        _complete_values(pst, values)
+        _complete(pst, values)
+
+
+def _complete(pst, values):
+    return complete_values(pst, values, source="the realization's parameter file",
+                           remedy=", so what it ran cannot be rebuilt.")
+
+
+def test_a_name_the_control_file_lacks_is_refused_not_ignored():
+    """A misspelt FIXED parameter ran at its parval1 in silence (ledger 605)."""
+
+    data = pd.DataFrame({"parnme": ["a", "fx"], "partrans": ["log", "fixed"],
+                         "parval1": [1.0, 3.0]}).set_index("parnme", drop=False)
+    pst = SimpleNamespace(parameter_data=data)
+    assert _complete(pst, pd.Series({"a": 2.0})) == {"a": 2.0, "fx": 3.0}
+    with pytest.raises(ValueError, match=r"values= names 1 parameter\(s\) the control file "
+                                         r"does not hold: \['fz'\]"):
+        complete_values(pst, pd.Series({"a": 2.0, "fz": 9.0}), source="values=", remedy=".")
+    with pytest.raises(ValueError, match=r"Adjustable parameter\(s\) \['a'\] are not in "
+                                         r"values=: name every"):
+        complete_values(pst, pd.Series({"fx": 9.0}), source="values=",
+                        remedy=": name every adjustable parameter.")
 
 
 # -- the pilot-point step reads its values exactly ---------------------------------------
@@ -251,7 +272,7 @@ def test_a_drn_set_takes_a_set_weight_below_a_zones_own(toy, tmp_path):
     cal.observe(mf.DrnFlowObservationSpec(targets=targets, weight=0.25))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("w.pst", noptmax=0)
+        pst = cal.build("w.pst")
     measured = pst.observation_data[pst.observation_data["weight"] > 0]
     # Two zones x two periods: `seep` at the set's 0.25, `own` at its zone's 4.0.
     assert sorted(measured["weight"]) == [0.25, 0.25, 4.0, 4.0]

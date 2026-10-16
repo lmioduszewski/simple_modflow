@@ -104,7 +104,7 @@ def calibration(tmp_path_factory):
     cal.observe(_targets())
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("feat.pst", noptmax=0)
+        cal.build("feat.pst")
         ies = cal.run_ies(reals=4, iterations=1, workers=2, ies_lambda_mults=1.0,
                           lambda_scale_fac=1.0)
     return SimpleNamespace(project=project, run=run, cal=cal, ies=ies, base=ies.calibrated())

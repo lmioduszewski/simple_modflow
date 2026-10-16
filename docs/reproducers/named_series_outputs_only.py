@@ -87,7 +87,7 @@ def main():
         cal.observe(targets, prefix=prefix)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("outputs.pst", noptmax=0)
+        cal.build("outputs.pst")
     template = Path(cal.template_workspace)
     for path in run.iterdir():
         if path.is_file() and path.suffix.lower() in OUTPUT_SUFFIXES:

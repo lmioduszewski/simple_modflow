@@ -118,7 +118,7 @@ def main() -> None:
                          bounds=(0.5, 2.0))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            pst = cal.build("rch.pst", noptmax=0)
+            pst = cal.build("rch.pst")
 
         worker = root / "worker"
         shutil.copytree(cal.template_workspace, worker)

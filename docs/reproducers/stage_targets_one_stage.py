@@ -244,7 +244,7 @@ def main() -> None:
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        observations = cal.build("lk.pst", noptmax=0).observation_data
+        observations = cal.build("lk.pst").observation_data
     lake = observations[observations.obsnme.str.contains("usecol:a_")]
     print("   PEST build (obsnme -> obsval, weight):")
     for name, value, weight in zip(lake.obsnme, lake.obsval, lake.weight, strict=True):

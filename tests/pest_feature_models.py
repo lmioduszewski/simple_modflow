@@ -127,7 +127,7 @@ def build(cal, name: str = "feat"):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 def forward_run(cal, pst, tmp_path: Path, values: dict[str, float]) -> Path:

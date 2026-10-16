@@ -77,7 +77,7 @@ def _calibration(toy, name: str, workspace: Path | None = None):
     cal.observe(mf.HeadTargets(locations=LOCATIONS, values=HEADS))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 
@@ -416,7 +416,7 @@ def test_build_refuses_a_template_a_serial_run_is_going_in(cal):
     with pytest.raises(RuntimeError, match=r"Refusing to start build\(\): the template"):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            cal.build("cal.pst", noptmax=0)
+            cal.build("cal.pst")
     assert (cal.template_workspace / "cal.pst").exists()
     (cal.template_workspace / RUN_LOCK).unlink()
 

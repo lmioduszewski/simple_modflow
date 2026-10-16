@@ -86,7 +86,7 @@ def _cal(runs, tmp_path, form="array", name="ar"):
 def _build(cal, name="ar"):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 def _forward_run(cal, pst, tmp_path, values) -> Path:

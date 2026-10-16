@@ -86,7 +86,7 @@ def _calibration(model, workspace: Path | None, *, name: str = "cal") -> PestPro
 def _build(cal: PestProject):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{cal.name}.pst", noptmax=0)
+        return cal.build(f"{cal.name}.pst")
 
 
 def _tree(directory) -> dict[str, str]:

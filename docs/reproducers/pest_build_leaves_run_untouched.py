@@ -166,7 +166,7 @@ def _calibrate(model, workspace: Path | None):
         locations=pd.DataFrame({"name": ["W"], "cell": [30], "layer": [1]}),
         values=pd.DataFrame({"time": [0, 1], "W": [94.5, 94.6]}),
     ))
-    _quietly(cal.build, "s1.pst", noptmax=0)
+    _quietly(cal.build, "s1.pst")
     return cal
 
 
@@ -315,7 +315,7 @@ def section_e(root: Path):
         if cal is not None:
             _report("default template (relative)", cal.template_workspace)
             first = getattr(cal.pf.logger, "f", None)
-            _quietly(cal.build, "s1.pst", noptmax=0)
+            _quietly(cal.build, "s1.pst")
             _report("second build: the first's log closed", getattr(first, "closed", None))
     finally:
         os.chdir(previous)
@@ -344,7 +344,7 @@ def _timed_build(model, workspace: Path, *, observe_cell: int | None) -> float:
             values=pd.DataFrame({"time": [0], "W": [np.nan]}),
         ))
     started = time.perf_counter()
-    _quietly(cal.build, "t.pst", noptmax=0)
+    _quietly(cal.build, "t.pst")
     return time.perf_counter() - started
 
 

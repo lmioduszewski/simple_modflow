@@ -269,7 +269,7 @@ def main() -> None:
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        observations = cal.build("q.pst", noptmax=0).observation_data
+        observations = cal.build("q.pst").observation_data
     seep = observations[observations.obsnme.str.contains("usecol:seep")]
     print("   PEST build of that by-period target (obsnme -> obsval, weight):")
     for name, value, weight in zip(seep.obsnme, seep.obsval, seep.weight, strict=True):

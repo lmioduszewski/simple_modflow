@@ -217,14 +217,14 @@ def test_a_numpy_string_kind_is_stored_as_a_plain_str():
 # -- PEST ---------------------------------------------------------------------------------
 
 
-def _build(model, workspace, *observed, noptmax=0):
+def _build(model, workspace, *observed):
     cal = model.pest("diffs", workspace=workspace, start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     for targets in observed:
         cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("diffs.pst", noptmax=noptmax)
+        pst = cal.build("diffs.pst")
     return cal, pst
 
 
@@ -341,7 +341,7 @@ def test_a_difference_set_of_a_screened_dated_head_set_builds_and_runs(tmp_path)
     cal.parameterize("k", layers=[2], bounds=(0.1, 20.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("hy.pst", noptmax=0)
+        pst = cal.build("hy.pst")
     measured = pst.observation_data.loc[pst.observation_data["weight"] > 0]
     assert measured["obsval"].tolist() == [1.0, -2.0]
     assert measured["weight"].tolist() == pytest.approx([1 / np.sqrt(2)] * 2)
@@ -393,7 +393,7 @@ def test_a_concentration_difference_set_builds_from_the_transport_models_file(tm
     cal.observe(diffs)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        obs = cal.build("conc_diffs.pst", noptmax=0).observation_data
+        obs = cal.build("conc_diffs.pst").observation_data
     measured = obs.loc[obs["weight"] > 0]
     assert set(measured["obgnme"]) == {"cdiff"}
     expected = diffs.get().dropna(subset=["target_difference"])
@@ -426,7 +426,7 @@ def test_a_screened_difference_set_has_its_k_restored_per_layer_with_no_k_parame
     cal.parameterize("chd", style="constant")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("flat.pst", noptmax=0)
+        cal.build("flat.pst")
     heads = _screen_heads(workspace)
     t_head = [_by_hand(heads[per], (5.0, 5.0, 5.0), 70.0, 20.0) for per in range(2)]
     base = pd.read_csv(cal.template_workspace / "hdiff_simulated_differences.csv")

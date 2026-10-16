@@ -124,7 +124,7 @@ def _cal(runs, tmp_path, grid="disv", name="sp"):
 def _build(cal, name="sp"):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return cal.build(f"{name}.pst", noptmax=0)
+        return cal.build(f"{name}.pst")
 
 
 def _forward_run(cal, pst, tmp_path, values: dict[str, float]) -> Path:

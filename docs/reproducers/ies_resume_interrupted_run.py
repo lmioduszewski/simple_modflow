@@ -86,7 +86,7 @@ def _calibration(demo, name: str):
     cal.observe(demo.head_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 

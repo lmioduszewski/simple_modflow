@@ -50,6 +50,7 @@ from myflopy.modflow.mf6.package_plotting import (
     normalize_backend,
 )
 from myflopy.modflow.mf6.pest.forward_run import read_target_table
+from myflopy.modflow.mf6.pest.scoring import constraint_sides, observation_phi, pest_residuals
 from myflopy.modflow.mf6.target_values import screen_label
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import (
@@ -354,77 +355,6 @@ def _panel_axis(panel: dict) -> np.ndarray:
     """A location panel's x values: its period-end DATES when its set recorded them, else its periods."""
 
     return panel["dates"] if panel.get("dates") is not None else panel["times"]
-
-
-def _constraint_sides(pst) -> pd.Series:
-    """Each observation's side as PESTPP-IES scores it: ``"at_most"``, ``"at_least"`` or ``None``.
-
-    The ONE tag rule the review reads (ledger 564), and pyEMU's own
-    (``pyemu.pst.pst_handler.get_constraint_tags``, which
-    ``Pst.less_than_obs_constraints``/``greater_than_obs_constraints`` read): a
-    NONZERO-weight observation whose group starts ``l_``, ``less`` (or ``>@``) is
-    simulated at most its value; ``g_``, ``greater`` (or ``<@``) at least it.
-
-    Parameters
-    ----------
-    pst : pyemu.Pst
-        The run's control file -- anything carrying its ``observation_data``
-        (``obgnme``, ``weight``).
-
-    Returns
-    -------
-    pandas.Series
-        Indexed by observation name, every observation of the control file.
-    """
-
-    from pyemu.pst.pst_handler import get_constraint_tags
-
-    obs = pst.observation_data
-    group = obs["obgnme"].astype(str).str.lower()
-    weighted = pd.to_numeric(obs["weight"], errors="coerce").fillna(0.0) != 0.0
-    at_most = (group.str.startswith(get_constraint_tags("lt")) & weighted).to_numpy()
-    at_least = (group.str.startswith(get_constraint_tags("gt")) & weighted).to_numpy()
-    return pd.Series(
-        np.where(at_most, "at_most", np.where(at_least, "at_least", None)),
-        index=obs.index,
-        dtype=object,
-    )
-
-
-def _pest_residuals(pst, simulated: pd.Series) -> tuple[pd.Series, pd.Series]:
-    """Simulated minus measured as PEST++ scores it, and raw (ledger 564).
-
-    The ONE place the review scores a residual: a bound observation
-    (:func:`_constraint_sides`) contributes 0 where it holds -- ``"at_most"``:
-    simulated <= measured; ``"at_least"``: simulated >= measured -- and its whole
-    residual where it is violated; any other is simulated minus measured. Without it
-    a satisfied bound read as a misfit: ``phi_contributions`` gave an ``l_`` group
-    satisfied by every realization 2,423,185 where PESTPP-IES's own file says 0
-    (``docs/reproducers/pest_inequality_targets.py``).
-
-    Parameters
-    ----------
-    pst : pyemu.Pst
-        The run's control file (``obsval``, ``obgnme``, ``weight``).
-    simulated : pandas.Series
-        Simulated values indexed by observation name (one realization).
-
-    Returns
-    -------
-    tuple of pandas.Series
-        ``(residual, raw)``, both indexed as ``simulated``: PEST++'s residual and
-        simulated minus measured.
-    """
-
-    measured = pst.observation_data["obsval"].astype(float).reindex(simulated.index)
-    raw = simulated.astype(float) - measured
-    sides = _constraint_sides(pst).reindex(simulated.index)
-    residual = raw.copy()
-    at_most = (sides == "at_most").to_numpy()
-    at_least = (sides == "at_least").to_numpy()
-    residual[at_most] = raw[at_most].clip(lower=0.0)
-    residual[at_least] = raw[at_least].clip(upper=0.0)
-    return residual, raw
 
 
 #: How each kind of measured observation is drawn on a review panel (ledger
@@ -1118,7 +1048,7 @@ class IesResults:
 
         obs = self._observation_metadata()
         measured = self._is_measured(obs)
-        sides = _constraint_sides(self.pst)
+        sides = constraint_sides(self.pst)
         base = obs.index.to_series().str.extract(self._COLUMN_BASE_RE)["base"]
         base = base.fillna(obs["obgnme"].astype(str))
         group = obs["obgnme"].astype(str).str.lower()
@@ -1910,11 +1840,9 @@ class IesResults:
         if written is not None:
             return written.sort_values(ascending=False)
         names = [name for name in obs.index if name in simulated.index]
-        obs = obs.loc[names]
-        scored, _raw = _pest_residuals(self.pst, simulated[names])
-        residual = obs["weight"].astype(float) * scored
-        contribution = pd.Series((residual.to_numpy() ** 2), index=names)
-        by_group = contribution.groupby(obs["obgnme"].to_numpy()).sum()
+        scored = observation_phi(self.pst, simulated[names].astype(float))
+        by_group = scored.groupby("group")["phi"].sum()
+        by_group.index.name = None
         return by_group.sort_values(ascending=False)
 
     def _phi_by_group(self, realization, groups: list[str]) -> pd.Series | None:
@@ -2088,7 +2016,7 @@ class IesResults:
         hi = sims.quantile(1.0 - alpha)
         measured = obs["obsval"].astype(float)
         meta = self._observation_metadata().loc[names]
-        sides = _constraint_sides(self.pst).reindex(names)
+        sides = constraint_sides(self.pst).reindex(names)
         # A bound is out of reach only when the band is wholly on its wrong side
         # (ledger 564).
         in_conflict = np.where(
@@ -3181,7 +3109,7 @@ class IesResults:
         # the model had been fitted to it.
         obs = obs.loc[self._is_measured(obs)]
         # PEST++'s residual, a bound 0 where it holds (ledger 564).
-        obs["residual"] = _pest_residuals(self.pst, obs["simulated"])[0].to_numpy()
+        obs["residual"] = pest_residuals(self.pst, obs["simulated"])[0].to_numpy()
 
         summary = obs.groupby(["prefix", "location"], as_index=False).agg(
             measured=("obsval", "mean"),

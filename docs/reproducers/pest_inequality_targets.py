@@ -176,7 +176,7 @@ def section_b(root: pathlib.Path) -> None:
         cal.observe(_heads({"time": [2], "W3": [1.0]}, names=("W3",), cells=(34,),
                            inequality="at_most"), prefix="low")
         cal.observe(_heads({"time": [0], "W4": [95.0]}, names=("W4",), cells=(23,)))
-        cal.build("bounded.pst", noptmax=0)
+        cal.build("bounded.pst")
         ies = cal.prior(reals=3)
     table = pd.read_csv(ies.workspace / "bounded.phi.group.csv")
     base = table.loc[table["par_realization"].astype(str) == "base"].iloc[0]

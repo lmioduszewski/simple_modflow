@@ -123,7 +123,7 @@ def test_a_target_with_no_label_or_a_blank_one_is_in_its_sets_prefix(toy, tmp_pa
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(_heads([None, None, None]))
     cal.observe(deep, prefix="deep")
-    pst = cal.build("prefixes.pst", noptmax=0)
+    pst = cal.build("prefixes.pst")
     obs = pst.observation_data
 
     assert _members(obs, "hds") == sorted(
@@ -156,7 +156,7 @@ def test_a_set_prefix_pestpp_ies_reads_as_an_inequality_is_refused(toy, tmp_path
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(_heads([None, None, None]), prefix="less_wells")
     with pytest.raises(ValueError, match=r"observation set 'less_wells'.*INEQUALITY"):
-        cal.build("ineq.pst", noptmax=0)
+        cal.build("ineq.pst")
 
 
 def _default_prefixes():
@@ -330,7 +330,7 @@ def test_a_concentration_targets_label_is_its_group(tmp_path):
     cal.forecast(demo.forecast_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        obs = cal.build("conc_groups.pst", noptmax=0).observation_data
+        obs = cal.build("conc_groups.pst").observation_data
 
     measured = obs.loc[obs["weight"] > 0]
     assert set(measured["obgnme"]) == {"plume_core", "conc"}
@@ -352,7 +352,7 @@ def prior_run(toy, tmp_path_factory):
     cal = toy.pest("grouped", workspace=workspace / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(_heads(["north", "north", "south"]))
-    cal.build("grouped.pst", noptmax=0)
+    cal.build("grouped.pst")
     return cal, cal.prior(reals=3)
 
 

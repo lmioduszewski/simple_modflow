@@ -305,7 +305,7 @@ def _build(model, workspace: Path, observe):
         cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("obsper.pst", noptmax=0)
+        pst = cal.build("obsper.pst")
     return cal, pst
 
 

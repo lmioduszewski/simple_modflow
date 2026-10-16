@@ -211,7 +211,7 @@ def test_the_pest_forward_run_reads_the_zone_in_its_layer(toy, tmp_path, drawn):
     cal.observe(targets, prefix="drn")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("zone.pst", noptmax=0)
+        cal.build("zone.pst")
     template = Path(cal.template_workspace)
     gpkg = drawn is True
     snapshot = template / f"drn_target_locations.{'gpkg' if gpkg else 'csv'}"
@@ -448,7 +448,7 @@ def test_the_pest_build_refuses_a_zone_whose_cells_never_hold_a_drain(toy, tmp_p
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(ValueError, match=_REFUSED):
-            cal.build("dry.pst", noptmax=0)
+            cal.build("dry.pst")
 
 
 # -- a partial miss is heard ---------------------------------------------------------
@@ -605,7 +605,7 @@ def test_a_one_column_zone_over_an_inactive_layer_runs_forward(tmp_path):
     cal.observe(targets, prefix="drn")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("pinched.pst", noptmax=0)
+        cal.build("pinched.pst")
     template = Path(cal.template_workspace)
     snapshot = template / "drn_target_locations.csv"
 
@@ -669,7 +669,7 @@ def test_the_forward_run_reads_zone_sets_from_the_runs_outputs_alone(toy, tmp_pa
     cal.observe(budget, prefix="bud")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("outputs.pst", noptmax=0)
+        cal.build("outputs.pst")
     template = Path(cal.template_workspace)
     script = (template / "forward_run.py").read_text()
     assert f"outputs={OUTPUTS_SNAPSHOT!r}" in script

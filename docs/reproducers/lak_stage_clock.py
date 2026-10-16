@@ -234,7 +234,7 @@ def _measure(root: pathlib.Path) -> None:
         cal = steps.pest("lk", workspace=root / "pest", start_datetime="2024-01-01")
         cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
         cal.observe(targets)
-        obs = cal.build("lk.pst", noptmax=0).observation_data
+        obs = cal.build("lk.pst").observation_data
         lake = obs[obs.obsnme.str.contains("usecol:a")]
         return [(name.split("usecol:a_")[-1], round(float(v), 4), float(w))
                 for name, v, w in zip(lake.obsnme, lake.obsval, lake.weight, strict=True)]

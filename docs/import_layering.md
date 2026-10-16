@@ -49,6 +49,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.naming`
 - `myflopy.modflow.mf6.pest.run_outputs`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.pest.scoring`
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.runtime`
@@ -86,6 +87,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_tables`
 - `myflopy.modflow.mf6.parallel`
 - `myflopy.modflow.mf6.pest.forward_run` *(deferred imports: 8)*
+- `myflopy.modflow.mf6.pest.replay`
 - `myflopy.modflow.mf6.pest.run_state`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.packages`
@@ -243,12 +245,12 @@ review the diff, commit the regenerated files together.
 
 ## Layer 13
 
+- `myflopy.modflow.mf6.canonical_rehearsal`
 - `myflopy.modflow.mf6.pest.calibrated`
 - `myflopy.project.group`
 - `myflopy.project.model_group`
 
 ## Layer 14
 
-- `myflopy.modflow.mf6.canonical_rehearsal`
 - `myflopy.project`
 - `myflopy.project.model_diff`

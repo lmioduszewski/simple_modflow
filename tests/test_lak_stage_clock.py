@@ -284,7 +284,7 @@ def test_a_pest_build_holds_one_lake_row_per_period_carrying_the_targets(runs, t
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        obs = cal.build("lk.pst", noptmax=0).observation_data
+        obs = cal.build("lk.pst").observation_data
     lake = obs[obs.obsnme.str.contains("usecol:a")]
     assert len(lake) == NPER
     np.testing.assert_array_equal(np.sort(lake["obsval"].to_numpy()), observed)

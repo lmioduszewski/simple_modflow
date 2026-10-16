@@ -64,7 +64,7 @@ def test_uzf_parameters_land_on_their_own_cells(tmp_path):
     cal.parameterize("uzf.vks", style="grid", correlation=400.0,
                      bounds=(0.2, 5.0), physical=(1e-4, 10.0))
     cal.observe(demo.head_targets)
-    cal.build("uzfcal.pst", noptmax=0)
+    cal.build("uzfcal.pst")
 
     frame = cal._native_parameter_frames["uzfvks"]
     assert frame["x"].nunique() == len(frame), (
@@ -97,7 +97,7 @@ def test_the_uzf_multiplier_scales_vks_and_nothing_else(tmp_path):
     cal.parameterize("uzf.vks", style="constant", bounds=(0.2, 5.0),
                      physical=(1e-4, 10.0))
     cal.observe(demo.head_targets)
-    pst = cal.build("uzfmult.pst", noptmax=0)
+    pst = cal.build("uzfmult.pst")
 
     template = cal.template_workspace
     packagedata = template / f"{model.name}.uzf_packagedata.txt"

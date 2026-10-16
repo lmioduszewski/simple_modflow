@@ -70,7 +70,7 @@ def _build(demo, tmp_path, declarations, name="ppz"):
     cal.observe(demo.head_targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 
@@ -299,7 +299,7 @@ def test_two_sets_of_one_name_reaching_the_build_are_refused(demo, tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(ValueError, match="Two pilot-point sets are named 'kl0'"):
-            cal.build("raw.pst", noptmax=0)
+            cal.build("raw.pst")
 
 
 # --- (c) interpolation and its factors --------------------------------------------------

@@ -131,7 +131,7 @@ def _build(model, workspace: Path | None, *, name: str = "cal"):
         locations=pd.DataFrame({"name": ["W"], "cell": [5], "layer": [0]}),
         values=pd.DataFrame({"time": [0], "W": [8.6]}),
     ))
-    _quietly(cal.build, f"{name}.pst", noptmax=0)
+    _quietly(cal.build, f"{name}.pst")
     return cal
 
 

@@ -97,7 +97,7 @@ def main() -> None:
                     cal.parameterize("chd", style="grid", correlation=30.0)
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        cal.build("c.pst", noptmax=0)
+                        cal.build("c.pst")
                         frame = cal._native_parameter_frames["chd"]
                         try:
                             np.random.seed(0)

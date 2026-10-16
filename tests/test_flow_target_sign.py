@@ -229,7 +229,7 @@ def test_pest_is_handed_mf6s_sign_on_both_routes(toy, tmp_path):
         cal.observe(targets, prefix=prefix)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pst = cal.build("sign.pst", noptmax=0)
+        pst = cal.build("sign.pst")
     template = Path(cal.template_workspace)
     obs = pst.observation_data
     weighted = obs.loc[obs["weight"] > 0]

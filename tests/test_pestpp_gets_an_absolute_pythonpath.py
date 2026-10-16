@@ -42,7 +42,7 @@ def calibration(tmp_path):
     cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("pp.pst", noptmax=0)
+        cal.build("pp.pst")
     return cal
 
 

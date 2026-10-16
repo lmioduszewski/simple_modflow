@@ -3223,8 +3223,7 @@
       "longnames:KEYWORD_ONLY=True"
     ],
     "PestProject.build": [
-      "filename:POSITIONAL_OR_KEYWORD=None",
-      "noptmax:KEYWORD_ONLY=0"
+      "filename:POSITIONAL_OR_KEYWORD=None"
     ],
     "PestProject.draw_prior": [
       "num_reals:POSITIONAL_OR_KEYWORD=1000",
@@ -3296,6 +3295,12 @@
       "overdue_giveup_fac:KEYWORD_ONLY=5.0",
       "seed:KEYWORD_ONLY=None",
       "pestpp_options:VAR_KEYWORD=<required>"
+    ],
+    "PestProject.run_template": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "values:KEYWORD_ONLY=None",
+      "outputs_from:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
     ],
     "PestProject.settings": [],
     "PestProject.write": [

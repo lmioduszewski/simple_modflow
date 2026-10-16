@@ -98,7 +98,7 @@ def test_a_concentration_calibration_builds_and_its_forward_run_works(tmp_path):
     cal.parameterize("k", style="constant", bounds=(0.05, 2.0), physical=(0.01, 300.0))
     cal.observe(wells)
     cal.forecast(demo.forecast_targets)
-    pst = cal.build("transport_pest.pst", noptmax=0)
+    pst = cal.build("transport_pest.pst")
 
     assert pst.npar_adj == 1
     assert pst.nnz_obs == len(demo.conc_targets.to_long())

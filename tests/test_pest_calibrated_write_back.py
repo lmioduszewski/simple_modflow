@@ -34,8 +34,9 @@ from shapely.geometry import LineString
 import myflopy as mf
 from myflopy.grid_identity import GRID_PIN, MOVE_RECIPE, SOURCE_SHA, package_move
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
-from myflopy.modflow.mf6.pest.calibrated import CalibratedInputs, replay_script
+from myflopy.modflow.mf6.pest.calibrated import CalibratedInputs
 from myflopy.modflow.mf6.pest.ies import IesResults
+from myflopy.modflow.mf6.pest.replay import replay_script
 
 pyemu = pytest.importorskip("pyemu")
 flopy = pytest.importorskip("flopy")
@@ -126,7 +127,7 @@ def calibration(tmp_path_factory):
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("wb.pst", noptmax=0)
+        cal.build("wb.pst")
         ies = cal.run_ies(reals=6, iterations=1, workers=2, ies_lambda_mults=1.0,
                           lambda_scale_fac=1.0)
     return SimpleNamespace(project=project, run=run, model=model, cal=cal, ies=ies,
@@ -235,6 +236,18 @@ def _period_groups_and_list_targets_come_back_with_their_own_values(calibration,
     assert summary.loc["k33" == summary["variable"], "change"].tolist() == ["ratio"]
 
 
+def _calibrated_inputs_parameters_are_the_replays(calibration, base):
+    """``CalibratedInputs.parameters``: every parameter, in the control file's order, as replayed."""
+
+    pst = calibration.cal.pst
+    parameters = base.parameters
+    assert list(parameters.index) == [str(name).lower() for name in pst.par_names]
+    expected = _base_par(calibration.ies).reindex(parameters.index)
+    np.testing.assert_array_equal(parameters.to_numpy(), expected.to_numpy())
+    parameters.iloc[0] = -1.0  # a copy: the realization's values do not move
+    assert base.parameters.iloc[0] != -1.0
+
+
 def _another_realization_is_read_from_the_ensemble(calibration):
     ies = calibration.ies
     other = ies.calibrated("1")
@@ -264,7 +277,7 @@ def test_the_canonical_testing_model_comes_back_as_its_base_realization_read_it(
                          bounds=(0.2, 5.0), capture=True)
         cal.parameterize("recharge", style="constant", bounds=(0.5, 2.0))
         cal.observe(demo.head_targets)
-        cal.build("cw.pst", noptmax=0)
+        cal.build("cw.pst")
         ies = cal.run_ies(reals=4, iterations=1, workers=2, ies_lambda_mults=1.0,
                           lambda_scale_fac=1.0)
     calibrated = ies.calibrated()
@@ -296,16 +309,10 @@ def _write_back_reproduces_the_base_realizations_simulated_heads(calibration, ba
     run = project.prepare_run("calibrated", project.simulations["s/wb"])
     run.execute()
     assert run.success
-    template = calibration.cal.template_workspace
-    map_csv = template / "hds_head_target_map.csv"
-    from myflopy.modflow.mf6.pest.forward_run import _write_head_target_csv
-
-    table = run.workspace / "hds_simulated_heads.csv"
-    _write_head_target_csv(model_name="m", mapping_csv=str(map_csv), output_csv=str(table),
-                           perlen=[p[0] for p in PERIODS], sim_ws=str(run.workspace),
-                           head_file="m.hds")
-    instruction = pyemu.pst_utils.InstructionFile(str(template / "hds_simulated_heads.csv.ins"))
-    simulated = instruction.read_output_file(str(table))["obsval"]
+    # The rebuilt run's outputs, read by the calibration's own readers (ledger 605).
+    check = calibration.cal.run_template(calibration.root / "check", values=base,
+                                         outputs_from=run)
+    simulated = check["simulated"]
     # The base realization's simulated values at full precision: PESTPP-IES's residual
     # file for the iteration (obs.csv holds 6 significant digits, 5e-4 ft at 100 ft).
     residuals = pyemu.pst_utils.read_resfile(
@@ -596,6 +603,7 @@ def test_the_base_realization_comes_back_as_its_mf6_read_it(calibration, base):
     _replayed_k_matches_the_realizations_captured_field(calibration, base)
     _base_reads_the_full_precision_par_file(calibration, base)
     _period_groups_and_list_targets_come_back_with_their_own_values(calibration, base)
+    _calibrated_inputs_parameters_are_the_replays(calibration, base)
     _another_realization_is_read_from_the_ensemble(calibration)
 
 

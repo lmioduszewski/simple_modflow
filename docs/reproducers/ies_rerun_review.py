@@ -75,7 +75,7 @@ def main() -> None:
                 values=pd.DataFrame({"time": [0, 1, 2], "W2": [91.0, 92.0, 93.0],
                                      "W1": [93.0, 93.5, 94.0], "W10": [95.0, 96.0, 97.0]}),
             ))
-            cal.build("valley.pst", noptmax=0)
+            cal.build("valley.pst")
         _show("1. run_ies(iterations=2)", cal.run_ies(reals=3, iterations=2, **FAST))
         _show("2. run_ies(iterations=1)", cal.run_ies(reals=3, iterations=1, **FAST))
         _show("3. prior()", cal.prior(reals=3))

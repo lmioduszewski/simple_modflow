@@ -105,10 +105,12 @@ def execution_kind(directory, case: str) -> str | None:
     """Which execution a directory's ``<case>.pst`` launched: ``"ies"``, ``"prior"`` or ``None``.
 
     Read from the control file the launch wrote (``NOPTMAX -1`` is
-    :meth:`PestProject.prior`, anything else :meth:`PestProject.run_ies`), and only when
+    :meth:`PestProject.prior`, a positive one :meth:`PestProject.run_ies`), and only when
     ``<case>.phi.actual.csv`` sits beside it -- a run that wrote no phi is not one a
     review can open. ``None`` when either file is absent or the control file names no
-    ``noptmax``.
+    ``noptmax``. ``NOPTMAX 0`` (PESTPP-IES's run-once, what :meth:`PestProject.build`
+    writes for a hand run) is ``None`` too: it writes no ensemble, so no review can open
+    it (ledger 605).
 
     Parameters
     ----------
@@ -131,7 +133,8 @@ def execution_kind(directory, case: str) -> str | None:
             for line in handle:
                 words = line.split()
                 if len(words) >= 2 and words[0].lower() == "noptmax":
-                    return "prior" if int(float(words[1])) == -1 else "ies"
+                    noptmax = int(float(words[1]))
+                    return None if noptmax == 0 else ("prior" if noptmax == -1 else "ies")
     except (OSError, ValueError):
         return None
     return None

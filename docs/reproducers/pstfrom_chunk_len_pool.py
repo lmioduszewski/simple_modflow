@@ -98,7 +98,7 @@ def build(root: pathlib.Path) -> pathlib.Path:
             locations=pd.DataFrame({"name": ["W1"], "cell": [14], "layer": [0]}),
             values=pd.DataFrame({"time": [NPER - 1], "W1": [100.0]}),
         ))
-        cal.build("chunks.pst", noptmax=0)
+        cal.build("chunks.pst")
     return cal.template_workspace
 
 

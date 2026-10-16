@@ -822,15 +822,43 @@ forecasts every row: its locations at every period.
 
 ---
 
-## 4. Build and sanity-check
+## 4. Build and run the template once
 
 ```python
 print(cal.settings())              # review the resolved config — never a black box
-pst = cal.build("calib.pst", noptmax=0)   # noptmax=0 = "run once, compute residuals"
+pst = cal.build("calib.pst")
+start = cal.run_template("preflight")       # the template once, scored
+start.groupby("group")["phi"].agg(["size", "sum"])  # phi by PEST group
 ```
 
-`noptmax=0` is the universal first check: run the model once through PEST and make
-sure the plumbing works before launching anything long.
+**`cal.run_template(folder)` is the one run of the template** (ledger 605) and
+the universal first check before launching anything long. It copies the template into
+`folder` -- what a PESTPP-IES worker gets: what the build left, nothing a run left since
+(ledger 588) -- fills every template at full precision, and runs `forward_run.py` there
+as a worker does: pyEMU's multipliers, MODFLOW 6, the observation readers. It returns one
+row per observation -- `group`, `obsval`, `weight`, `simulated`, `residual` (as PEST++
+scores it: a one-sided bound that holds is 0, ledger 564), `raw_residual` and `phi`
+(`(weight * residual) ** 2`) -- so `groupby("group")["phi"].sum()` is the phi per group
+PESTPP-IES would write in its `phi.group.csv` for the same values (measured equal on the
+canonical testing model with two bound sets, `docs/reproducers/run_template_is_pestpp_once.py`),
+which is where you balance the weights before `run_ies`. PEST++ itself does not run.
+
+- `values=` runs it at chosen values -- a mapping of pyEMU parameter name to value (every
+  adjustable parameter named; a fixed one left out stays at its `parval1`), or
+  `ies.calibrated()` -- and a name the control file lacks is refused.
+- `outputs_from=<a completed run>` skips MODFLOW 6 and reads that run's outputs: the
+  start's phi by group with no model run, or a model rebuilt from a write-back scored by
+  the calibration's own readers. It refuses a run whose `mfsim.lst` is not a normal,
+  current termination and a run of another model, clock or mesh -- the instruction files
+  read cells and periods by position, and a 484-cell run against a 441-cell template was
+  read in silence, 20.9 ft off at the median.
+- `folder` must be new or empty; it is left for inspection. `overwrite=True` reruns in a
+  folder an earlier `run_template` of this calibration made, and deletes nothing else.
+
+The control file is written at `NOPTMAX 0` -- PESTPP-IES's run-once, for a hand
+`pestpp-ies` run on a copy -- but nothing myflopy launches reads that:
+`run_ies(iterations=0)` is refused naming `run_template` (it handed back a review with
+no iteration in it), and `build()` takes no `noptmax`.
 
 **The build only reads your run** (ledger 356). It copies the simulation's INPUT
 files -- what `mfsim.nam` leads MODFLOW 6 to read, and nothing else of the run
@@ -1094,7 +1122,7 @@ recommended cadence:
 
 | Stage | Settings |
 |---|---|
-| Sanity | `noptmax=0`, plot & check |
+| Sanity | `cal.run_template(folder)`, phi by group, plot & check |
 | First real run | 30–50 reals, `iterations=3`, `bad_phi_sigma=1.5` |
 | Struggling to fit | 100–200 reals, more iterations, add multimodal/re-inflation knobs |
 
@@ -1301,7 +1329,16 @@ keys = cal_inputs.to_library(project)    # {'npf/base': 'npf/base/calib', 'riv':
 run = project.prepare_run("calibrated", project.simulations["baseline/calib"])
 run.execute()                            # simulates the base realization's heads
 run.model().plot.map(values=k[2], layer=2, logscale=True)  # ONE layer of K: all of k raises
+check = cal.run_template("check", values=cal_inputs, outputs_from=run)
+(check["simulated"] - ies.obs_ensemble(ies.posterior_iteration).loc["base"]).abs().max()
 ```
+
+The last two lines are the write-back's check: the rebuilt run's outputs read by the
+calibration's own readers (`outputs_from=`, no MODFLOW 6 run in the copy) against what
+PESTPP-IES simulated for the base realization -- within the 6 significant digits the
+ensemble file holds; against the base realization's 16-digit
+`<case>.<iteration>.base.rei` it agrees to 1e-6 ft
+(`tests/test_pest_calibrated_write_back.py`).
 
 `calibrated()` does not re-apply the multipliers: it REPLAYS the realization's own
 forward run in a temporary copy -- the templates filled at full precision, then
@@ -1374,9 +1411,10 @@ cal.parameterize("recharge", style="grid",     bounds=(0.5, 1.5), physical=(0, 1
 cal.observe(head_targets)
 cal.forecast(prediction_targets)
 
-# 4: build & sanity-check
+# 4: build & run the template once
 print(cal.settings())
-cal.build("calib.pst", noptmax=0)
+cal.build("calib.pst")
+start = cal.run_template("preflight"); start.groupby("group")["phi"].sum()
 
 # 5: history match
 ies = cal.run_ies(reals=50, iterations=3, bad_phi_sigma=1.5, workers=10)
@@ -1402,9 +1440,11 @@ on a small model of Ten Trails' shape whose truth is known -- dated hydrographs 
 in average-year mode, zoned pilot-point K, month-group recharge, Sy, one RIV package's
 conductance (`package="crisp"`), per-lake bed leakance, heads with their differences,
 lake stages, a baseflow target and a bound. Before any IES it runs the template once at
-the truth's multipliers (`canonical_rehearsal.run_template`) and requires the noise-free
+the truth's multipliers (`cal.run_template(folder, values=truth_parameter_values(case, cal))`)
+and requires the noise-free
 data back: a parameter or observation routed to the wrong package, lake, month, layer or
 row shows there as a residual of feet, where the truth's agrees to 1e-8. On a real model
-the same call at a hand-set parameter set is the cheapest check of a new template. Its
+`cal.run_template(folder, values={...})` at a hand-set parameter set is the cheapest check
+of a new template. Its
 recovery is judged POOLED over several converged runs (`canonical_rehearsal.pooled_recovery`,
 ledger 593; "How big an ensemble" above), never one.

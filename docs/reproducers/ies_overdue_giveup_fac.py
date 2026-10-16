@@ -66,7 +66,7 @@ def main() -> None:
                                         "layer": 0}),
                 values=pd.DataFrame({"time": [2], "W2": [92.0], "W1": [93.0], "W10": [96.0]}),
             ))
-            cal.build("overdue.pst", noptmax=0)
+            cal.build("overdue.pst")
         for value in (DEFAULT, 12, None):
             options = {} if value is DEFAULT else {"overdue_giveup_fac": value}
             # Each run replaces the last one's master (ledger 532).

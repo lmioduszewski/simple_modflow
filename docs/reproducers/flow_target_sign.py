@@ -217,7 +217,7 @@ def section_c(model, root: pathlib.Path) -> None:
             cal.observe(t, prefix=prefix)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            pst = cal.build("q.pst", noptmax=0)
+            pst = cal.build("q.pst")
         template = pathlib.Path(cal.template_workspace)
         obs = pst.observation_data
         weighted = obs.loc[obs["weight"] > 0]

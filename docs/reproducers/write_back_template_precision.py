@@ -10,7 +10,7 @@ myflopy build writes are both narrow:
   * a pyEMU multiplier file's ``<name>_inst0_constant.csv.tpl`` -- one span per cell.
 
 This fills both shapes with the same values through pyEMU's filler and through the
-write-back's (``calibrated._fill_templates``, ``repr`` of the value), and reads them
+write-back's (``replay.fill_templates``, ``repr`` of the value), and reads them
 back. No model and no PEST++ run:
 
     PYTHONPATH=src /home/lukem/python/envs/gw/bin/python docs/reproducers/write_back_template_precision.py
@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 import pyemu
 
-from myflopy.modflow.mf6.pest.calibrated import _fill_templates
+from myflopy.modflow.mf6.pest.replay import fill_templates
 
 rng = np.random.default_rng(2026)
 values = np.concatenate([[4.681308128714071], 10 ** rng.normal(0.0, 1.0, 199)])
@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory() as scratch:
         series = pd.Series(values, index=names)
         pyemu.pst_utils.write_to_template(series, str(root / "t.tpl"), str(root / "pyemu.in"))
         pst = SimpleNamespace(template_files=["t.tpl"], input_files=["ours.in"])
-        _fill_templates(pst, dict(zip(names, values, strict=True)), root, root)
+        fill_templates(pst, dict(zip(names, values, strict=True)), root, root)
         worst = [
             float(np.max(np.abs(_read(root / f, shape) / values - 1.0)))
             for f in ("pyemu.in", "ours.in")

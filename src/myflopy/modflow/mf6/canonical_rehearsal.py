@@ -16,7 +16,8 @@ of the start's library packages. A parameter routed to the wrong package, lake,
 month or layer therefore cannot cancel between the truth and the calibration, and
 the truth lies INSIDE the parameter space the notebook declares, so a forward run
 of the template at the truth's multipliers reproduces the noise-free data exactly
-(:func:`run_template`).
+(``cal.run_template(workspace, values=truth_parameter_values(case, cal))``,
+:meth:`~myflopy.modflow.mf6.pest.project.PestProject.run_template`).
 
 What is here:
 
@@ -24,8 +25,10 @@ What is here:
   zones and the forecast, as a :class:`RehearsalCase`;
 * :func:`synthetic_hydrographs` / :func:`synthetic_series` -- the data, dated as a
   field program reads them, off the truth run;
-* :func:`truth_parameter_values` and :func:`run_template` -- the truth round trip:
-  the template run at the truth's multipliers;
+* :func:`truth_parameter_values` and :func:`round_trip` -- the truth round trip:
+  the template run at the truth's multipliers
+  (``cal.run_template(workspace, values=truth_parameter_values(case, cal))``) and
+  scored against the noise-free data;
 * :func:`recovery` and :func:`forecast_recovery` -- one run's scalars and forecast
   against the truth, by one rule; :func:`pooled_recovery` -- the verdict on several
   converged runs at once, the user's criterion for whether the truth came back (ledger
@@ -39,16 +42,12 @@ and is not exported top-level. It pins its own 21x21 grid and ignores
 
 from __future__ import annotations
 
-import ast
 import copy
 import json
 import math
-import os
-import shutil
-import subprocess
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from numbers import Real
 from pathlib import Path
 from statistics import NormalDist
 from typing import Any
@@ -62,19 +61,11 @@ from scipy import stats
 from shapely.geometry import LineString, Point
 
 from myflopy._logging import get_logger
-from myflopy._pythonpath import pythonpath_for_children
 from myflopy.cycles import AverageYear
 from myflopy.layers import Basin, LayerStack, Raster
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.observations import HeadTargets, LakeStageTargets, RivFlowTargets
-from myflopy.modflow.mf6.pest.calibrated import (
-    CalibratedInputs,
-    _complete_values,
-    _fill_templates,
-    _is_model_command,
-)
-from myflopy.modflow.mf6.pest.ies import _pest_residuals
-from myflopy.modflow.mf6.pest.project import _simulation_input_files
+from myflopy.modflow.mf6.pest.scoring import pest_residuals
 from myflopy.modflow.mf6.pest.zones import ZoneSpec
 from myflopy.package_api import (
     chd,
@@ -236,7 +227,8 @@ class RehearsalCase:
     wells : geopandas.GeoDataFrame
         The observation wells: ``name``, ``layer`` (``<NA>`` for a screened well),
         ``screen_top``/``screen_bottom`` (ft; ``NaN`` for a layer well), ``weight``
-        (1 / the head noise the notebook draws, 0.05 ft) and the point geometry.
+        (``1 / head_noise``, the head noise the notebook draws; ``build_rehearsal``)
+        and the point geometry.
     forecast : HeadTargets
         The prediction of interest: the head at ``F01`` in layer 2 at the last
         period, with no value (a forecast is never fitted).
@@ -413,6 +405,7 @@ def build_rehearsal(
     start_date: str = "2016-10-01",
     nlay: int = 5,
     seed: int = 2026,
+    head_noise: float = 0.05,
 ) -> RehearsalCase:
     """Build the rehearsal's project: a start model, a truth model and their data sources.
 
@@ -471,6 +464,12 @@ def build_rehearsal(
         Seed of the grid's jitter (``irregular_voronoi_grid(seed=)``; 2026 is the
         canonical mesh). Every feature is placed by coordinates and resolved on
         the mesh, so another seed is another mesh under the same model.
+    head_noise : float, default 0.05
+        The standard deviation (ft) of the noise the notebook draws on each head
+        reading (``synthetic_hydrographs(noise_sd=)``, nb08's ``NOISE["head"]``):
+        every well's ``weight`` is ``1 / head_noise``, so the weights follow the data
+        (ledger 606; it was a literal ``1 / 0.05``, and editing the notebook's
+        knob left every head weight at 20). Finite and above 0 (``ValueError``).
 
     Returns
     -------
@@ -480,7 +479,8 @@ def build_rehearsal(
     Raises
     ------
     ValueError
-        For ``cycles < 2`` or ``nlay`` outside 3-5.
+        For ``cycles < 2``, ``nlay`` outside 3-5, or a ``head_noise`` that is not a
+        finite number above 0.
     """
 
     if int(cycles) != cycles or cycles < 2:
@@ -492,6 +492,13 @@ def build_rehearsal(
         raise ValueError(
             f"build_rehearsal(nlay={nlay!r}) takes 3 to {len(UNITS)} layers: layer 2 "
             "holds the K zones and the screened wells reach layers 1-2."
+        )
+    if isinstance(head_noise, bool) or not isinstance(head_noise, Real) or not (
+        math.isfinite(head_noise) and head_noise > 0
+    ):
+        raise ValueError(
+            f"build_rehearsal(head_noise={head_noise!r}): the head readings' noise, a "
+            "finite standard deviation in ft above 0 -- each well's weight is its inverse."
         )
     workspace = Path(workspace)
     grid = irregular_voronoi_grid(nrow=21, ncol=21, cell_size=100.0, seed=seed)
@@ -607,7 +614,7 @@ def build_rehearsal(
     for name, x, y, layer in WELLS:
         cell = _nearest(xy, x, y)
         row = {"name": name, "layer": pd.NA if layer is None else layer,
-               "screen_top": np.nan, "screen_bottom": np.nan, "weight": 1.0 / 0.05,
+               "screen_top": np.nan, "screen_bottom": np.nan, "weight": 1.0 / float(head_noise),
                "geometry": Point(x, y)}
         if layer is None:
             row["screen_top"], row["screen_bottom"] = middles[1, cell], middles[2, cell]
@@ -967,7 +974,8 @@ def truth_parameter_values(case: RehearsalCase, cal) -> dict[str, float]:
     pilot-point zones and layers, period labels and lake labels), and from
     :attr:`RehearsalCase.truth_multipliers` -- never from file names, so a
     parameter the library routed to the wrong file still gets the truth's value,
-    and the round trip (:func:`run_template`) shows the misrouting as a residual.
+    and the round trip (``cal.run_template(workspace, values=...)``, then
+    :func:`round_trip`) shows the misrouting as a residual.
 
     Parameters
     ----------
@@ -1025,103 +1033,6 @@ def truth_parameter_values(case: RehearsalCase, cal) -> dict[str, float]:
     return values
 
 
-def _forward_run_without_model(forward_run: Path) -> str:
-    """``forward_run.py`` with the model command removed from ``main()``, every other line kept."""
-
-    tree = ast.parse(forward_run.read_text(encoding="utf-8"))
-    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
-    kept = [statement for statement in main.body if not _is_model_command(statement)]
-    if len(kept) == len(main.body):
-        raise RuntimeError(f"{forward_run}'s main() never runs the model; nothing to cut.")
-    main.body = kept
-    return ast.unparse(tree) + "\n"
-
-
-def run_template(cal, values, workspace: str | Path, *, outputs_from: Any = None) -> pd.Series:
-    """Run a built calibration's template at chosen parameter values; its simulated observations.
-
-    The truth round trip of the rehearsal, and the check of a write-back. A copy of
-    the template is made in ``workspace``, every template file filled at full
-    precision (``repr`` of each value, as the write-back's replay fills them --
-    pyEMU's own ``write_input_files`` writes a pilot point at 4 significant
-    digits), and the forward run executed there as PESTPP-IES would; each
-    instruction file then reads its output.
-
-    Parameters
-    ----------
-    cal : PestProject
-        The calibration, after ``build()``.
-    values : mapping of str to float, or CalibratedInputs
-        Each parameter's value, by name (any case): :func:`truth_parameter_values`,
-        or a realization's ``ies.calibrated(...)`` (its values as replayed). A FIXED
-        parameter left out is at its ``parval1``; an adjustable one left out raises
-        ``ValueError``.
-    workspace : str or pathlib.Path
-        Directory for the copy; must not exist yet or be empty (``FileExistsError``
-        otherwise: nothing is deleted here).
-    outputs_from : Run, str, pathlib.Path or None, optional
-        ``None`` (default): MODFLOW 6 runs in the copy. A run (or its directory):
-        MODFLOW 6 does NOT run; that run's OUTPUT files -- every top-level file of
-        its directory that is not one of its simulation's inputs -- are copied in
-        and the forward run's other steps read them. This is how a model REBUILT
-        from a write-back is scored by the calibration's own readers: the inputs
-        are the realization's (filled and applied here), the heads, budgets and
-        stages are the rebuilt run's.
-
-    Returns
-    -------
-    pandas.Series
-        The simulated value of every observation of ``cal.pst``, by its lower-cased
-        name.
-
-    Raises
-    ------
-    RuntimeError
-        When the forward run fails, with the end of its error output.
-    """
-
-    template = Path(cal.template_workspace)
-    target = Path(workspace)
-    if target.exists() and any(target.iterdir()):
-        raise FileExistsError(f"run_template(workspace={str(target)!r}) is not empty; pass a new folder.")
-    if isinstance(values, CalibratedInputs):
-        values = values._values
-    pst = cal.pst
-    complete = _complete_values(pst, pd.Series({str(k).lower(): float(v) for k, v in values.items()}))
-    shutil.copytree(template, target, dirs_exist_ok=True)
-    _fill_templates(pst, complete, template, target)
-    script = "forward_run.py"
-    if outputs_from is not None:
-        source = Path(getattr(outputs_from, "workspace", outputs_from))
-        inputs = {str(path) for path in _simulation_input_files(source)}
-        for item in source.iterdir():
-            if item.is_file() and item.name not in inputs and not item.name.startswith("."):
-                shutil.copy2(item, target / item.name)
-        (target / "forward_run_outputs.py").write_text(
-            _forward_run_without_model(template / "forward_run.py"), encoding="utf-8"
-        )
-        script = "forward_run_outputs.py"
-    environment = dict(os.environ)
-    pythonpath = pythonpath_for_children()
-    if pythonpath is not None:
-        environment["PYTHONPATH"] = pythonpath
-    done = subprocess.run([sys.executable, script], cwd=target, env=environment,
-                          capture_output=True, text=True, check=False)
-    if done.returncode != 0:
-        raise RuntimeError(
-            f"The forward run in {target} failed (exit {done.returncode}):\n{done.stderr[-4000:]}"
-        )
-    import pyemu  # optional: myflopy imports pyEMU only where a PEST step needs it
-
-    simulated = []
-    for instruction, output in zip(pst.instruction_files, pst.output_files, strict=True):
-        frame = pyemu.pst_utils.InstructionFile(str(target / instruction)).read_output_file(str(target / output))
-        simulated.append(frame["obsval"].astype(float))
-    result = pd.concat(simulated)
-    result.index = result.index.str.lower()
-    return result
-
-
 #: How closely a round trip must agree (ledger 589): an observation passes
 #: when ``|simulated - expected| <= ROUND_TRIP_TOLERANCE + ROUND_TRIP_RTOL * |expected|``
 #: -- 1e-3 in the model's units for a head, a stage or a difference, and a part in a
@@ -1138,7 +1049,7 @@ def round_trip(cal, simulated: pd.Series, expected: pd.Series | None = None) -> 
 
     Two uses. With ``expected=None`` -- the TRUTH round trip -- every MEASURED
     observation of ``cal`` (non-zero weight) against its ``obsval``, scored as PEST++
-    scores it through the review's one rule (``ies._pest_residuals``, ledger 564): a
+    scores it through the review's one rule (``scoring.pest_residuals``, ledger 564): a
     one-sided bound is 0 wherever it holds. With ``expected`` -- a WRITE-BACK check --
     every observation ``simulated`` holds against ``expected`` (the base realization's
     own values, :func:`base_observations`), bounds and unmeasured rows included.
@@ -1148,8 +1059,8 @@ def round_trip(cal, simulated: pd.Series, expected: pd.Series | None = None) -> 
     cal : PestProject
         The calibration, after ``build()``.
     simulated : pandas.Series
-        Simulated values by lower-cased observation name -- :func:`run_template`'s
-        result.
+        Simulated values by lower-cased observation name -- the ``simulated`` column
+        of ``cal.run_template(...)``'s table.
     expected : pandas.Series or None, default None
         What ``simulated`` should equal, by lower-cased observation name. ``None``:
         the control file's measured values. An observation ``simulated`` holds and
@@ -1180,7 +1091,7 @@ def round_trip(cal, simulated: pd.Series, expected: pd.Series | None = None) -> 
         if missing:
             raise KeyError(f"No simulated value for measured observation(s) {missing[:5]}.")
         values = simulated.loc[chosen].astype(float)
-        residual, _ = _pest_residuals(pst, values)  # pyEMU names are lower-case
+        residual, _ = pest_residuals(pst, values)  # pyEMU names are lower-case
         reference = data.loc[chosen, "obsval"].astype(float)
     else:
         chosen = simulated.index
@@ -1413,8 +1324,9 @@ def forecast_recovery(ies, simulated: pd.Series, name: str | int = 0) -> dict:
         The run (``cal.run_ies(...)``).
     simulated : pandas.Series
         The forecast's TRUE value, read by the observation's full name: the template
-        run at the truth's multipliers (:func:`run_template` with
-        :func:`truth_parameter_values`), noise-free.
+        run at the truth's multipliers (the ``simulated`` column of
+        ``cal.run_template(workspace, values=truth_parameter_values(case, cal))``),
+        noise-free.
     name : str or int, default 0
         Which forecast, as :meth:`IesResults.forecast` takes it: a name (exact, else
         a unique case-insensitive substring) or a position in its ``forecast_names``.

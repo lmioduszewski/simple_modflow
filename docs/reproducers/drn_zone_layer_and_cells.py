@@ -206,7 +206,7 @@ def section_b(model, root):
         cal.observe(targets, prefix="drn")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            cal.build("zone.pst", noptmax=0)
+            cal.build("zone.pst")
         template = pathlib.Path(cal.template_workspace)
         base = pd.read_csv(template / "drn_simulated_drn_flow.csv")["basin"]
         again = root / "forward.csv"

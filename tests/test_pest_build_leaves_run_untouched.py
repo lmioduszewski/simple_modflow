@@ -113,7 +113,7 @@ def _calibrate(model, workspace: Path | None, *, name="s1"):
     ))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build(f"{name}.pst", noptmax=0)
+        cal.build(f"{name}.pst")
     return cal
 
 
@@ -437,7 +437,7 @@ def test_a_second_build_closes_the_first_builds_log_before_deleting_its_template
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("s1.pst", noptmax=0)
+        cal.build("s1.pst")
 
     assert first.closed, "the first build's PstFrom.log is still open in the template it deletes"
     assert not cal.pf.logger.f.closed

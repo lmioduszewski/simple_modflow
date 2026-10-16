@@ -463,7 +463,7 @@ def test_a_pest_build_reads_the_binned_targets_and_the_review_draws_their_dates(
     cal.observe(targets)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("dated.pst", noptmax=0)
+        cal.build("dated.pst")
     obs = cal.pst.observation_data
     measured = obs.loc[obs["weight"] > 0]
     assert len(measured) == 24
@@ -518,7 +518,7 @@ def test_a_build_on_a_model_of_another_clock_is_refused(models, tmp_path):
                                          r"period\(s\) where the targets were binned on 37"):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            cal.build("other.pst", noptmax=0)
+            cal.build("other.pst")
 
 
 @pytest.mark.slow

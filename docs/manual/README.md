@@ -208,7 +208,7 @@ Throughout, two example models recur so the code stays concrete:
 - 17.3 Parameterization: `cal.parameterize(target, style=…, bounds=…)` — targets (`k`, `k33`, `sto.ss`/`sto.sy`, `recharge` -- list or array RCH, its form read from the package --, `chd`, `ghb.*`, `drn.*`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `lak.bedleak`, `sfr.rhk`, `porosity`; found by package type, `package=` naming one of several; elevations are additive offsets), styles (`constant` / `zone` / `grid` / `pilotpoints` / `feature` -- one per lake or named stream, `features=` picking them) and `periods=` (`'month'` or `{label: [periods]}`: one parameter set per group of stress periods)
 - 17.4 Geostatistics: `ExpGeoStruct`, anisotropy/bearing/nugget, the grid and pilot-point styles on Voronoi
 - 17.5 Observations & forecasts: `cal.observe(...)` / `cal.forecast(...)` with the target classes
-- 17.6 Building: `cal.build(pst_name, noptmax=…)`; the injected forward run
+- 17.6 Building: `cal.build(pst_name)`; the injected forward run; `cal.run_template(folder, values=, outputs_from=)`, the one run of the template
 - 17.7 History matching with ensembles: `cal.run_ies(reals=, iterations=, workers=)`; `cal.prior` / prior Monte Carlo
 - 17.8 Reviewing runs: discovery (`model.pest_runs`), `PestRunHandle.review()` → `IesResults` (phi, ensembles, forecasts, parameter-field maps)
 - 17.9 The DBTL loop and "a good fit ≠ a good forecast"

@@ -596,7 +596,7 @@ def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
     cal.observe(seeps)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("pkg.pst", noptmax=0)
+        cal.build("pkg.pst")
     template = cal.template_workspace
     forward = (template / "forward_run.py").read_text()
     assert "'package': 'lak_b'" in forward and "'package': 'drn_b'" in forward
