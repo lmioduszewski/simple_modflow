@@ -3,7 +3,7 @@
 The canonical TESTING model (21x21, 6 periods) calibrated on ``kl0``/``k33l0`` against
 its 8 head targets (``hd``), two one-sided bound sets -- ``land``: ``at_most``, weight 2,
 three of six cells violated at the start; ``floor``: ``at_least``, weight 3, two of six
-violated -- and a zero-weight forecast. Three parts:
+violated -- and a zero-weight forecast. Five parts:
 
 A. ``cal.run_template`` (MODFLOW 6 in the copy), its ``outputs_from=`` route (the model's
    own run, no MODFLOW 6) and PESTPP-IES at NOPTMAX 0 in a launch copy of the template,
@@ -17,6 +17,18 @@ C. ``outputs_from=`` a 22x22 run (484 cells, the same model name and clock) agai
    441-cell template: refused, naming both mesh fingerprints. Before ledger 605
    the rehearsal's ``run_template`` returned 48 finite heads off by up to 48.79 ft (median
    20.91 ft) with no error -- the instruction files read cells by position.
+D. ``outputs_from=`` an earlier ``run_template`` folder (ledger 607): a calibration
+   ``w`` on three wells ``a``/``b``/``c``, run once; the wells MOVED (other cells, same
+   names) and ``w`` rebuilt; then ``outputs_from=`` the first folder. At da26644c its
+   forward run, target map and instruction file replaced the rebuilt template's in the
+   copy and it returned the OLD wells' heads, 58.04 ft from the MF6 route, with no
+   error. Now refused: the folder is a PEST working directory.
+E. An observation with no finite simulated value (ledger 607): the template's
+   forward run made to write ``nan`` for one head. PESTPP-IES at NOPTMAX 0 fails the run
+   ("control file parameter value run failed", exit 1); at da26644c ``run_template``
+   returned a table with no error -- measured on a calibration of the same 8 wells alone
+   (``kl0``, ``hd``), its ``groupby("group")["phi"].sum()`` read hd 10.33, the NaN row's
+   phi skipped. Now refused (``RuntimeError``).
 
 ``--time-run DIR`` also times the discretization check on a COPY of a real run (the
 check ``outputs_from=`` makes: a discretization-only ``MFSimulation.load`` plus
@@ -38,6 +50,11 @@ the design pass at 55947911 measured the same numbers):
   C: refused -- model 'viz_prt_master': its mesh is DISV, 4 layer(s), fingerprint
      78695be464bde479 against the template's DISV, 4 layer(s), fingerprint
      49680e8054405558 (another mesh)
+
+  D: refused -- is a PEST working directory, not a model run: it holds
+     myflopy_pest_build.json, myflopy_template_run.json, forward_run.py
+  E: pestpp-ies exit 1, "run failed" ; run_template refused -- 1 of 126 observation(s)
+     read no finite simulated value
 
   The discretization check on a copy of Ten Trails ``ss`` (5 x 20,323 cells): 1.53 s
   (``--time-run``; the design pass measured 1.15 s at a lower load).
@@ -180,6 +197,59 @@ def part_c(root: Path, cal) -> None:
         print(f"\nC. refused -- {line.strip().lstrip('- ')}")
 
 
+def part_d(root: Path, demo) -> None:
+    import numpy as np
+
+    from myflopy.modflow.mf6.observations import HeadTargets
+
+    model = demo.model
+
+    def build(cells):
+        wells = HeadTargets.from_cells(cells=cells, values=np.full((model.nper, 3), 100.0),
+                                       layers=0, names=["a", "b", "c"])
+        cal = model.pest("w", start_datetime="2020-01-01", workspace=root / "pest_w")
+        cal.parameterize("k", style="constant", layers=[0], name="kl0")
+        cal.observe(wells, prefix="w")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cal.build("w.pst")
+        return cal
+
+    build([10, 50, 100]).run_template(root / "w_first")
+    cal = build([200, 300, 400])  # the wells moved, the same names
+    try:
+        cal.run_template(root / "w_again", outputs_from=root / "w_first")
+        print("\nD. NOT refused")
+    except ValueError as error:
+        said = str(error).split(" -- a copy")[0].split("' ", 1)[-1]
+        print(f"\nD. refused -- {said}")
+
+
+def part_e(root: Path, cal) -> None:
+    forward_run = cal.template_workspace / "forward_run.py"
+    original = forward_run.read_text()
+    output = str(next(name for name in cal.pst.output_files if "hd" in str(name)))
+    hook = (f"\n    import pandas as _pd\n    _f = _pd.read_csv({output!r})\n"
+            f"    _f.iloc[0, 1] = float('nan')\n    _f.to_csv({output!r}, index=False, "
+            "na_rep='nan')\n")
+    cut = original.index("\nif __name__")
+    forward_run.write_text(original[:cut].rstrip("\n") + hook + "\n" + original[cut:])
+    try:
+        directory = root / "pestpp_nan"
+        cal._launch_copy(directory, method="reproducer", announce=False)
+        done = subprocess.run(["pestpp-ies", "t.pst"], cwd=directory, capture_output=True,
+                              text=True, check=False)
+        failed = "run failed" in done.stdout or "run failed" in (directory / "t.rec").read_text()
+        try:
+            cal.run_template(root / "nan")
+            verdict = "NOT refused"
+        except RuntimeError as error:
+            verdict = "refused -- " + str(error).split(" (")[0].split("): ")[-1]
+    finally:
+        forward_run.write_text(original)
+    print(f"\nE. pestpp-ies exit {done.returncode}, \"run failed\" {failed} ; run_template {verdict}")
+
+
 def time_run(directory: Path) -> None:
     from myflopy.modflow.mf6.pest.project import _discretization_identity, _load_discretization
 
@@ -204,6 +274,8 @@ def main() -> None:
         demo, cal = _calibration(root)
         part_a_and_b(root, demo, cal)
         part_c(root, cal)
+        part_d(root, demo)
+        part_e(root, cal)
     if arguments.time_run is not None:
         time_run(arguments.time_run)
 

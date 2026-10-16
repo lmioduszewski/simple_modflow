@@ -849,9 +849,13 @@ which is where you balance the weights before `run_ies`. PEST++ itself does not 
 - `outputs_from=<a completed run>` skips MODFLOW 6 and reads that run's outputs: the
   start's phi by group with no model run, or a model rebuilt from a write-back scored by
   the calibration's own readers. It refuses a run whose `mfsim.lst` is not a normal,
-  current termination and a run of another model, clock or mesh -- the instruction files
+  current termination, a run of another model, clock or mesh -- the instruction files
   read cells and periods by position, and a 484-cell run against a 441-cell template was
-  read in silence, 20.9 ft off at the median.
+  read in silence, 20.9 ft off at the median -- and a PEST working directory (an earlier
+  `run_template` folder, an IES master or worker), whose own forward run and target files
+  would be read instead (ledger 607).
+- An observation the forward run gives no finite value is refused (`RuntimeError`), as
+  PESTPP-IES fails that run; the folder is left for inspection.
 - `folder` must be new or empty; it is left for inspection. `overwrite=True` reruns in a
   folder an earlier `run_template` of this calibration made, and deletes nothing else.
 

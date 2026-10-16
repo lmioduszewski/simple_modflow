@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 606 entries (611 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 607 entries (612 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 607 | `run_template` refuses a PEST working directory as `outputs_from=`, and a run with no finite simulated value | 2026-10-16 |
 | 606 | The rehearsal's head weight is `1 / head_noise`, not a literal | 2026-10-16 |
 | 605 | `cal.run_template` is the one run of a built template: myflopy's replay, scored by PEST++'s rule, not PESTP... | 2026-10-16 |
 | 604 | A contour surface's staged copies carry only what GRASS reads -- the geometry and `z` -- and a contour file... | 2026-10-16 |
@@ -22697,3 +22698,19 @@ same day, which is the useful part of the result.
       noise and left every head weight at 20, silently falsifying "weights are 1 / the
       noise". A keyword on `build_rehearsal`, not a read of the notebook: the case is
       built before the data, and the default keeps every stored rehearsal's weights.
+
+607. **`run_template` refuses a PEST working directory as `outputs_from=`, and a run with no finite simulated value (2026-10-16).**
+      Review of ledger 605. **Refused, not filtered:** an `outputs_from=` holding
+      `myflopy_pest_build.json`, `myflopy_template_run.json` or `forward_run.py` (an
+      earlier `run_template` folder, an IES master or worker, a run a pre-356 build wrote
+      into) is a template COPY, and its top-level forward run, target maps and
+      instruction files replaced the copy's -- after the wells moved and the calibration
+      was rebuilt, an earlier `run_template` folder returned the OLD wells' heads, 58.04 ft
+      off, with no error. Leaving out of the copy only "this template's PEST files" was
+      not taken: the files a forward run reads (each target family's map) are not
+      enumerable from the control file. **An observation read as NaN/inf RAISES** rather
+      than warning: PESTPP-IES fails that run ("run failed", exit 1), and a
+      `groupby("group")["phi"].sum()` skipped the row (hd 10.33 for a run PEST++
+      refuses), so the pre-flight certified a template that cannot calibrate. A
+      non-finite `values=` entry is refused at the call. Both measured in
+      `docs/reproducers/run_template_is_pestpp_once.py`, parts D and E.

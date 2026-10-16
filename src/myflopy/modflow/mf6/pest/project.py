@@ -3497,7 +3497,10 @@ class PestProject:
         reproduces PESTPP-IES's run of the same values to 5e-10 in every simulated
         value and its ``<case>.phi.group.csv`` to that file's six figures
         (``docs/reproducers/run_template_is_pestpp_once.py``). The template, the run
-        directory and ``cal.pst`` are left as they were. The build's control file is
+        directory and ``cal.pst`` are left as they were -- bar a STALE run lock in the
+        template, which is removed with a warning, as every launch removes it (ledger
+        586). An observation the forward run gave no finite value is refused, as
+        PESTPP-IES fails that run (ledger 607). The build's control file is
         written at ``NOPTMAX 0``, but nothing myflopy launches reads that: this is the
         one spelling of a single run (``run_ies(iterations=0)`` is refused naming it).
 
@@ -3520,8 +3523,9 @@ class PestProject:
             starting value (1 for a multiplier, 0 for an offset, ``initial_value=``
             where given). A mapping or Series must name every ADJUSTABLE parameter; a
             FIXED one left out is at its ``parval1``. A name the control file lacks,
-            two names for one parameter, a TIED parameter and one carrying a
-            ``scale``/``offset`` are refused (``ValueError``). ``ies.calibrated(...)``
+            two names for one parameter, a value that is not a finite number, a TIED
+            parameter and one carrying a ``scale``/``offset`` are refused
+            (``ValueError``). ``ies.calibrated(...)``
             passes that realization's values as its replay filled them
             (:attr:`CalibratedInputs.parameters
             <myflopy.modflow.mf6.pest.calibrated.CalibratedInputs.parameters>`); the
@@ -3545,7 +3549,11 @@ class PestProject:
             from ``ies.calibrated().to_library(...)`` scored by the calibration's own
             readers (pass ``values=`` the same realization). Refused: a directory with
             no ``mfsim.nam`` (``FileNotFoundError``); the template or a directory
-            holding or inside it; a run whose ``mfsim.lst`` does not read normal
+            holding or inside it; a PEST working directory -- one holding
+            ``myflopy_pest_build.json``, ``myflopy_template_run.json`` or
+            ``forward_run.py``: an earlier ``run_template`` folder, an IES master or
+            worker -- whose forward run and target files would replace this
+            template's (ledger 607); a run whose ``mfsim.lst`` does not read normal
             termination, or one of whose inputs was written after it; and a run of
             another model -- no model of the template's name, another TDIS (stress
             period count, then each period's length, steps and multiplier to
@@ -3596,8 +3604,10 @@ class PestProject:
             When ``outputs_from`` holds no ``mfsim.nam``.
         RuntimeError
             When a PESTPP-IES run may still be going in the template (ledger 532), when
-            a relative ``PYTHONPATH`` entry can no longer be resolved (ledger 454), or
-            when the forward run fails, with the end of its error output.
+            a relative ``PYTHONPATH`` entry can no longer be resolved (ledger 454),
+            when the forward run fails, with the end of its error output, or when an
+            observation reads no finite simulated value (PESTPP-IES fails that run;
+            the workspace is left for inspection).
         """
 
         if self.pst is None:
@@ -3656,6 +3666,19 @@ class PestProject:
         names = self.pst.observation_data.index
         simulated = simulated.reindex([str(name).lower() for name in names])
         simulated.index = names
+        bad = simulated.index[~np.isfinite(simulated.to_numpy(dtype=float))]
+        if len(bad):
+            # PESTPP-IES fails a run with a non-finite simulated value ("run failed"),
+            # where a phi sum would skip it in silence (ledger 607).
+            shown = ", ".join(str(name) for name in bad[:5]) + (" ..." if len(bad) > 5 else "")
+            raise RuntimeError(
+                f"run_template(): {len(bad)} of {len(simulated)} observation(s) read no finite "
+                f"simulated value ({shown}) from the forward run's outputs in {target}. "
+                "PESTPP-IES fails such a run, so the template cannot calibrate as it "
+                "stands; a phi summed over it would skip them in silence. The folder is left "
+                "for inspection: a NaN head or flow (a NaN budget under normal termination), "
+                "or an output file that names fewer values than the instruction file reads."
+            )
         table = observation_phi(self.pst, simulated)
         logger.info(
             "run_template(): %d observations in %s, phi %.6g (%s)", len(table), target,
@@ -3706,6 +3729,12 @@ class PestProject:
                 )
             seen[lower] = str(key)
             converted[lower] = float(value)
+            if not np.isfinite(converted[lower]):
+                raise ValueError(
+                    f"values= gives parameter {str(key)!r} the value {converted[lower]!r}: a "
+                    "parameter's value is a finite number (a multiplier, or an additive "
+                    "offset in model units)."
+                )
         return pd.Series(converted, dtype=float)
 
     def _run_template_workspace(self, target: Path, template: Path, source: Path | None, *,
@@ -3800,6 +3829,22 @@ class PestProject:
                 + ": the template holds the outputs of whichever realization a serial run "
                 "left there, not of a run you chose. Pass the run the template was built "
                 f"from ({self.original_workspace}), or a run rebuilt from a write-back."
+            )
+        pest_files = [name for name in (BUILD_MARKER, TEMPLATE_RUN_MARKER, "forward_run.py")
+                      if (directory / name).exists()]
+        if pest_files:
+            # Its top-level files would replace the copy's: its forward run, target maps
+            # and instruction files, read in place of this template's (ledger 607).
+            raise ValueError(
+                f"outputs_from={str(directory)!r} is a PEST working directory, not a model "
+                f"run: it holds {', '.join(pest_files)} -- a copy of a template (an earlier "
+                "run_template() folder, an IES master or worker). Its forward run and target "
+                "files would replace this template's in the copy, and its outputs were read "
+                "for whatever that template observed (measured: after the wells moved and "
+                "the calibration was rebuilt, an earlier run_template folder returned the "
+                "OLD wells' heads, 58 ft off). Pass the run the template was built from "
+                f"({self.original_workspace}), or a run rebuilt from a write-back; to score "
+                "this template once more, leave outputs_from=None."
             )
         listing = read_listing_outcome(directory)
         if listing.outcome != "normal":

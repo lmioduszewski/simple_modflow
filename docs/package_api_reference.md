@@ -1177,8 +1177,9 @@ templates filled at full precision, the forward run in a subprocess, every obser
 scored by PEST++'s rule (`group`, `obsval`, `weight`, `simulated`, `residual`,
 `raw_residual`, `phi`; `groupby("group")["phi"].sum()` is PESTPP-IES's `phi.group.csv`):
 the one pre-flight and the write-back check. `outputs_from=<completed run>` skips MF6 and
-refuses a run that is not a normal, current run of the template's model, clock and mesh;
-`run_ies(iterations=0)` is refused naming it, and `build()` takes no `noptmax`. **`model.pest(...)` is the front door** — it
+refuses a run that is not a normal, current run of the template's model, clock and mesh,
+and a PEST working directory (ledger 607); a non-finite simulated value raises, as
+PESTPP-IES fails that run; `run_ies(iterations=0)` is refused naming it, and `build()` takes no `noptmax`. **`model.pest(...)` is the front door** — it
 fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
 `mf.PestProject(...)` can be constructed directly, but that is the advanced path.
 **`cal.build()` only READS the run** (ledger 356): it stages a copy of the run's INPUT

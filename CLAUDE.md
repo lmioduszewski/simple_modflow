@@ -2255,7 +2255,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   own `phi.group.csv` (`tests/test_pest_run_template.py` is that oracle). The replay
   steps it shares with the write-back live once in `pest/replay.py`. `outputs_from=<run>`
   skips MF6 and refuses a run that is not a normal, current run of the template's model,
-  clock and mesh (another mesh was read in silence, 20.9 ft median). `run_ies(iterations=0)`
+  clock and mesh (another mesh was read in silence, 20.9 ft median), and a PEST working
+  directory -- a template copy's forward run and target files replaced the copy's
+  (ledger 607). A non-finite simulated value raises: PESTPP-IES fails that run,
+  and a phi sum skips it. `run_ies(iterations=0)`
   is refused naming it and `build()` takes no `noptmax`; do not add another run-once route.
 - **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,
   `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens

@@ -261,6 +261,32 @@ def test_outputs_from_the_template_is_refused(preflight, tmp_path):
         preflight.cal.run_template(tmp_path / "w", outputs_from=preflight.cal.template_workspace)
 
 
+
+def test_outputs_from_a_pest_working_directory_is_refused(preflight, start, tmp_path):
+    """A template COPY is not a model run (ledger 607).
+
+    Its top-level forward run, target maps and instruction files replaced this
+    template's in the copy: after the wells moved and the calibration was rebuilt, an
+    earlier ``run_template`` folder returned the OLD wells' heads, 58 ft off, with no
+    error (``docs/reproducers/run_template_is_pestpp_once.py``, part D).
+    """
+
+    cal = preflight.cal
+    earlier = preflight.root / "start"  # the `start` fixture's folder: MF6 ran there
+    assert (earlier / "mfsim.lst").is_file() and (earlier / TEMPLATE_RUN_MARKER).is_file()
+    with pytest.raises(ValueError, match=r"is a PEST working directory, not a model run: it "
+                                         r"holds myflopy_pest_build.json, "
+                                         r"myflopy_template_run.json, forward_run.py"):
+        cal.run_template(tmp_path / "w1", outputs_from=earlier)
+    # A model run that a PEST step wrote into (a forward run beside it) is one too.
+    run = _copied_run(preflight, tmp_path / "with_forward_run")
+    shutil.copy2(cal.template_workspace / "forward_run.py", run / "forward_run.py")
+    _age(run / "forward_run.py")
+    with pytest.raises(ValueError, match=r"it holds forward_run.py"):
+        cal.run_template(tmp_path / "w2", outputs_from=run)
+    assert not (tmp_path / "w1").exists() and not (tmp_path / "w2").exists()
+
+
 # -- workspace= and overwrite= -----------------------------------------------------------
 
 
@@ -336,6 +362,39 @@ def test_a_name_the_control_file_lacks_is_refused(preflight, tmp_path):
     with pytest.raises(ValueError, match=r"names 1 parameter\(s\) the control file does not "
                                          r"hold: \['kl0_typo'\]"):
         preflight.cal.run_template(tmp_path / "w", values=values)
+
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), np.float64("-inf")])
+def test_a_value_that_is_not_finite_is_refused(preflight, tmp_path, bad):
+    values = dict.fromkeys(preflight.cal.pst.adj_par_names, 1.0)
+    values[_kl0(preflight.cal)] = bad
+    with pytest.raises(ValueError, match=r"a parameter's value is a finite number"):
+        preflight.cal.run_template(tmp_path / "w", values=values)
+    assert not (tmp_path / "w").exists()
+
+
+def test_an_observation_with_no_finite_simulated_value_is_refused(preflight, tmp_path):
+    """PESTPP-IES fails a run whose output reads ``nan`` ("run failed"), where the phi
+    by group summed over the table skipped the row, as if the template ran (ledger
+    607; ``docs/reproducers/run_template_is_pestpp_once.py``, part E)."""
+
+    cal = preflight.cal
+    forward_run = cal.template_workspace / "forward_run.py"
+    original = forward_run.read_text()
+    output = str(next(name for name in cal.pst.output_files if "hd" in str(name)))
+    hook = (f"\n    import pandas as _pd\n    _f = _pd.read_csv({output!r})\n"
+            f"    _f.iloc[0, 1] = float('nan')\n    _f.to_csv({output!r}, index=False, "
+            "na_rep='nan')\n")
+    cut = original.index("\nif __name__")
+    forward_run.write_text(original[:cut].rstrip("\n") + hook + "\n" + original[cut:])
+    try:
+        with pytest.raises(RuntimeError, match=r"1 of \d+ observation\(s\) read no finite "
+                                               r"simulated value .* PESTPP-IES fails such a run"):
+            cal.run_template(tmp_path / "w")
+    finally:
+        forward_run.write_text(original)
+    assert (tmp_path / "w" / output).is_file()  # left for inspection
 
 
 def test_one_parameter_named_twice_is_refused(preflight, tmp_path):
