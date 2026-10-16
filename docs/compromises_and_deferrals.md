@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 609 entries (614 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 610 entries (615 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 610 | `with_grid(remap=True)` carries a library-referenced npf onto a new mesh: a discretization is never carried... | 2026-10-16 |
 | 609 | Lake and SFR targets read their locations' `weight` column, every location weight is checked by the reading... | 2026-10-16 |
 | 608 | A `periods=` group holding the steady period beside transient ones is refused at build; a group of steady p... | 2026-10-16 |
 | 607 | `run_template` refuses a PEST working directory as `outputs_from=`, and a run with no finite simulated value | 2026-10-16 |
@@ -12730,14 +12731,17 @@ same day, which is the useful part of the result.
         ``mf.npf(k=<ndarray>)`` gives ``simulations=0, skipped=1`` either side of it. That
         is not incidental -- it is why such a model needs remapping at all, since a
         package WITH a source reads ``rebuilt`` and never reaches this engine. So the
-        remap INHERITS the limitation rather than causing it. (b) The remap needs real
+        remap INHERITS the limitation rather than causing it. ~~(b) The remap needs real
         cell polygons, so it refuses a ``mf.grid_ref`` target by name, leaving a built
-        grid object in ``grid=`` -- itself unsaveable (ledger 257).
-        **A fully PUBLIC route exists and is now pinned by a test**: remap against the
+        grid object in ``grid=`` -- itself unsaveable (ledger 257).~~ **(b) is gone
+        (ledger 610): a ``grid_ref`` target is read through ``library=project``.**
+        **A fully PUBLIC route exists and is now pinned by a test**: ~~remap against the
         built grid, then ``with_grid(mf.grid_ref(key))`` to re-point -- the ``remapped``
         verdict and the arrays both survive, which they do only because ``REMAPPED_FROM``
-        is tested BEFORE the cellwise branch -- then ``add_package`` the array and
-        ``mf.ref`` it, which is ledger 193's own documented escape hatch. Measured:
+        is tested BEFORE the cellwise branch -- then~~ **remap straight onto
+        ``mf.grid_ref(key)`` with ``library=project`` (ledger 610), then**
+        ``add_package`` the array and ``mf.ref`` it, which is ledger 193's own documented
+        escape hatch. Measured:
         ``simulations=1``, reloads, and a fresh ``prepare_run`` rebuilds the right values.
         What is deferred is collapsing that into one call, which would need a
         serializable carrier for the OLD mesh AND its values.
@@ -22408,8 +22412,10 @@ same day, which is the useful part of the result.
       - A recipe declared grid is meshed at EVERY `with_grid`/`move_report` on it, once per
         moved model (coupled models on one recipe mesh it twice); no cache. Free on the
         documented route, `project.add_grid(key, GridSpec.from_object(vor))`.
-      - `remap=True` onto a NEW `grid_ref` still raises `TypeError` naming
-        `project.grid(key)`, though the library is now in hand; `coverage_on` takes no
+      - ~~`remap=True` onto a NEW `grid_ref` still raises `TypeError` naming
+        `project.grid(key)`, though the library is now in hand;~~ **Done (ledger
+        610): the new grid is read through `library=`, a reloaded library pickle
+        anchored to the project root.** `coverage_on` takes no
         `library=` and still refuses a deferred grid.
       - A stamp is the move's decision, as for an inline package: re-registering the library
         key with values for the new mesh does not clear it -- re-point with a fresh
@@ -22785,3 +22791,48 @@ same day, which is the useful part of the result.
       from_records` still takes a name's cell from its FIRST record when the records
       disagree; SFR has no `from_hydrographs`. Reproducer:
       `docs/reproducers/named_series_location_weights.py`.
+
+610. **`with_grid(remap=True)` carries a library-referenced npf onto a new mesh: a discretization is never carried, nor a `grid_free=` name, the new grid is read through `library=`, and a move refuses a model a save stripped of its mesh (2026-10-16).**
+      Ledger 597 closed the silent half of the write-back's grid move (a ref read
+      `unchanged` and built the old K). Measured at 55947911 on the route
+      `calibrated().to_library` takes -- an `npf` built by `substitute_values`, `mf.ref`'d
+      beside an EAGER `mf.disv(<result>)`, the shape of every Ten Trails run -- four more
+      (`docs/reproducers/remap_a_calibrated_ref.py`):
+      - `remap=True` handed the DISV's `top`/`botm`/`idomain` to the engine and refused the
+        WHOLE move (`RemapRefused`), inline or by ref. **Chosen:** one predicate,
+        `grid_identity._describes_its_mesh` (holds `cell2d`/`vertices`/`ncpl`), read by
+        `package_move` (`stale`) and `_remapped_package` (never carried). A DISV is the
+        mesh, not data on it; it is swapped with `with_packages(..., slot=)`, and the
+        build's DISV-against-grid check refuses it when forgotten.
+      - `grid_free=` names were remapped anyway; the report asked with the same names then
+        read `unchanged`. Now neither carried nor stamped (one `_grid_free_names` for both).
+      - A stamped array on a mesh of ANOTHER size died in FloPy (`MFDataException: Unable
+        to set data "k" layer 0`) before the stamp check ran. Only `MFDataException` from
+        a STAMPED package is translated (chained), naming the move; and the stamp's
+        refusal names `remap=True` (`library=project` for a ref) only for a package whose
+        per-cell arrays the engine carries (`REMAPPABLE_ARRAYS`, restated from
+        `remap.py`'s layer-2 sets in layer 1; a test holds them equal) -- not a typed
+        cellid, a mover or an extensive/flag array.
+      - A model whose saved context records a `grid_pin` (ledger 257) and holds no mesh
+        was read as gridless: the simulation tier SKIPPED it (returned unmoved, `models:
+        []` in lineage) and the model tier moved it unstamped and BUILT the old mesh's K on
+        a same-size mesh. **Judgment call (the critic's, recorded):** `with_grid`,
+        `move_report` and the simulation tier REFUSE it, even when every package would
+        rebuild -- "unchanged is the dangerous verdict" -- naming the re-attach: `add_grid`
+        + `with_grid(mf.grid_ref(key), library=project)`, accepted (moving nothing) only
+        when the grid fingerprints as recorded. Connectivity-only, so a rescaled mesh
+        passes (257's limit). A re-attach under `remap=True` is refused: nothing to carry.
+        A move drops the recorded pin from the context (it described the old mesh).
+      - The NEW grid as `mf.grid_ref` raised `TypeError` naming `project.grid(key)`, which
+        raised `FileNotFoundError` off the project root (a reloaded library grid is a
+        pickle with a relative path). One resolver, `specs._resolved_mesh`, now serves the
+        declared and the new mesh: a ref through `library.grid(key)`, a recipe/pickle in a
+        temporary directory anchored to `library.root`. `coverage_on`, which takes no
+        `library=`, keeps its `project.grid(key)` refusal.
+      **Measured on Ten Trails copies (the design pass):** the calibrated `ss` simulation
+      moved onto the `hm` mesh in 11.2 s (npf/sto/ic `remapped`; dis and rch `stale`), the
+      npf alone 1.3 s, and an `hm` fork built in 1.5 s.
+      **Not done:** `coverage_on` takes no `library=`; a remap after a reload treats every
+      old cell as active (the domain is not saved; 101,615 of 101,615 `ss` cells are);
+      DIS/DISU are not recognised as discretizations (`with_grid` is DISV-only); no
+      one-call verb (the user declined one).

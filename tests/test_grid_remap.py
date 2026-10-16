@@ -543,22 +543,14 @@ def test_package_move_reports_remapped_before_the_cellwise_branch(meshes, lens):
 
 
 def test_a_remapped_model_CAN_be_saved_by_the_documented_route(meshes, lens, tmp_path):
-    """Two reasons it cannot be saved in one step, and the route that gets there anyway.
+    """The remapped values are an ``ndarray``, so they are saved through the library.
 
-    Ledger 300 first recorded this as a flat "cannot be saved", which overstated it. The
-    two obstacles are real and both predate C6:
-
-    * the remapped values are an ``ndarray``, which ``to_dict`` refuses (ledger 193) --
-      and the model was ALREADY unsaveable before the move, which is precisely why it
-      needed remapping rather than re-declaring: a package WITH a source reads ``rebuilt``
-      and never reaches the engine;
-    * the remap needs real cell polygons so it refuses a ``mf.grid_ref`` target, leaving
-      a built grid object in ``grid=`` -- itself unsaveable (ledger 257).
-
-    Both have documented answers. This pins the combination, because nothing else here
-    would fail if the second ``with_grid`` stopped preserving the remap -- which it does
-    only because ``REMAPPED_FROM`` is tested BEFORE the cellwise branch in
-    ``package_move``.
+    ``to_dict`` refuses an ``ndarray`` (ledger 193) -- and the model was ALREADY
+    unsaveable before the move, which is precisely why it needed remapping rather than
+    re-declaring: a package WITH a source reads ``rebuilt`` and never reaches the engine.
+    The route: remap straight onto ``mf.grid_ref(key)`` with ``library=project`` (ledger
+    610; it took a built grid and a second ``with_grid`` to re-point before),
+    then ``add_package`` the array and ``mf.ref`` it.
     """
 
     fine, coarse = meshes
@@ -566,9 +558,9 @@ def test_a_remapped_model_CAN_be_saved_by_the_documented_route(meshes, lens, tmp
     project.add_grid("mesh", coarse)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        moved = _sim(fine, k=lens).with_grid(coarse, remap=True)
-        # Re-point at the library entry. The verdict and the values both have to survive.
-        repointed = moved.with_grid(mf.grid_ref("mesh"))
+        repointed = _sim(fine, k=lens).with_grid(
+            mf.grid_ref("mesh"), remap=True, library=project
+        )
 
     # `library=`: the repointed model's grid is a `grid_ref`, which the report resolves.
     assert _verdict(repointed, "npf", library=project) == "remapped"
@@ -594,12 +586,13 @@ def test_a_remapped_model_CAN_be_saved_by_the_documented_route(meshes, lens, tmp
 
 
 def test_the_remap_refuses_a_grid_ref_target_by_name(meshes, lens):
-    """It needs polygons, and a GridRef is resolved at build. Refusing beats skipping.
+    """It needs polygons, and a GridRef is read only through ``library=``. Refusing beats skipping.
 
     Silently skipping would leave the package stamped `unverifiable` while the caller had
-    asked for a remap -- ledger 295's failure again.
+    asked for a remap -- ledger 295's failure again. With ``library=project`` the ref is
+    read (ledger 610).
     """
 
     fine, _ = meshes
-    with pytest.raises(TypeError, match="not GridRef"):
+    with pytest.raises(TypeError, match="library=project.*not GridRef"):
         _sim(fine, k=lens).with_grid(mf.grid_ref("mesh"), remap=True)

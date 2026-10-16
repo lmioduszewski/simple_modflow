@@ -160,14 +160,19 @@ def test_a_build_naming_no_workspace_meshes_beside_the_simulation(boundary, cwd)
 
 
 @pytest.mark.parametrize(
-    "call, verb",
+    "call, opening",
     [
-        (lambda model, ref: model.with_grid(ref, remap=True), "with_grid(remap=True)"),
-        (lambda model, ref: model.coverage_on(ref), "coverage_on"),
+        # `with_grid` takes `library=`, so its refusal names it (ledger 610);
+        # `coverage_on` takes none, so its refusal still names `project.grid(key)`.
+        (
+            lambda model, ref: model.with_grid(ref, remap=True),
+            "with_grid(remap=True) needs the new mesh's cell polygons",
+        ),
+        (lambda model, ref: model.coverage_on(ref), "coverage_on needs a built grid or a GridSpec"),
     ],
     ids=["remap", "coverage"],
 )
-def test_the_refusal_names_the_call_that_reached_it(boundary, tmp_path, call, verb):
+def test_the_refusal_names_the_call_that_reached_it(boundary, tmp_path, call, opening):
     """It said "coverage needs ..." when the remap reached it."""
 
     old = _spec(boundary).resolve(workspace=tmp_path / "old")
@@ -176,4 +181,4 @@ def test_the_refusal_names_the_call_that_reached_it(boundary, tmp_path, call, ve
     with pytest.raises(TypeError) as caught:
         call(model, mf.grid_ref("refined"))
 
-    assert str(caught.value).startswith(f"{verb} needs a built grid or a GridSpec")
+    assert str(caught.value).startswith(opening)

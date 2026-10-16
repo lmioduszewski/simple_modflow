@@ -66,7 +66,19 @@ a ref is no longer read as itself, which said `unchanged` for every one and let 
 stamped on the REF (the library package is shared and is never changed) and the build
 refuses it; a move that must CHANGE what a ref names -- `remap=True` carrying its array, an
 eager `.gpkg` re-declared -- puts the changed copy inline in place of the ref, and its
-`move_report` row says so.
+`move_report` row says so. Under `remap=True` the new grid may be `mf.grid_ref(key)` too,
+read through the same `library=`; a discretization holding its own mesh
+(`mf.disv(<result>)`, or a ref to one) is never carried -- it reads `stale` and is swapped
+with `with_packages(<new dis>, slot=...)` (ledger 610).
+
+**After `Project.load`, a model declared on `context=ModelContext(grid=...)` must get its
+mesh back before it moves.** A save keeps no grid, only its fingerprint (ledger 257), and
+`with_grid`/`move_report` now REFUSE such a model, naming the fingerprint -- before, the
+simulation tier skipped it and the model tier moved it unstamped, building the old mesh's
+per-cell arrays on the new one. Register the grid it was built on and re-attach it, which
+moves nothing: `project.add_grid(key, mf.GridSpec.from_object(vor))`, then
+`.with_grid(mf.grid_ref(key), library=project)` (ledger 610). Declaring the model
+on `grid=mf.grid_ref(key)` in the first place avoids the step.
 
 **Swapping the grid re-maps only what was declared LAZILY.** A GIS-driven helper given
 a `context=` (`mf.drn.gpkg(path, context=ctx, …)`, `mf.rch(context=ctx, …)`,

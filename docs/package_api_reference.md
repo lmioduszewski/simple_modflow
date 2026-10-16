@@ -1334,8 +1334,17 @@ project that does not own the run, a simulation fork whose other packages are no
 what the run ran (an inline package or kept library key edited since; ledger
 562 -- `simulation=False` registers the packages alone), and an existing
 key without `overwrite=True`. A
-calibrated array moves `unverifiable` and goes through `with_grid(remap=True)` (ledger
-300); a calibrated list package keeps its pin, drops its `.gpkg` move recipe and reads
+calibrated array moves `unverifiable` and goes through `with_grid(remap=True,
+library=project)` (ledger 300, ledger 610) -- the registered package is carried as
+an inline copy, and the discretization beside it reads `stale` and is swapped:
+
+```python
+moved = project.simulations["s/cal"].with_grid(mf.grid_ref("fine"), remap=True, library=project)
+project.add_package("npf/base/cal/fine", moved.model("m").package("npf"))   # save it by ref
+moved = moved.with_packages(mf.ref("dis/fine"), slot="dis/base", on="m")
+```
+
+A calibrated list package keeps its pin, drops its `.gpkg` move recipe and reads
 `stale`. A `packages.fork`/`edit`/`with_options` override over an option a RECIPE fills
 (`mf.Polygons`, `mf.RasterValues`, a product or per-layer list of them) now REPLACES the
 recipe, named in the stamp's `replaced_inputs` (ledger 561); it built
@@ -1407,6 +1416,24 @@ temporary directory -- where before a deferred-grid model had nothing to measure
 per-cell arrays moved as `unchanged`. A stamp is never overwritten by a later move: the
 values still mean the mesh they were declared on.
 
+**A model a save stripped of its mesh is REFUSED by a move** (ledger 610). A save
+keeps no `context.grid` (ledger 257), only its 16-character fingerprint, so after
+`Project.load` such a model holds no mesh to measure against -- and moving it read its
+per-cell arrays `unchanged` (the simulation tier skipped it and returned it unmoved; the
+model tier built the OLD mesh's K on a new mesh of the same size). `with_grid`,
+`move_report` and the simulation tier now refuse it, naming the fingerprint. Give it its
+mesh back first, as a re-attach that moves nothing:
+
+```python
+project.add_grid("tentrails/ss", mf.GridSpec.from_object(mf.load_run(run_dir).model("tentrails").vor))
+sim = project.simulations["ss"].with_grid(mf.grid_ref("tentrails/ss"), library=project)
+```
+
+A re-attach is accepted only when the grid fingerprints as recorded; the check is
+connectivity-only, so a rescaled copy of the mesh passes (ledger 257's limit). A model
+whose context records no fingerprint -- one that never had a mesh -- still takes its
+first grid freely.
+
 ### Moving a calibrated array to a new mesh — `with_grid(remap=True)`
 
 ```python
@@ -1426,14 +1453,25 @@ The OLD mesh is the one the model was declared on, however it was declared --
 `move_report` also resolve a DEFERRED one (ledger 597), while `coverage_on` and
 `run.resolution` read only a mesh already in hand and measure nothing on a deferred grid
 (ledger 599). A `GridSpec` given as the NEW grid is meshed for the overlay in a temporary
-directory, and again at build.
+directory, and again at build; it and an `mf.grid_ref(key)` are read through `library=`
+(the ref as `library.grid(key)`, a recipe or a reloaded library pickle anchored to the
+project root), so the remap lands on a grid a save keeps (ledger 610). A
+`grid_ref` without `library=` raises `TypeError` naming it.
+
+**What is never carried** (ledger 610): a discretization holding its own mesh --
+`mf.disv(<result>)`, a `.flopy` DISV, a ref to one -- whose `top`/`botm`/`idomain` ARE the
+old mesh. It reads `stale`, beside the carried arrays, and is replaced with
+`with_packages(<new dis>, slot=...)`; forgotten, the build refuses it. Before, the engine
+was asked to average it and refused the whole move, so no model built with
+`mf.disv(<result>)` could be remapped at all. Nor a package named in `grid_free=`: it moves
+untouched, as the report says.
 
 | argument | meaning |
 | --- | --- |
 | `remap` | opt-in. The default does not move — a remap is the inferior route wherever a source exists |
 | `rule` | the CONDUCTIVITY rule: `"geometric"` (default), `"mean"`, `"harmonic"`, `"majority"` |
 | `uncovered` | `"nearest"` (default, fills and warns in detail) or `"raise"` |
-| `library` | the project the model's `mf.ref`s name: a ref'd array is carried as an INLINE copy (above) |
+| `library` | the project the model's `mf.ref`s name: a ref'd array is carried as an INLINE copy (above) -- and the NEW `grid_ref` or library grid is read through it |
 
 `rule=` and `uncovered=` are checked at the call: an unknown value raises even when no
 package holds an array to carry, and either one given without `remap=True` raises naming

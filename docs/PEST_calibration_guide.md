@@ -1382,7 +1382,11 @@ copies -- not from the library as it is now, and forks to new keys: earlier runs
 file the values came from. The forked simulation keeps the library's OTHER packages, so it
 is refused when one of them was edited since the run (ledger 562):
 `simulation=False` registers the calibrated packages alone, to fork by hand. A calibrated array is `unverifiable` on a grid move, and
-`with_grid(remap=True)` is its route (ledger 300). Written back as resolved arrays and
+`with_grid(<new grid>, remap=True, library=project)` is its route (ledger 300): the
+registered package is carried as an inline copy, the new grid may be `mf.grid_ref(key)`,
+and an eager discretization beside it reads `stale` and is swapped with
+`with_packages(mf.ref(<new dis>), slot=...)` (ledger 610). Register the carried
+copy (`project.add_package`) and `mf.ref` it to save it. Written back as resolved arrays and
 records; a RECIPE form -- a pilot-point multiplier recipe on a K recipe -- is not built.
 A lake's `bedleak` and a stream's `rhk` (`style="feature"`) come back the same way, record
 by record; a `NONE` bedleak on a lake the calibration did not select stays `NONE`

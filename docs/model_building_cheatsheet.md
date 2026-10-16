@@ -1231,7 +1231,12 @@ rebuilt the same 3-layer model. §8 has the full persistence rules.
 **Moving such a model needs the library too:** `sim.with_grid(new, library=project)`
 and `sim.move_report(library=project)`. A move classifies each `mf.ref` as the package it
 NAMES -- a library array reads `unverifiable` and is refused at build, exactly like the
-inline one -- and refuses naming `library=` without it (ledger 597).
+inline one -- and refuses naming `library=` without it (ledger 597). After
+`Project.load` the model has lost its mesh (a save keeps only its fingerprint), so a move
+is refused until it gets it back: `project.add_grid(key, mf.GridSpec.from_object(vor))`
+and `.with_grid(mf.grid_ref(key), library=project)` first. Under `remap=True` the
+`disv/base` ref is never carried -- it reads `stale` -- and is swapped with
+`with_packages(mf.ref("disv/fine"), slot="disv/base")` (ledger 610).
 
 ---
 

@@ -680,6 +680,28 @@ def cellwise_options(options, ncpl: int | None = None) -> tuple[str, ...]:
     return tuple(key for key, value in options.items() if per_cell(value))
 
 
+#: The arrays ``with_grid(remap=True)`` carries -- restated from the overlay engine's
+#: ``INTENSIVE_ARRAYS | CONDUCTIVITY_ARRAYS`` (``modflow/mf6/grid/remap.py``, import layer
+#: 2, which this layer cannot import) so a move's refusal names ``remap=True`` only for a
+#: package the engine would carry; a test holds the two together (ledger 610).
+REMAPPABLE_ARRAYS: frozenset[str] = frozenset({"k", "k22", "k33", "strt", "ss", "sy"})
+
+
+def _describes_its_mesh(package) -> bool:
+    """Whether ``package`` IS a mesh: a discretization holding its own ``cell2d``/``vertices``.
+
+    The ONE rule for it, read by :func:`package_move` (which calls such a package
+    ``stale``) and by ``with_grid(remap=True)``, which never carries one: its
+    ``top``/``botm``/``idomain`` are one value per cell, but they ARE the old mesh, not
+    data on it, and asking the overlay engine to average them refused the whole move on
+    every model built with ``mf.disv(<result>)`` -- the only shape a Ten Trails run has
+    (ledger 610).
+    """
+
+    options = getattr(package, "options", None) or {}
+    return any(key in options for key in ("cell2d", "vertices", "ncpl"))
+
+
 def package_move(
     package, *, grid_free: tuple[str, ...] = (), ncpl: int | None = None
 ) -> tuple[str, str]:
@@ -727,7 +749,7 @@ def package_move(
     options = getattr(package, "options", None) or {}
     inputs = getattr(package, "inputs", None) or {}
     metadata = getattr(package, "metadata", None) or {}
-    if any(key in options for key in ("cell2d", "vertices", "ncpl")):
+    if _describes_its_mesh(package):
         # A hand-written DISV IS the old mesh -- it holds that grid's `cell2d` and
         # `vertices` verbatim. It carries no pin and names no cellid, so both of the
         # tests below miss it, and the first report called it "unchanged".
@@ -974,6 +996,22 @@ def moved_package_complaints(packages) -> list[str]:
         if pin is None:
             continue
         via = metadata.get(MOVED_VIA_REF)
+        carried = _remappable_arrays(package)
+        if carried:
+            # A stamped package holding per-cell ARRAYS the overlay engine serves has a
+            # route the advice below does not name: the move can carry them. Said only
+            # for those, so the sentence never promises what the engine refuses (ledger
+            # 610).
+            spelling = (
+                "with_grid(..., remap=True, library=project)" if via is not None
+                else "with_grid(..., remap=True)"
+            )
+            route = (
+                f" Its values are per-cell arrays ({', '.join(carried)}), so {spelling} "
+                "can carry them instead."
+            )
+        else:
+            route = ""
         if via is not None:
             # Named by the ref the caller typed: the library package is shared, so
             # "re-declare it" means pointing the model at a different one, and
@@ -985,16 +1023,34 @@ def moved_package_complaints(packages) -> list[str]:
                 f"were not resolved against a mesh, so they still mean mesh {pin}. "
                 "Point the model at a package declared for this grid (register one under "
                 f"a new key and `mf.ref` it), or name {via!r} in `grid_free=` if it "
-                "really is mesh-independent."
+                "really is mesh-independent." + route
             )
             continue
         complaints.append(
             f"package {getattr(package, 'name', '?')!r} was moved to this grid by "
-            f"`with_grid`, and its cell numbers were typed rather than resolved, so "
+            f"`with_grid`, and its cell numbers or per-cell values were typed rather than "
+            f"resolved against a mesh, so "
             f"they still mean mesh {pin}. Re-declare it against this grid, or name it "
-            "in `grid_free=` if it really is mesh-independent."
+            "in `grid_free=` if it really is mesh-independent." + route
         )
     return complaints
+
+
+def _remappable_arrays(package) -> tuple[str, ...]:
+    """The per-cell arrays of ``package`` that ``with_grid(remap=True)`` would carry.
+
+    Empty for a package that names cells (a typed cellid has no value to weight) or
+    indexes a sibling's features (a mover), and for one holding none of
+    :data:`REMAPPABLE_ARRAYS` per cell. Read without the old mesh's cell count -- the
+    stamp does not carry it -- so "per cell" is :func:`cellwise_options`' conservative
+    form; a package is stamped only when the exact form already found an array.
+    """
+
+    options = getattr(package, "options", None) or {}
+    metadata = getattr(package, "metadata", None) or {}
+    if metadata.get(INDEXED_PACKAGES) or any(True for _ in _cellids_in(options)):
+        return ()
+    return tuple(name for name in cellwise_options(options) if name in REMAPPABLE_ARRAYS)
 
 
 def _cellids_in(options: dict[str, Any], *, lengths: tuple[int, ...] = (2, 3)):
@@ -3054,6 +3110,7 @@ __all__ = [
     "dropped_context_fields",
     "LAKE_CONNECTIONS",
     "LAKE_RULES",
+    "REMAPPABLE_ARRAYS",
     "bed_tolerance",
     "excavation_cells",
     "grid_pin",

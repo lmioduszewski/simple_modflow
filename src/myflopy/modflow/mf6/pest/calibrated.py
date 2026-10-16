@@ -908,8 +908,12 @@ class CalibratedInputs:
         Never edits a key: earlier runs, and :meth:`project.runs.drift()
         <myflopy.workspace.RunLibrary.drift>`, keep what they recorded. The arrays save
         through the library's pickle path; on a later grid move a calibrated array
-        reads ``unverifiable`` and its route is ``with_grid(remap=True)`` (ledger 300),
-        while a list package keeps its pin and reads ``stale`` (re-declare it). Every
+        reads ``unverifiable`` and its route is ``with_grid(<new grid>, remap=True,
+        library=project)`` (ledger 300) -- the new grid may be ``mf.grid_ref(key)``, the
+        array is carried as an inline copy to register and ``mf.ref``, and an eager
+        discretization beside it reads ``stale`` and is swapped with
+        ``with_packages(..., slot=)`` (ledger 610) -- while a list package keeps
+        its pin and reads ``stale`` (re-declare it). Every
         refusal is checked before anything is registered, the simulation fork included.
 
         The forked simulation is the LIBRARY's entry under the run's simulation name,

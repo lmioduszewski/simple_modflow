@@ -1680,16 +1680,21 @@ ten reached cells came back NaN, three ACTIVE on the new mesh.
 `REMAPPED_FROM` INSTEAD of `MOVED_FROM` (`moved_package_complaints` fires on that alone, so
 leaving it refuses the fix) and do NOT clear `PIN_VOIDED`; a voided package is not remapped
 at all.
-**Saving a remapped model takes three steps, and that is the whole cost** -- an earlier
+**Saving a remapped model takes two steps, and that is the whole cost** -- an earlier
 draft of ledger 300 said it could not be saved at all, which was wrong. The arrays are
 ndarrays (`to_dict` refuses them, ledger 193) and **the model was already unsaveable before
 the move** -- which is why it needed remapping rather than re-declaring. The route, pinned
-by a test: `with_grid(<built grid>, remap=True)`, then `with_grid(mf.grid_ref(key))` to
-re-point (the `remapped` verdict and the arrays survive, because `REMAPPED_FROM` is tested
-before the cellwise branch; reading the report on that `grid_ref` model takes
-`library=project`, ledger 597), then `add_package` the array and `mf.ref` it. A `grid_ref`
-target is refused for the remap itself: it needs real polygons.
-**NOT built:** collapsing that into one call, `runs.drift()` telling a remap from an edit
+by a test: `with_grid(mf.grid_ref(key), remap=True, library=project)` -- the new grid is
+read through the library (ledger 610; it was refused and needed a built grid plus a
+second re-pointing move) -- then `add_package` the array and `mf.ref` it.
+**A discretization is never remapped, nor a `grid_free=` name, and a model a save stripped
+of its mesh is REFUSED by a move** (ledger 610): an eager `mf.disv(<result>)` reads
+`stale` beside the carried arrays and is swapped with `with_packages(..., slot=)` (it used
+to refuse the whole remap); a model whose saved context records a `grid_pin` and holds no
+grid is re-attached first (`add_grid` + `with_grid(mf.grid_ref(key), library=project)`,
+which moves nothing when the fingerprint matches) -- the simulation tier skipped it and the
+model tier built the OLD mesh's K on a same-size mesh.
+**NOT built:** a one-call verb for it, `runs.drift()` telling a remap from an edit
 (the values move the digest, the stamp does not), hand-typed list BCs (no per-cell values
 to weight), and `uzf`/`sfr`/`lak`/`hfb.line` plus the eager array-form `rch`/`evt`
 (measured `stale`, not `unverifiable` -- they carry a pin, so re-declaration is their route).
