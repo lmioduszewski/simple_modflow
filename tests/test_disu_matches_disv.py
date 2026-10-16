@@ -25,6 +25,7 @@ polygon centroid), by hand on every connection of the irregular grid and the qua
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 import io
 import warnings
@@ -207,7 +208,7 @@ def test_cl12_is_each_cells_own_side_measured_from_its_disv_centre(mesh, request
         assert asymmetry > 0.1
 
 
-def test_calculate_distance_is_not_the_connection_length_and_says_so():
+def test_calculate_distance_is_not_the_connection_length_and_says_so(monkeypatch):
     """``calculate_distance`` is the pre-2025 rule -- a polygon CENTROID to the nearest point
     of the shared boundary -- kept public, so its docstrings must not read as MF6's
     per-side length (ledger 328). Their examples run, and state the difference."""
@@ -224,6 +225,13 @@ def test_calculate_distance_is_not_the_connection_length_and_says_so():
     assert cl12[1] == 0.75                                           # MF6's, from (0.25, 0.5)
     for function in (geometry.calculate_distance, VoronoiGridPlus.calculate_distance):
         assert "NOT MODFLOW 6's connection length" in " ".join(function.__doc__.split()), function
+    # doctest writes the interpreter-wide ``builtins._``: its display hook stores each
+    # example's value there and every run ends with ``builtins._ = None``. Once any test
+    # has imported GRASS that is GRASS's translation function, which its own
+    # ``setup.finish()`` calls, so leaving it None broke every later contour
+    # interpolation in the session (``'NoneType' object is not callable``). Restored at
+    # teardown, or removed when it was absent.
+    monkeypatch.setattr(builtins, "_", getattr(builtins, "_", None), raising=False)
     runner = doctest.DocTestRunner(optionflags=doctest.ELLIPSIS)
     finder = doctest.DocTestFinder()
     for subject in (geometry.calculate_distance, VoronoiGridPlus.calculate_distance,
