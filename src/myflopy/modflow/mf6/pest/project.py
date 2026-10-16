@@ -344,7 +344,7 @@ def _copy_run_outputs(source: Path, target: Path) -> list[str]:
         The files copied, relative POSIX paths.
     """
 
-    inputs, _outside, written, _written_outside = _scan_simulation_inputs(source)
+    inputs, _outside, written, _written_outside, _owners = _scan_simulation_inputs(source)
     inputs = {path.as_posix() for path in inputs}
     copied = []
     for item in sorted(source.iterdir()):
