@@ -32,7 +32,7 @@ After (ledger 610)::
     remap onto mf.grid_ref('new'), library=        dis/old stale, npf remapped
     reloaded, re-attached, remap=True              layer-0 K max 1000.0 (inactive cells hold 1000)
 
-The last row was measured on the lane's first commit (fdbab145), where a re-attach could
+The last row was measured on the lane's first commit (7ebc346b), where a re-attach could
 reach the remap at all; after its review it reads the old mesh's activity off the DISV::
 
     reloaded, re-attached, remap=True              layer-0 K max 1.0 (inactive cells hold 1000)
