@@ -756,7 +756,12 @@ the original's arrays.
 including bare MF6 workspaces with no manifest. `run.model_options` returns the MODEL-level options (`NEWTON`, `print_flows`, ...) as `mf.gwf(...)` keyword arguments, so rebuilding specs from a workspace does not silently drop them (ledger 286); an EMPTY `newtonoptions` (`""`/`[]`), which FloPy writes as no option, is left out rather than read as `NEWTON` (ledger 450). `run.outcome` is what **MF6**
 reported in `mfsim.lst` (`normal`/`failed`/`incomplete`/`absent`/`superseded`),
 which is a different axis from `run.status`, what **myflopy** did;
-`run.reconcile()` adopts the verdict. `project.runs.drift()` reports which
+`run.reconcile()` adopts the verdict. `run.inputs` (an `InputsVerdict`, and the
+summary's `inputs` column) says whether the run's MF6 input files are still what its
+record -- `run.spec`, frozen snapshot, library copies -- writes: `ok`/`edited` (naming
+each file and how)/`unfingerprinted`/`unwritten`/`no record`; `execute()` runs the
+FILES (a run holding nothing opens them), and `run.build()` first is the one spelling
+that puts the record over them (ledger 611). `project.runs.drift()` reports which
 library packages a run used have changed since it ran. `project.save()` returns a
 `SaveReport`, not a path.
 
@@ -1328,7 +1333,10 @@ returns a `CalibratedInputs`:
 Refused by name: an unknown realization (`base` naming `best(criterion="min_phi")`), an
 iteration not this run's, a template built before the parameter records (rebuild with
 `cal.build()`), a tied parameter, a replay that fails (its stderr in the message), a run
-with no frozen snapshot, a record on another cell (the template is not this run's -- a
+with no frozen snapshot, a run whose input file of a package the calibration substitutes
+is not what its record writes (`run.inputs`; PEST calibrated the files -- any departing
+file refuses the simulation fork, naming `simulation=False`; ledger 611), a
+record on another cell (the template is not this run's -- a
 boundname compared without regard to case, since FloPy reads it lower-cased), a
 project that does not own the run, a simulation fork whose other packages are no longer
 what the run ran (an inline package or kept library key edited since; ledger

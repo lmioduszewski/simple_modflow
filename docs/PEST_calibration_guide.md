@@ -1381,7 +1381,13 @@ copies -- not from the library as it is now, and forks to new keys: earlier runs
 `project.runs.drift()` are untouched, and drift's `source` column follows the parameter
 file the values came from. The forked simulation keeps the library's OTHER packages, so it
 is refused when one of them was edited since the run (ledger 562):
-`simulation=False` registers the calibrated packages alone, to fork by hand. A calibrated array is `unverifiable` on a grid move, and
+`simulation=False` registers the calibrated packages alone, to fork by hand. PEST
+calibrated the run's FILES (a build copies them, ledger 356), so a run whose files are
+not what its record writes is refused too (ledger 611): `packages()` when a
+file of a package it substitutes departs, the simulation fork when any file does --
+`project.runs[<run>].inputs` says which and how (a hand-edited TDIS, a FloPy edit
+written). A run written before runs recorded their inputs is checked by building and
+writing its record beside its files. A calibrated array is `unverifiable` on a grid move, and
 `with_grid(<new grid>, remap=True, library=project)` is its route (ledger 300): the
 registered package is carried as an inline copy, the new grid may be `mf.grid_ref(key)`,
 and an eager discretization beside it reads `stale` and is swapped with

@@ -10,6 +10,12 @@ a real project: four runs, all reading ``written``/``None``; three had reached
     ``status`` is myflopy's verb. ``outcome`` is MF6's verdict.
     Two axes; never collapse them.
 
+It also holds the two rules a run's RECORD is checked against its FILES by (ledger
+611): which files MF6 reads (:func:`_scan_simulation_inputs`, the walk a PEST
+build's staging copy and ``stale`` share) and how two written simulations are compared
+(:func:`written_differences`), plus the verdict ``run.inputs`` returns
+(:class:`InputsVerdict`).
+
 This module is deliberately stdlib-only and imports nothing from myflopy, so it
 sits at the bottom of the import graph and adds no deferred import to
 ``workspace``.
@@ -17,12 +23,19 @@ sits at the bottom of the import graph and adds no deferred import to
 
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["ListingOutcome", "read_listing_outcome", "pest_tree_root"]
+__all__ = [
+    "InputsVerdict",
+    "ListingOutcome",
+    "pest_tree_root",
+    "read_listing_outcome",
+    "written_differences",
+]
 
 # PEST calibration markers, DUPLICATED from myflopy.modflow.mf6.pest.runs rather
 # than imported. That module is import layer 0 and could be imported from here
@@ -81,8 +94,11 @@ class ListingOutcome:
         Whether any MF6 input file is NEWER than the listing. A listing that
         predates its inputs describes a superseded run -- its verdict is real but
         no longer about what is on disk now. The inputs are the files the
-        workspace's own name files declare, so with no ``mfsim.nam`` this reads
-        ``False`` ("cannot tell"). Default ``False``.
+        workspace's own name files lead MF6 to read -- their entries and the
+        ``FILEIN`` and ``OPEN/CLOSE`` files those name (:func:`_scan_simulation_inputs`,
+        ledger 611) -- so with no ``mfsim.nam`` this reads ``False`` ("cannot
+        tell"). It compares times, not contents: whether the files still say what the
+        run's record says is ``run.inputs``. Default ``False``.
     """
 
     outcome: str
@@ -153,43 +169,173 @@ def pest_tree_root(workspace: Path, root: Path) -> Path | None:
         current = current.parent
 
 
-def _input_files(workspace: Path) -> set[Path]:
-    """The MF6 input files of a workspace, as its own name files declare them.
+#: Name-file blocks whose entries name an INPUT file in their second field: the
+#: simulation name file's ``timing``/``models``/``exchanges``/``solutiongroup`` and a
+#: model name file's ``packages``. Never ``options``, whose ``LIST`` names an OUTPUT
+#: (read as one by the output scan, ledger 453).
+_NAME_FILE_BLOCKS = frozenset({"timing", "models", "exchanges", "solutiongroup", "packages"})
 
-    ``mfsim.nam`` names the TDIS file, each model's name file and the solution
-    files; a model name file then names its package files. Every whitespace
-    token in those that resolves to a real file IS an input -- MF6 says so
-    itself. Output paths (``.hds``, ``.cbc``) are named INSIDE package files, not
-    in the name files, so they never appear here.
+#: The file type opening a name-file entry -- ``TDIS6``, ``gwf6``, ``GWF6-GWT6``,
+#: ``ims6``, ``DISV6``, ``OBS6`` ... -- which a solution group's ``MXITER 2`` is not.
+_MF6_FILE_TYPE = re.compile(r"(?i)^[a-z]+6(-[a-z]+6)?$")
 
-    Returns an empty set when there is no ``mfsim.nam``, which callers read as
-    "cannot tell" rather than "nothing changed".
+#: One field of an MF6 input line: a quoted name (spaces allowed) or a bare word.
+_MF6_FIELD = re.compile(r"'[^']*'|\"[^\"]*\"|\S+")
+
+#: A file an MF6 input names to READ: ``FILEIN <name>`` (TS6, OBS6, TAS6, TAB6, ATS6,
+#: SPC6, HPC6, FMI's flows ...) or an external array or list, ``OPEN/CLOSE <name>``.
+#: Never ``FILEOUT``, which names an output.
+_MF6_INPUT_REFERENCE = re.compile(
+    r"(?i)(?<![\w/])(FILEIN|OPEN/CLOSE)\s+('[^']*'|\"[^\"]*\"|\S+)"
+)
+
+#: A file an MF6 input names to WRITE: ``FILEOUT <name>`` (OC's head and budget
+#: files, an OBS6 continuous block, a budget CSV, LAK/SFR stage ...).
+_MF6_OUTPUT_REFERENCE = re.compile(r"(?i)(?<![\w/])FILEOUT\s+('[^']*'|\"[^\"]*\"|\S+)")
+
+
+def _mf6_field(token: str) -> str:
+    """One MF6 field with its quotes removed."""
+
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return token[1:-1]
+    return token
+
+
+def _mf6_text(path: Path) -> str | None:
+    """``path`` as text with MF6's comments removed, or ``None`` for a binary file."""
+
+    data = path.read_bytes()
+    if b"\0" in data[:8192]:
+        return None
+    # Cut only the lines that carry a comment: a regex split per line cost ~1 s over the
+    # 200,000 lines of a 20,323-cell model's arrays, where the scan is read on every
+    # `run.outcome` and `run.inputs` (ledger 611).
+    return "\n".join(
+        line.split("#", 1)[0].split("!", 1)[0] if ("#" in line or "!" in line) else line
+        for line in data.decode("utf-8", errors="replace").splitlines()
+    )
+
+
+
+
+def _scan_simulation_inputs(
+    sim_ws: str | Path,
+) -> tuple[
+    list[Path], list[tuple[str, str]], list[Path], list[tuple[str, str]], dict[Path, Path]
+]:
+    """Every file MODFLOW 6 reads in ``sim_ws``, followed from ``mfsim.nam`` as MF6 opens them.
+
+    The ONE rule for "the files MF6 reads" (ledger 611): a PEST build's staging
+    copy (``pest.project._simulation_input_files``, ledger 383), a listing's ``stale``
+    flag and a run's record-against-files check (``Run.inputs``) all walk it. Each
+    name-file entry (TDIS, each model's name file and its packages, exchanges,
+    solutions), each ``FILEIN`` a scanned file names (TS6, OBS6, TAS6, TAB6, ATS6,
+    SPC6, HPC6, FMI's flow files ...) and each ``OPEN/CLOSE`` external array or list --
+    names MF6 resolves against the directory it runs in. A ``FILEIN`` file is scanned
+    in turn; an ``OPEN/CLOSE`` file holds data and is not.
+
+    Parameters
+    ----------
+    sim_ws : str or pathlib.Path
+        The simulation directory, holding ``mfsim.nam``.
+
+    Returns
+    -------
+    tuple
+        Five items: the input files (relative to ``sim_ws``, ``mfsim.nam`` first, each
+        once); the RELATIVE input names leading outside ``sim_ws``, each with what names
+        it; the outputs (``FILEOUT``, a model's ``LIST``) written inside, relative; those
+        written outside, with what names them; and each input file's OWNER -- the
+        name-file entry that leads to it (a package file for its ``FILEIN``/``OPEN/CLOSE``
+        files, every name-file entry for itself).
     """
 
-    root = workspace / "mfsim.nam"
-    if not root.is_file():
-        return set()
-    inputs: set[Path] = set()
-    pending = [root]
+    root = Path(sim_ws)
+    found: dict[Path, Path] = {}
+    outside: list[tuple[str, str]] = []
+    written: dict[Path, None] = {}
+    written_outside: list[tuple[str, str]] = []
+    # (relative name, how the file is read, what it is): "simulation" / "model"
+    # name files are read for their blocks, "input" files scanned for
+    # FILEIN/OPEN/CLOSE, "data" files (OPEN/CLOSE) copied unread.
+    # The fourth item is the owner: the name-file entry the file belongs to, ``None``
+    # for a name-file entry itself (it owns itself).
+    pending: list[tuple[str, str, str, Path | None]] = [
+        ("mfsim.nam", "simulation", "mfsim.nam", None)
+    ]
+
+    def _record_output(name_written: str, owner: str) -> None:
+        """File an output name as written inside ``sim_ws`` or outside it."""
+
+        normal = Path(os.path.normpath(name_written))
+        if normal.is_absolute() or normal.parts[:1] == ("..",):
+            written_outside.append((name_written, owner))
+        else:
+            written[normal] = None
+
     while pending:
-        current = pending.pop()
-        if current in inputs:
+        name, kind, owner, anchor = pending.pop(0)
+        relative = Path(os.path.normpath(name))
+        if relative.is_absolute() or relative in found:
             continue
-        inputs.add(current)
-        try:
-            text = current.read_text(encoding="utf-8", errors="replace")
-        except OSError:  # unreadable -- what we already collected still stands
+        if relative.parts[:1] == ("..",):
+            outside.append((name, owner))
             continue
-        for token in text.split():
-            candidate = workspace / token
-            if candidate.is_file() and candidate not in inputs:
-                # Only a name file can name further inputs; a package file's
-                # tokens are data, and following them would sweep in outputs.
-                if candidate.suffix.lower() == ".nam":
-                    pending.append(candidate)
-                else:
-                    inputs.add(candidate)
-    return inputs
+        path = root / relative
+        if not path.is_file():
+            continue
+        anchor = relative if anchor is None else anchor
+        found[relative] = anchor
+        if kind == "data":
+            continue
+        text = _mf6_text(path)
+        if text is None:
+            continue
+        if kind in ("simulation", "model"):
+            block = None
+            for line in text.splitlines():
+                fields = [_mf6_field(token) for token in _MF6_FIELD.findall(line)]
+                if not fields:
+                    continue
+                word = fields[0].lower()
+                if word == "begin":
+                    block = fields[1].lower() if len(fields) > 1 else None
+                elif word == "end":
+                    block = None
+                elif kind == "model" and block == "options" and word == "list" and len(fields) > 1:
+                    # The model's listing file, the one output named outside a FILEOUT
+                    # (ledger 453): every realization writes it like any other.
+                    _record_output(fields[1], f"LIST in {relative}")
+                elif (
+                    block in _NAME_FILE_BLOCKS
+                    and len(fields) > 1
+                    and _MF6_FILE_TYPE.match(fields[0])
+                ):
+                    entry = fields[0].upper() + (f" {fields[2]!r}" if len(fields) > 2 else "")
+                    pending.append((
+                        fields[1],
+                        "model" if block == "models" else "input",
+                        f"the {entry} entry of {relative}",
+                        None,
+                    ))
+        named_by = "" if kind in ("simulation", "model") else f", named by {owner}"
+        # The two regexes cost ~1 s over a large model's array files, which name no
+        # file at all: look for the keywords first (ledger 611).
+        lowered = text.lower()
+        names_input = "filein" in lowered or "open/close" in lowered
+        for keyword, token in (_MF6_INPUT_REFERENCE.findall(text) if names_input else ()):
+            pending.append((
+                _mf6_field(token),
+                "input" if keyword.upper() == "FILEIN" else "data",
+                f"{keyword.upper()} in {relative}{named_by}",
+                anchor,
+            ))
+        for token in (_MF6_OUTPUT_REFERENCE.findall(text) if "fileout" in lowered else ()):
+            _record_output(_mf6_field(token), f"FILEOUT in {relative}{named_by}")
+    return list(found), outside, list(written), written_outside, dict(found)
+
+
 
 
 def _is_stale(listing: Path) -> bool:
@@ -198,8 +344,10 @@ def _is_stale(listing: Path) -> bool:
     A listing older than its inputs describes a superseded run -- the verdict is
     real, but no longer about what is on disk now.
 
-    The input set comes from the workspace's own name files rather than from a
-    guess about file extensions. An earlier version deny-listed seven output
+    The input set is :func:`_scan_simulation_inputs`' -- the files the workspace's own
+    name files lead MF6 to, ``FILEIN`` and ``OPEN/CLOSE`` files included (it read the
+    name files' entries alone until ledger 611) -- rather than a guess about
+    file extensions. An earlier version deny-listed seven output
     suffixes and treated everything else as an input, so saving a figure or a
     note into a run directory marked the run stale -- and it missed MF6's own
     ``.cbb`` budget file, which is an output it did not list. Measured: adding
@@ -211,7 +359,8 @@ def _is_stale(listing: Path) -> bool:
         listing_time = listing.stat().st_mtime
     except OSError:
         return False
-    for candidate in _input_files(listing.parent):
+    for name in _scan_simulation_inputs(listing.parent)[0]:
+        candidate = listing.parent / name
         try:
             if candidate.stat().st_mtime > listing_time:
                 return True
@@ -330,3 +479,208 @@ def utc_now() -> str:
     """Return an ISO-8601 UTC timestamp, matching the run manifest's format."""
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# -- a run's record against its input files (ledger 611) ------------------
+
+
+@dataclass(frozen=True, slots=True)
+class InputsVerdict:
+    """Whether a run's MF6 input files still say what its record says (``run.inputs``).
+
+    A run folder holds two descriptions of one model: the RECORD -- ``run.spec``, its
+    frozen snapshot (ledger 251), its own library copies (ledger 230) and digests --
+    which a rebuild, ``project.runs.drift()`` and the write-backs read; and the input
+    FILES, which are what MF6 runs (ledger 611).
+
+    Attributes
+    ----------
+    verdict : str
+        One of five words. ``"ok"`` -- every input file is what the record writes and
+        none changed since myflopy last wrote it. ``"edited"`` -- at least one departs
+        (``departs`` says which, and how). ``"unfingerprinted"`` -- the files were
+        written before runs recorded what they wrote, or rewritten from such files:
+        agreement is UNKNOWN, never assumed. ``"unwritten"`` -- the run has not been
+        written since it was prepared or rebuilt, so any files present are an earlier
+        write's. ``"no record"`` -- the workspace has no ``run.json``.
+    departs : dict of str to str, optional
+        Input file (relative to the run folder) to how it departs from the record:
+        ``"edited through FloPy after run.build()"``, ``"edited through FloPy after
+        run.open()"``, ``"changed outside myflopy after its last write"``, ``"added"``
+        (an input the last write did not write) or ``"missing"`` (one it wrote that is
+        gone). Empty unless ``verdict`` is ``"edited"``. Default empty.
+    written_at : str or None, optional
+        ISO-8601 UTC time myflopy last wrote the inputs; ``None`` (the default) when it
+        recorded none.
+    """
+
+    verdict: str
+    departs: dict[str, str] = field(default_factory=dict)
+    written_at: str | None = None
+
+    @property
+    def matches(self) -> bool | None:
+        """``True`` for ``"ok"``, ``False`` for ``"edited"``, ``None`` when unknown.
+
+        ``None`` is not "yes": an unfingerprinted run may or may not agree, and an
+        unwritten one has nothing on disk that is its own.
+        """
+
+        if self.verdict == "ok":
+            return True
+        if self.verdict == "edited":
+            return False
+        return None
+
+    def __repr__(self) -> str:
+        """Compact: the verdict, plus the departing files when there are any."""
+
+        pieces = [f"verdict={self.verdict!r}"]
+        if self.departs:
+            pieces.append(f"departs={self.departs!r}")
+        return f"InputsVerdict({', '.join(pieces)})"
+
+
+#: A number as MF6 reads one: optional sign, digits, a decimal point, and an exponent
+#: in E or (Fortran's) D.
+_MF6_NUMBER = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eEdD][+-]?\d+)?$")
+
+
+def _number_and_unit(token: str) -> tuple[float, float] | None:
+    """``token`` as ``(value, unit of its last written digit)``, or ``None`` for a word."""
+
+    match = _MF6_NUMBER.match(token)
+    if match is None:
+        return None
+    mantissa, exponent = match.group(1), match.group(2)
+    decimals = len(mantissa.split(".", 1)[1]) if "." in mantissa else 0
+    power = int(exponent[1:]) if exponent else 0
+    value = float(token.replace("d", "e").replace("D", "e"))
+    return value, 10.0 ** (power - decimals)
+
+
+def _same_token(files: str, record: str) -> bool:
+    """Whether two MF6 tokens say the same thing (ledger 611's token rule).
+
+    Words compare without regard to case (FloPy writes a loaded keyword in the case it
+    read, and lower-cases a boundname); numbers by VALUE, equal when they differ by no
+    more than half a unit of the coarser token's last written digit -- ``1`` and
+    ``1.00000000`` are one number, ``1`` and ``31.00000000`` are not.
+    """
+
+    if files == record:
+        return True
+    left, right = _number_and_unit(files), _number_and_unit(record)
+    if left is None or right is None:
+        return files.casefold() == record.casefold()
+    tolerance = 0.5 * max(left[1], right[1])
+    return abs(left[0] - right[0]) <= tolerance * (1 + 1e-9)
+
+
+def _blocks(text: str) -> list[tuple[str, list[str]]]:
+    """``text`` as ``(block, tokens)`` pairs, ``BEGIN <block>`` naming each (``""`` outside)."""
+
+    blocks: list[tuple[str, list[str]]] = [("", [])]
+    for line in text.splitlines():
+        fields = [_mf6_field(token) for token in _MF6_FIELD.findall(line)]
+        if not fields:
+            continue
+        word = fields[0].casefold()
+        if word == "begin":
+            blocks.append((" ".join(fields[1:]).upper(), []))
+        elif word == "end":
+            blocks.append(("", []))
+        else:
+            blocks[-1][1].extend(fields)
+    return [(name, tokens) for name, tokens in blocks if tokens or name]
+
+
+def _differences_in(name: str, files: str, record: str) -> list[tuple[str, str, str]]:
+    """``(file, block, what)`` for each block of one text file where the two differ."""
+
+    left, right = _blocks(files), _blocks(record)
+    if [block for block, _ in left] != [block for block, _ in right]:
+        count = sum(len(tokens) for _, tokens in left)
+        other = sum(len(tokens) for _, tokens in right)
+        names, others = [block for block, _ in left], [block for block, _ in right]
+        longer = names if len(names) > len(others) else others
+        first = next(
+            (a for a, b in zip(names, others, strict=False) if a != b),
+            longer[min(len(names), len(others))],
+        )
+        return [(name, first, f"written differently: {count} tokens (files) against "
+                              f"{other} (record), in blocks that do not pair up")]
+    rows: list[tuple[str, str, str]] = []
+    for (block, a), (_, b) in zip(left, right, strict=True):
+        if len(a) != len(b):
+            rows.append((name, block, f"written differently: {len(a)} tokens (files) "
+                                      f"against {len(b)} (record)"))
+            continue
+        differing = [(x, y) for x, y in zip(a, b, strict=True) if not _same_token(x, y)]
+        if not differing:
+            continue
+        shown = "; ".join(f"{x} (files) vs {y} (record)" for x, y in differing[:3])
+        what = f"{len(differing)} of {len(a)} values differ: {shown}"
+        if len(differing) > 3:
+            gaps = [
+                abs(left_[0] - right_[0])
+                for x, y in differing
+                if (left_ := _number_and_unit(x)) and (right_ := _number_and_unit(y))
+            ]
+            if gaps:
+                what += f"; largest absolute difference {max(gaps):.6g}"
+        rows.append((name, block, what))
+    return rows
+
+
+def written_differences(files: str | Path, record: str | Path) -> list[tuple[str, str, str]]:
+    """Every difference between two written simulations, file by file (ledger 611).
+
+    The ONE record-against-files comparison -- ``Run._record_differences``, the full
+    check behind the write-backs, calls it, and a library import of a run must too --
+    with ``files`` a run's own folder and
+    ``record`` its record built and written in a scratch directory. Not in memory --
+    FloPy writes 8 decimals, so a value read back from a file is not the value built --
+    and not text for text: comments are dropped (FloPy stamps the time it wrote), words
+    compare without regard to case and numbers by value to the coarser precision the
+    two were written at (:func:`_same_token`). A binary file compares by bytes.
+
+    Parameters
+    ----------
+    files : str or pathlib.Path
+        The simulation directory holding the files MF6 ran (``mfsim.nam`` and what it
+        leads to, through :func:`_scan_simulation_inputs`).
+    record : str or pathlib.Path
+        A directory holding the record written by FloPy, walked the same way.
+
+    Returns
+    -------
+    list of tuple of (str, str, str)
+        ``(file, block, what)``, the file relative to both directories, the block as
+        ``BEGIN`` names it (``"PERIODDATA"``, ``"PERIOD 1"``; ``""`` for a whole file),
+        and what differs -- the first three differing values, ``"(files)"`` beside
+        ``"(record)"``, or ``"only in the files"`` / ``"only in the record"`` for a file
+        one side does not read. Empty when the two agree.
+    """
+
+    files, record = Path(files), Path(record)
+    ours = _scan_simulation_inputs(files)[0]
+    theirs = _scan_simulation_inputs(record)[0]
+    rows: list[tuple[str, str, str]] = []
+    for name in list(dict.fromkeys([*ours, *theirs])):
+        label = name.as_posix()
+        if name not in theirs:
+            rows.append((label, "", "only in the files"))
+            continue
+        if name not in ours:
+            rows.append((label, "", "only in the record"))
+            continue
+        left, right = _mf6_text(files / name), _mf6_text(record / name)
+        if left is None or right is None:
+            if (files / name).read_bytes() != (record / name).read_bytes():
+                rows.append((label, "", "binary file differs"))
+            continue
+        if left.split() == right.split():
+            continue
+        rows.extend(_differences_in(label, left, right))
+    return rows

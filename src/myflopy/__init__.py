@@ -227,7 +227,7 @@ if TYPE_CHECKING:
         load_mf6_run,
         patch_simulation_plot,
     )
-    from myflopy.run_record import ListingOutcome, read_listing_outcome
+    from myflopy.run_record import InputsVerdict, ListingOutcome, read_listing_outcome
     from myflopy.sources import (
         ArrayProduct,
         BoundarySource,
@@ -363,10 +363,12 @@ _EXPORTS = {
     "Run": ("myflopy.workspace", "Run"),
     "load_run": ("myflopy.workspace", "load_run"),
     # Types a PUBLIC method hands back. `project.save()` returns a SaveReport and
-    # `run.outcome` a ListingOutcome, so without these you get an object whose
-    # type you cannot name without reaching into a submodule.
+    # `run.outcome` a ListingOutcome and `run.inputs` an InputsVerdict, so without
+    # these you get an object whose type you cannot name without reaching into a
+    # submodule.
     "SaveReport": ("myflopy.workspace", "SaveReport"),
     "ListingOutcome": ("myflopy.run_record", "ListingOutcome"),
+    "InputsVerdict": ("myflopy.run_record", "InputsVerdict"),
     "read_listing_outcome": ("myflopy.run_record", "read_listing_outcome"),
     # Types a PUBLIC attribute holds: project.packages/grids/simulations/runs.
     "SpecLibrary": ("myflopy.library", "SpecLibrary"),

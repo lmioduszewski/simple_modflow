@@ -1788,6 +1788,11 @@
       "forecast:KEYWORD_ONLY=None",
       "by_group:KEYWORD_ONLY=True"
     ],
+    "InputsVerdict": [
+      "verdict:POSITIONAL_OR_KEYWORD=<required>",
+      "departs:POSITIONAL_OR_KEYWORD=<factory>",
+      "written_at:POSITIONAL_OR_KEYWORD=None"
+    ],
     "InterpolatedSurface.clip_raster_with_polygon": [
       "polygon:POSITIONAL_OR_KEYWORD=None",
       "buffer:POSITIONAL_OR_KEYWORD=None"
@@ -7172,6 +7177,7 @@
       "flopy_model",
       "frozen",
       "grids",
+      "inputs",
       "load",
       "manifest_path",
       "model",
@@ -7463,6 +7469,7 @@
       "Heads",
       "HoverSpec",
       "HoverStyle",
+      "InputsVerdict",
       "Isopach",
       "LakeConnection",
       "LakeOutlet",

@@ -3,7 +3,8 @@
 The build's staging copy (ledgers 356-357) copied the WHOLE run directory, and
 ``PstFrom`` copies the staging directory into the template -- and pyEMU copies the
 template into every IES worker. It now copies what ``mfsim.nam`` leads MF6 to read
-(``project._simulation_input_files``). This script builds one calibration on the
+(``project._simulation_input_files``, whose walk is ``run_record._scan_simulation_inputs``
+since ledger 611). This script builds one calibration on the
 canonical model's run and sorts what the template holds, on whichever tree is on
 ``PYTHONPATH``:
 
@@ -51,28 +52,35 @@ import tempfile
 import warnings
 from pathlib import Path
 
-#: This checkout's PEST project module, whose input-file rule sorts both columns.
+#: This checkout's PEST project module, whose input-file rule sorts both columns, and the
+#: module the walk behind it lives in since ledger 611 (``run_record``).
 _PROJECT = Path(__file__).resolve().parents[2] / "src/myflopy/modflow/mf6/pest/project.py"
+_RUN_RECORD = Path(__file__).resolve().parents[2] / "src/myflopy/run_record.py"
 
 
 def _input_rule():
     """``_simulation_input_files`` as this checkout defines it, whatever is imported.
 
-    The module's top-level functions and constants are taken by NAME from what
+    The two modules' top-level functions and constants are taken by NAME from what
     ``_simulation_input_files`` reaches -- followed through every name each one uses --
     so a helper split out of it is carried along (a fixed list of names stopped this
-    script when ``_scan_simulation_inputs`` was split out, ledger 444).
+    script when ``_scan_simulation_inputs`` was split out, ledger 444), and so is one
+    moved into ``run_record`` (ledger 611).
     """
 
-    tree = ast.parse(_PROJECT.read_text(encoding="utf-8"))
     defined = {}
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
-            defined[node.name] = node
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    defined[target.id] = node
+    body = []
+    for source in (_RUN_RECORD, _PROJECT):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        body.extend(tree.body)
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                defined[node.name] = node
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        defined[target.id] = node
     wanted, pending = set(), ["_simulation_input_files"]
     while pending:
         name = pending.pop()
@@ -80,7 +88,7 @@ def _input_rule():
             continue
         wanted.add(name)
         pending.extend(n.id for n in ast.walk(defined[name]) if isinstance(n, ast.Name))
-    nodes = [node for node in tree.body if any(defined.get(n) is node for n in wanted)]
+    nodes = [node for node in body if any(defined.get(n) is node for n in wanted)]
     namespace = {"re": re, "os": os, "Path": Path}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(_PROJECT), "exec"), namespace)
     return namespace["_simulation_input_files"]

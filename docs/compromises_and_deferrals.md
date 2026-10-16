@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 610 entries (615 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 611 entries (616 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 611 | A run's record is not its files: `run.inputs` says when they part, and `execute()` never rebuilds the recor... | 2026-10-16 |
 | 610 | `with_grid(remap=True)` carries a library-referenced npf onto a new mesh: a discretization is never carried... | 2026-10-16 |
 | 609 | Lake and SFR targets read their locations' `weight` column, every location weight is checked by the reading... | 2026-10-16 |
 | 608 | A `periods=` group holding the steady period beside transient ones is refused at build; a group of steady p... | 2026-10-16 |
@@ -7914,13 +7915,19 @@ same day, which is the useful part of the result.
         JSON-able package; for an array one, the size of the library's pickle --
         a 72x9,405 float64 recharge array is 5.4 MB. The run folder already holds
         MF6's text input for the same package, which is larger.
-      - **Runs prepared before this have no copies**, and still resolve against
+      - ~~**Runs prepared before this have no copies**, and still resolve against
         the library as it is now -- there is nothing else to build from. It is no
         longer silent: rebuilding one WARNS, naming each key whose current
         version differs from the fingerprint the run recorded, or that was never
         fingerprinted. Writing or executing it then records the versions it used
         and copies them, so from there on it is frozen like a new run and
-        `drift()` tells the truth about its inputs.
+        `drift()` tells the truth about its inputs.~~ -- **RESTATED 2026-10-16
+        (ledger 611):** such a run still resolves against the library as it is
+        now, and rebuilding it still WARNS -- but only `run.build()` rebuilds it now.
+        Reopened without loading (`project.runs[key]`, `load_run(load=False)`),
+        `execute()` runs its FILES as they stand and `write()` refuses over files not
+        known to be its record's; `run.build()` then `write()`/`execute()` records the
+        versions it used and copies them, as before.
       - **A missing or unreadable copy RAISES**, naming the run, key and file.
         It is not replaced from the library, which may now hold something else.
       - **A package that cannot be copied** (neither JSON-encodable nor
@@ -22852,3 +22859,60 @@ same day, which is the useful part of the result.
       not guessed -- and read only once a package is carried. Measured: K = 1000 on the
       inactive half of layer 0 reached the new mesh (max 1000.0) after save, reload and
       re-attach; it now equals the live move's (max 1.0).
+
+611. **A run's record is not its files: `run.inputs` says when they part, and `execute()` never rebuilds the record over them (2026-10-16).**
+      A run folder holds the RECORD (`run.spec`/frozen snapshot, `_library` copies,
+      digests) -- what rebuilds, drifts and writes back -- and the MF6 input FILES -- what
+      runs. Neither replaces the other in silence (the user's calls):
+      - **`execute()` runs files.** It writes the held simulation only when it was never
+        written or changed since last written/opened (an in-memory fingerprint of every
+        dataset, per package file); holding nothing, it OPENS the files and runs them.
+        `run.build()` first is the one spelling that puts the record over the files, and
+        `write()` with nothing held refuses over files not known to match (`edited` or
+        `unfingerprinted`). Files changed under a held simulation are refused, naming
+        `open()` and `write()`.
+      - **A FloPy edit is MARKED and WARNED, never refused:** `write()` records
+        each input file's hash and which files depart (`edited through FloPy after
+        run.build()`/`run.open()`); a file changed afterwards reads `changed outside
+        myflopy after its last write`. `run.inputs` (an `InputsVerdict`, read fresh like
+        `outcome`) and the `runs.summary()` column `inputs` -- ONE name --
+        say `ok`/`edited`/`unfingerprinted`/`unwritten`/`no record`. A run written
+        before this is `unfingerprinted`, never `ok`.
+      - **The write-backs, in ledger 562's shape:**
+        `calibrated().packages()` refuses only when a SUBSTITUTED package's file (or a
+        file it names) departs; the simulation fork refuses on ANY departure, naming
+        `simulation=False`. An unfingerprinted run gets the FULL check: its record
+        (`Run._declared_spec`, library slots restored as `mf.ref`) built and written in a
+        scratch directory and compared token by token -- comments dropped, words without
+        case, numbers by value to the coarser written precision
+        (`run_record.written_differences`, the one comparison a run's library import must share).
+        A hand edit written at a COARSER precision within half its last digit (`1` for
+        `1.4`) is not seen by it; the hash check sees every byte.
+      - **One rule for "the files MF6 reads":** the PEST staging scan moved to
+        `run_record._scan_simulation_inputs` (stdlib, layer 0) and `stale` reads it, so
+        `stale` now sees FILEIN and OPEN/CLOSE files too; it also names each input's
+        owning package file, which is how a departing external array is matched to the
+        package it belongs to.
+      - **Measured on a copy of `sw_mounding_flow`** (38 periods, 20,323 cells, 17 input
+        files; `docs/reproducers/run_record_vs_files.py`, three runs on a shared machine):
+        fingerprint 0.10-0.24 s built / 0.06-0.11 s loaded, hashing the inputs 0.07 s,
+        `execute()`'s own check 0.19-0.40 s, `write()` +0.2-0.4 s on FloPy's ~2.3 s; the
+        full check 3.3-4.2 s (write-back only) and 0 differences.
+        The scan had cost 1.3 s per read -- a regex per line over the arrays -- before it
+        looked for its keywords first; `outcome` reads it too.
+      - **Three FloPy traps the fingerprint absorbs:** FloPy fills a list package's
+        MAXBOUND at WRITE (five Ten Trails packages' fingerprints moved across the first
+        write), so the fingerprint applies `_update_size_defs` first, quietly; an
+        externalized ICELLTYPE comes back int64 for int32, so arrays hash by value; and
+        `get_data()` on a period dataset CREATES a block (ledger 449 -- an STO gained a
+        STEADY-STATE block 0), so period data is read through `written_period_blocks`. A fingerprint is
+        valid within ONE FloPy lineage (a loaded copy differs on every file).
+      - **ss's TDIS split was changed outside myflopy after the write** (`ss.tdis` mtime
+        15:27:10 under a FloPy header of 15:25:50, perlen `1`, `run.json` untouched), so
+        detection reads FILES, not verbs.
+      **Not done:** re-freezing a FloPy-edited simulation into the record (needs D2's
+      FloPy-to-spec half); the reopened `run.model()`'s SECOND FloPy simulation, whose edits
+      `write()` never sees (F2, measured lost); an opened-then-written run trusts FloPy's
+      loader to hold what the files said (IMPLICIT, ledger 326, is the known loss, and is
+      carried); a model whose package files sit in a subdirectory keys its FloPy marks by
+      FloPy's filename while hashes key by the scan's relative path.

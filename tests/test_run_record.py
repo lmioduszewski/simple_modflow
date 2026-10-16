@@ -124,7 +124,7 @@ def test_stale_asks_the_name_files_not_the_file_extension(tmp_path):
     The name files declare the inputs, so they are what gets asked.
     """
 
-    from myflopy.run_record import _input_files
+    from myflopy.run_record import _scan_simulation_inputs
 
     workspace = tmp_path / "run"
     _nam_workspace(workspace)
@@ -133,7 +133,7 @@ def test_stale_asks_the_name_files_not_the_file_extension(tmp_path):
         os.utime(item, (past, past))
     _listing(workspace, _NORMAL_TAIL)          # newest
 
-    assert {f.name for f in _input_files(workspace)} == {
+    assert {f.name for f in _scan_simulation_inputs(workspace)[0]} == {
         "mfsim.nam", "flow.nam", "s.tdis", "flow.dis", "flow.npf",
     }
     assert read_listing_outcome(workspace).stale is False
@@ -154,12 +154,12 @@ def test_a_workspace_without_a_name_file_cannot_tell(tmp_path):
     """No mfsim.nam means no declared inputs, which reads as "cannot tell" --
     not as "nothing changed"."""
 
-    from myflopy.run_record import _input_files
+    from myflopy.run_record import _scan_simulation_inputs
 
     workspace = tmp_path / "run"
     _listing(workspace, _NORMAL_TAIL)
 
-    assert _input_files(workspace) == set()
+    assert _scan_simulation_inputs(workspace)[0] == []
     assert read_listing_outcome(workspace).stale is False
 
 
@@ -177,6 +177,31 @@ def test_inputs_newer_than_the_listing_mark_it_stale(tmp_path):
     package.write_text("BEGIN options\nEND options\n", encoding="utf-8")
     os.utime(package, (time.time() + 60, time.time() + 60))
 
+    assert read_listing_outcome(workspace).stale is True
+
+
+def test_stale_reads_the_inputs_the_pest_build_copies(tmp_path):
+    """One rule for "the files MF6 reads" (ledger 611): ``stale`` read the name
+    files' entries alone, so an external array (OPEN/CLOSE) or a FILEIN file edited after
+    the run left the run reading as current."""
+
+    from myflopy import run_record
+    from myflopy.modflow.mf6.pest import project as pest_project
+
+    assert run_record._scan_simulation_inputs is pest_project._scan_simulation_inputs
+    workspace = tmp_path / "run"
+    _nam_workspace(workspace)
+    (workspace / "flow.npf").write_text(
+        "BEGIN griddata\n  k\n    OPEN/CLOSE  'k.txt'\nEND griddata\n", encoding="utf-8"
+    )
+    (workspace / "k.txt").write_text("1.0\n", encoding="utf-8")
+    past = time.time() - 600
+    for item in workspace.iterdir():
+        os.utime(item, (past, past))
+    _listing(workspace, _NORMAL_TAIL)
+    assert read_listing_outcome(workspace).stale is False
+
+    os.utime(workspace / "k.txt", (time.time() + 60, time.time() + 60))
     assert read_listing_outcome(workspace).stale is True
 
 
@@ -340,6 +365,32 @@ def test_the_runs_library_reports_both_axes(tmp_path):
     assert frame.loc["never_ran", "outcome"] == "absent"
     # status is myflopy's axis and is the same for all four
     assert set(frame["status"]) == {"built"}
+
+
+@pytest.mark.skipif(__import__("shutil").which("mf6") is None, reason="needs mf6")
+def test_the_summary_has_an_inputs_column(tmp_path):
+    """Whether each run's files are what its record writes (``run.inputs``, ledger
+    611), beside MF6's ``outcome`` and ``stale``."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    _run_with(project, "never_ran", None)
+    for name in ("clean", "edited", "old"):
+        workspace = _run_with(project, name, None)
+        Run.reopen(workspace, load=False).write(silent=True)
+    ic = next(project.runs_dir.glob("edited/*.ic"))
+    ic.write_text(ic.read_text().replace("CONSTANT", "constant  "), encoding="utf-8")
+    manifest = project.runs_dir / "old" / "run.json"
+    data = json.loads(manifest.read_text())
+    data["metadata"].pop("inputs")
+    manifest.write_text(json.dumps(data))
+
+    frame = project.refresh_runs().summary().set_index("key")
+
+    assert list(frame.columns).index("inputs") == list(frame.columns).index("stale") + 1
+    assert frame.loc["clean", "inputs"] == "ok"
+    assert frame.loc["edited", "inputs"] == f"edited ({ic.name})"
+    assert frame.loc["old", "inputs"] == "unfingerprinted"
+    assert frame.loc["never_ran", "inputs"] == "—"
 
 
 def test_a_run_without_a_manifest_is_listed_not_hidden(tmp_path):

@@ -545,6 +545,12 @@ before the copies existed -- that one warns when the library no longer holds wha
 it ran with. `mf.load_run` and `Run.reopen` have no library in scope: package
 references resolve from the run's own copies and nothing else.
 
+`build()` is the verb that puts this record back over the run's MF6 files. `execute()`
+runs the FILES: it writes the simulation the run holds only when that changed since it
+was last written or opened, and a run holding nothing opens its files and runs them as
+they stand. `run.inputs` says whether the files are still what the record writes (ledger
+611).
+
 Two cases stay **summary-only** — openable and inspectable, but not rebuildable:
 a manifest written before recipes existed, and a spec whose options embed a raw
 array (which cannot be JSON-encoded). Both keep the readable summary, so the run

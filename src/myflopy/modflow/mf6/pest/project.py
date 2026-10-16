@@ -115,7 +115,7 @@ from myflopy.modflow.mf6.pest.specs import (
 )
 from myflopy.modflow.mf6.pest.summary import PestSettings
 from myflopy.modflow.utils.validators import whole_number
-from myflopy.run_record import read_listing_outcome
+from myflopy.run_record import _scan_simulation_inputs, read_listing_outcome
 
 METADATA_FILENAME = "myflopy_pest_metadata.json"
 
@@ -223,49 +223,6 @@ def _pest_run_slug(name: str) -> str:
     return slug or "pest_run"
 
 
-#: Name-file blocks whose entries name an INPUT file in their second field: the
-#: simulation name file's ``timing``/``models``/``exchanges``/``solutiongroup`` and a
-#: model name file's ``packages``. Never ``options``, whose ``LIST`` names an OUTPUT
-#: (read as one by the output scan, ledger 453).
-_NAME_FILE_BLOCKS = frozenset({"timing", "models", "exchanges", "solutiongroup", "packages"})
-
-#: The file type opening a name-file entry -- ``TDIS6``, ``gwf6``, ``GWF6-GWT6``,
-#: ``ims6``, ``DISV6``, ``OBS6`` ... -- which a solution group's ``MXITER 2`` is not.
-_MF6_FILE_TYPE = re.compile(r"(?i)^[a-z]+6(-[a-z]+6)?$")
-
-#: One field of an MF6 input line: a quoted name (spaces allowed) or a bare word.
-_MF6_FIELD = re.compile(r"'[^']*'|\"[^\"]*\"|\S+")
-
-#: A file an MF6 input names to READ: ``FILEIN <name>`` (TS6, OBS6, TAS6, TAB6, ATS6,
-#: SPC6, HPC6, FMI's flows ...) or an external array or list, ``OPEN/CLOSE <name>``.
-#: Never ``FILEOUT``, which names an output.
-_MF6_INPUT_REFERENCE = re.compile(
-    r"(?i)(?<![\w/])(FILEIN|OPEN/CLOSE)\s+('[^']*'|\"[^\"]*\"|\S+)"
-)
-
-#: A file an MF6 input names to WRITE: ``FILEOUT <name>`` (OC's head and budget
-#: files, an OBS6 continuous block, a budget CSV, LAK/SFR stage ...).
-_MF6_OUTPUT_REFERENCE = re.compile(r"(?i)(?<![\w/])FILEOUT\s+('[^']*'|\"[^\"]*\"|\S+)")
-
-
-def _mf6_field(token: str) -> str:
-    """One MF6 field with its quotes removed."""
-
-    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
-        return token[1:-1]
-    return token
-
-
-def _mf6_text(path: Path) -> str | None:
-    """``path`` as text with MF6's comments removed, or ``None`` for a binary file."""
-
-    data = path.read_bytes()
-    if b"\0" in data[:8192]:
-        return None
-    lines = data.decode("utf-8", errors="replace").splitlines()
-    return "\n".join(re.split(r"[#!]", line, maxsplit=1)[0] for line in lines)
-
-
 def _simulation_input_files(sim_ws: str | Path) -> list[Path]:
     """Every file MODFLOW 6 READS when it runs the simulation in ``sim_ws``, relative to it.
 
@@ -369,87 +326,6 @@ def _output_directories(sim_ws: str | Path) -> list[Path]:
     return list(dict.fromkeys(
         name.parent for name in _scan_simulation_inputs(sim_ws)[2] if name.parent != Path(".")
     ))
-
-
-def _scan_simulation_inputs(
-    sim_ws: str | Path,
-) -> tuple[list[Path], list[tuple[str, str]], list[Path], list[tuple[str, str]]]:
-    """The walk behind :func:`_simulation_input_files`, :func:`_inputs_outside_the_run`,
-    :func:`_output_directories` and :func:`_outputs_outside_the_run`: the inputs, the
-    inputs named outside, the outputs written inside (relative) and those outside."""
-
-    root = Path(sim_ws)
-    found: dict[Path, None] = {}
-    outside: list[tuple[str, str]] = []
-    written: dict[Path, None] = {}
-    written_outside: list[tuple[str, str]] = []
-    # (relative name, how the file is read, what it is): "simulation" / "model"
-    # name files are read for their blocks, "input" files scanned for
-    # FILEIN/OPEN/CLOSE, "data" files (OPEN/CLOSE) copied unread.
-    pending: list[tuple[str, str, str]] = [("mfsim.nam", "simulation", "mfsim.nam")]
-
-    def _record_output(name_written: str, owner: str) -> None:
-        """File an output name as written inside ``sim_ws`` or outside it."""
-
-        normal = Path(os.path.normpath(name_written))
-        if normal.is_absolute() or normal.parts[:1] == ("..",):
-            written_outside.append((name_written, owner))
-        else:
-            written[normal] = None
-
-    while pending:
-        name, kind, owner = pending.pop(0)
-        relative = Path(os.path.normpath(name))
-        if relative.is_absolute() or relative in found:
-            continue
-        if relative.parts[:1] == ("..",):
-            outside.append((name, owner))
-            continue
-        path = root / relative
-        if not path.is_file():
-            continue
-        found[relative] = None
-        if kind == "data":
-            continue
-        text = _mf6_text(path)
-        if text is None:
-            continue
-        if kind in ("simulation", "model"):
-            block = None
-            for line in text.splitlines():
-                fields = [_mf6_field(token) for token in _MF6_FIELD.findall(line)]
-                if not fields:
-                    continue
-                word = fields[0].lower()
-                if word == "begin":
-                    block = fields[1].lower() if len(fields) > 1 else None
-                elif word == "end":
-                    block = None
-                elif kind == "model" and block == "options" and word == "list" and len(fields) > 1:
-                    # The model's listing file, the one output named outside a FILEOUT
-                    # (ledger 453): every realization writes it like any other.
-                    _record_output(fields[1], f"LIST in {relative}")
-                elif (
-                    block in _NAME_FILE_BLOCKS
-                    and len(fields) > 1
-                    and _MF6_FILE_TYPE.match(fields[0])
-                ):
-                    entry = fields[0].upper() + (f" {fields[2]!r}" if len(fields) > 2 else "")
-                    pending.append((
-                        fields[1],
-                        "model" if block == "models" else "input",
-                        f"the {entry} entry of {relative}",
-                    ))
-        named_by = "" if kind in ("simulation", "model") else f", named by {owner}"
-        for keyword, token in _MF6_INPUT_REFERENCE.findall(text):
-            pending.append((
-                _mf6_field(token),
-                "input" if keyword.upper() == "FILEIN" else "data",
-                f"{keyword.upper()} in {relative}{named_by}",
-            ))
-        for token in _MF6_OUTPUT_REFERENCE.findall(text):
-            _record_output(_mf6_field(token), f"FILEOUT in {relative}{named_by}")
-    return list(found), outside, list(written), written_outside
 
 
 def _copy_run_outputs(source: Path, target: Path) -> list[str]:

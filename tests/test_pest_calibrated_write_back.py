@@ -524,6 +524,83 @@ def _a_run_without_a_frozen_snapshot_is_refused(calibration, tmp_path):
         IesResults(master).calibrated().packages()
 
 
+def _a_copy_of_the_run(calibration, tmp_path, name, *, fingerprinted=True):
+    """A copy of the run in the project's ``runs/`` and a master pointing at it."""
+
+    run_copy = calibration.project.runs_dir / name
+    shutil.copytree(calibration.run.workspace, run_copy)
+    if not fingerprinted:
+        manifest = run_copy / "run.json"
+        data = json.loads(manifest.read_text())
+        data["metadata"].pop("inputs")
+        manifest.write_text(json.dumps(data))
+    master = _copy_master(calibration.ies, tmp_path / f"master_{name}")
+    path = master / "myflopy_pest_metadata.json"
+    metadata = json.loads(path.read_text())
+    metadata["original_workspace"] = str(run_copy)
+    path.write_text(json.dumps(metadata))
+    return run_copy, master
+
+
+def _edit(path: Path, old: str, new: str) -> None:
+    text = path.read_text()
+    assert old in text, (path, old)
+    path.write_text(text.replace(old, new, 1))
+
+
+_KEYS = {"npf/base": "npf/d", "rch/base": "rch/d", "ghb": "ghb/d", "riv": "riv/d",
+         "crisp": "crisp/d"}
+
+
+def _files_that_depart_from_the_record_are_refused(calibration, tmp_path):
+    """PEST calibrated the run's FILES; the write-back substitutes into its RECORD (ledger
+    611). A substituted package whose file departs is refused by packages(); any
+    departure refuses the simulation fork, naming simulation=False -- ledger 562's shape."""
+
+    project = calibration.project
+    made = []
+    try:
+        # A file of a package the calibration substitutes (npf/base: k and k33).
+        run_copy, master = _a_copy_of_the_run(calibration, tmp_path, "r_npf")
+        made.append(run_copy)
+        _edit(run_copy / "m.npf", "0.20000000", "0.30000000")
+        with pytest.raises(ValueError, match=r"package\(s\) this calibration substitutes "
+                                             r"\(m\.npf: changed outside myflopy"):
+            IesResults(master).calibrated().packages()
+
+        # A file of a package it does NOT substitute: the packages come back, the fork is
+        # refused naming simulation=False, and nothing is registered before it.
+        run_copy, master = _a_copy_of_the_run(calibration, tmp_path, "r_tdis")
+        made.append(run_copy)
+        _edit(run_copy / "s.tdis", "30.00000000", "31.00000000")
+        inputs = IesResults(master).calibrated()
+        assert set(inputs.packages()) == set(_KEYS)
+        with pytest.raises(ValueError, match=r"s\.tdis: changed outside myflopy.*"
+                                             r"Pass simulation=False"):
+            inputs.to_library(project, keys=_KEYS, simulation="s/d")
+        assert not set(_KEYS.values()) & set(project.packages)
+        assert "s/d" not in project.simulations
+        inputs.to_library(project, keys=_KEYS, simulation=False)
+        assert set(_KEYS.values()) <= set(project.packages)
+        for key in _KEYS.values():
+            del project.packages[key]
+
+        # A run written before runs recorded their inputs: the record is built and
+        # written beside its files, and the same narrow rule applies to what that finds.
+        run_copy, master = _a_copy_of_the_run(calibration, tmp_path, "r_old",
+                                              fingerprinted=False)
+        made.append(run_copy)
+        assert set(IesResults(master).calibrated().packages()) == set(_KEYS)
+        _edit(run_copy / "m.npf", "0.20000000", "0.30000000")
+        with pytest.raises(ValueError, match=r"m\.npf: not what the record writes -- "
+                                             r"GRIDDATA: 1 of"):
+            IesResults(master).calibrated().packages()
+    finally:
+        for path in made:
+            shutil.rmtree(path, ignore_errors=True)
+        project.refresh_runs()
+
+
 def _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         calibration, base, tmp_path):
     project = calibration.project
@@ -622,6 +699,7 @@ def test_every_refusal_names_what_to_do(calibration, base, tmp_path):
     _a_tied_parameter_is_refused(calibration, tmp_path)
     _a_replay_that_fails_carries_its_stderr(calibration, tmp_path)
     _a_run_without_a_frozen_snapshot_is_refused(calibration, tmp_path)
+    _files_that_depart_from_the_record_are_refused(calibration, tmp_path)
     _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         calibration, base, tmp_path)
     _to_library_refuses_a_simulation_the_run_did_not_run(calibration, base)

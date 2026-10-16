@@ -61,7 +61,10 @@ working on it.
   did-you-mean `KeyError`, `fork`/`edit`, and the cached package digests.
 - [src/myflopy/run_record.py](../src/myflopy/run_record.py)
   `ListingOutcome` / `read_listing_outcome` — what MF6 reported in `mfsim.lst`,
-  read back as `run.outcome`. Stdlib only, import layer 0.
+  read back as `run.outcome`; `InputsVerdict` (`run.inputs`), the one walk of the files
+  MF6 reads (`_scan_simulation_inputs`, shared with the PEST build) and the one
+  record-against-files comparison (`written_differences`, ledger 611). Stdlib
+  only, import layer 0.
 - [src/myflopy/geopackage.py](../src/myflopy/geopackage.py)
   `GeoPackageSource` — the GIS-features-to-cells pipeline behind `mf.*.gpkg`.
 - [src/myflopy/sources.py](../src/myflopy/sources.py)

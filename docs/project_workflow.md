@@ -195,7 +195,9 @@ than recording a verdict MF6 never gave.
 
 **`stale=True` means the listing predates its own inputs** — the verdict is real,
 but describes a superseded run. Only MF6 *inputs* count; results are legitimately
-newer than the listing that announced them.
+newer than the listing that announced them. Whether those inputs still say what the
+run RECORDED is a third axis, `run.inputs` (below, "Do the files still say what the run
+recorded?").
 
 The outcome is deliberately **never cached into the manifest**. The listing is
 the authority and it is right there; storing a copy beside it would create a
@@ -386,12 +388,12 @@ broken:
 
 ```python
 project.runs.summary()
-#  key                  status      outcome     stale  elapsed                          simulation
-#  baseline             completed   normal      True   3 Hours, 53 Minutes,  1 Seconds  baseline
-#  from_usg             written     incomplete  False  —                                tentrails
-#  mounding             completed   normal      False  15 Minutes,  4.265 Seconds       mounding
-#  mounding_lower_L3_K  discovered  normal      False  14 Minutes, 32.796 Seconds       —
-#  mounding_vol         completed   normal      False  16 Minutes, 54.890 Seconds       mounding_vol
+#  key                  status      outcome     stale  inputs            elapsed                          simulation
+#  baseline             completed   normal      True   unfingerprinted   3 Hours, 53 Minutes,  1 Seconds  baseline
+#  from_usg             written     incomplete  False  unfingerprinted   —                                tentrails
+#  mounding             completed   normal      False  ok                15 Minutes,  4.265 Seconds       mounding
+#  mounding_lower_L3_K  discovered  normal      False  —                 14 Minutes, 32.796 Seconds       —
+#  mounding_vol         completed   normal      False  edited (m.tdis)   16 Minutes, 54.890 Seconds       mounding_vol
 ```
 
 Read `status` and `outcome` as two axes: `status` is what **myflopy** did to the
@@ -400,7 +402,50 @@ executed by another sits at `written` forever while its listing says
 `Normal termination`; `run.reconcile()` adopts the verdict.
 
 `stale=True` means an MF6 input file is newer than the listing — the verdict is
-real but describes superseded inputs.
+real but describes superseded inputs. "Input file" is everything the name files lead
+MF6 to read, `FILEIN` and `OPEN/CLOSE` files included -- the same walk a PEST build
+copies (ledger 611).
+
+### Do the files still say what the run recorded?
+
+A run folder holds two descriptions of one model (ledger 611). The **record**
+is what the run was prepared and built from -- `run.spec` (its frozen snapshot), its
+own `_library/` copies and digests -- and is what a rebuild, `drift()` and the
+write-backs read. The **files** are what MF6 runs. They part when a simulation edited
+through FloPy is written, or when a file is changed after myflopy wrote it -- by hand,
+by another program, by FloPy writing directly. `run.inputs` says so, read fresh like
+`run.outcome`, and the summary's `inputs` column carries it:
+
+```python
+run.inputs
+# InputsVerdict(verdict='edited', departs={'ss.tdis': 'changed outside myflopy after its last write'})
+```
+
+`ok` -- every file is what the record writes; `edited` -- `departs` names each file and
+how (`edited through FloPy after run.build()` / `after run.open()`, `changed outside
+myflopy after its last write`, `added`, `missing`); `unfingerprinted` -- written before
+runs recorded their inputs, so agreement is unknown, never assumed; `unwritten` -- the
+record held now has not been written; `no record` -- no `run.json`.
+
+What the verbs do with the two:
+
+- **`execute()` runs the files.** It writes the simulation it holds only when that was
+  never written or was changed (through FloPy) since it was last written or opened. A
+  run holding nothing -- `project.runs[key]`, `load_run(..., load=False)` -- opens its
+  files and runs them as they stand; it is never rebuilt from its record over them.
+- **`run.build()` first is the one spelling that puts the record over the files.**
+  `write()` with nothing held refuses when the files are not known to be the record's
+  (`edited` or `unfingerprinted`), naming `run.open()` and `run.build()`.
+- **A FloPy edit is marked and warned, not refused.** `run.simulation...set_data(...)`
+  then `write()` writes it, marks the files it changed `edited` and raises a
+  `UserWarning`. To make such a change part of a record, declare it --
+  `project.packages.fork(...)` / `project.simulations.fork(...)` and `prepare_run`.
+- **Files changed under a held simulation are refused by `execute()`**: `run.open()`
+  then `execute()` runs the files, `run.write()` then `execute()` the simulation held.
+- **The write-backs refuse what would describe another model.**
+  `calibrated().packages()`/`to_library()` refuse a run whose file of a package the
+  calibration SUBSTITUTES departs; the simulation fork refuses any departure, naming
+  `simulation=False` (which registers the packages alone).
 
 Runs with no `run.json` are listed as `discovered` rather than hidden: there are
 far more bare MF6 workspaces in practice than manifests, and a ledger that
@@ -447,10 +492,10 @@ to say.
 `<run>/_library/`, and a rebuild resolves `mf.ref` from those copies first. So
 `edited` means the library has moved on -- preparing the run again from it would
 give a different model -- not that this run can no longer be rebuilt as it ran.
-A run prepared before the copies existed has nothing else to build from: it
-resolves against the library as it is now, warns naming each key that differs
-from what it recorded, and records the versions it used once its inputs are
-rewritten.
+A run prepared before the copies existed has nothing else to build from: rebuilt
+(`run.build()` -- executing it reopened runs its files instead), it resolves against
+the library as it is now, warns naming each key that differs from what it recorded,
+and records the versions it used once its inputs are rewritten.
 
 Only `mf.ref` entries are fingerprinted — a package written inline is baked into
 the run's own recipe and cannot drift. Drift only reports; it never rewrites a

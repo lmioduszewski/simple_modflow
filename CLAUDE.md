@@ -472,7 +472,9 @@ against 14 manifests under `examples/`. **`status` is myflopy's verb, `outcome` 
 MF6's verdict** read from `mfsim.lst`: `normal`/`failed`/`incomplete`/`absent`/
 `superseded`, the last meaning the listing predates this run's own preparation
 (`prepare_run(overwrite=True)` reuses the directory — design D5, still open, ledger
-191). `run.reconcile()` adopts a verdict; it will not adopt a superseded one.
+191). `run.reconcile()` adopts a verdict; it will not adopt a superseded one. The
+summary's `inputs` column (`run.inputs`) says whether the files are what the record
+writes (ledger 611).
 **`project.runs.drift()`** says which library packages a run used have changed since,
 via a content fingerprint stored per run. A reopened run BUILDS from its own copy
 of those packages (`<run>/_library/`, ledger 230), so drift says the library moved
@@ -1059,6 +1061,14 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   build RESOLVED: a declared `ModelSpec` carries the grid RECIPE, so freezing the spec
   captured no grid for a DEFERRED one and a reopened run went back to its boundary
   GeoPackage and died there. Prepare the run again to re-resolve.
+  **The snapshot is the RECORD, not the files** (ledger 611): `run.inputs` says
+  when they part (a FloPy edit written is MARKED and WARNED, a file changed later reads
+  `edited`, a run written before this `unfingerprinted`); `execute()` writes a CHANGED
+  held simulation and otherwise runs the files as they stand -- a run holding nothing
+  opens them, never rebuilding the record over them; `run.build()` first is the one
+  spelling that does; the write-backs refuse a run whose substituted packages' files
+  depart, and the fork any departure. "The files MF6 reads" is ONE walk,
+  `run_record._scan_simulation_inputs` (the PEST staging copy and `stale` share it).
   **ONE FILE, not a directory**, because `os.replace` of a file is atomic and a
   directory needed two steps and a shared staging name. **Stamped with its run name
   and discarded by `prepare_run` when a directory is reused** -- without that, a

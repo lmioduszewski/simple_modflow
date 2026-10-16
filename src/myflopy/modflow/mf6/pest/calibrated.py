@@ -62,6 +62,7 @@ from myflopy.modflow.mf6.pest.replay import (
     run_script,
 )
 from myflopy.project.freeze import thaw_simulation
+from myflopy.run_record import _scan_simulation_inputs
 from myflopy.specs import PackageRef, PackageSpec, package_digest, substitute_values
 from myflopy.workspace import Run, _read_package_snapshot
 
@@ -86,6 +87,9 @@ class _Dataset:
     base: Any = None
     layers: set = field(default_factory=set)
     periods: set = field(default_factory=set)
+    #: The package's file, as the model's name file names it -- what a departure of the
+    #: run's files from its record is matched against (ledger 611).
+    file: str | None = None
 
 
 def _refuse_old_metadata(results: IesResults) -> list[dict]:
@@ -331,6 +335,12 @@ def _name_file_packages(model) -> list[str]:
     return [str(row[2] if len(row) > 2 and row[2] else row[0]).lower() for row in rows]
 
 
+def _name_file_files(model) -> list[str]:
+    """The model's package FILES, in its name file's order (beside :func:`_name_file_packages`)."""
+
+    return [Path(str(row[1])).as_posix() for row in model.name_file.packages.get_data()]
+
+
 def _number(value) -> float | None:
     """``value`` as a float when it is a number or SPELLS one, else ``None``.
 
@@ -541,6 +551,7 @@ class CalibratedInputs:
         self._name_files = name_files
         self._packages: dict[str, PackageSpec] | None = None
         self._labels: dict[tuple[str, str], str] | None = None
+        self._departs: dict[str, str] | None = None
 
     def __repr__(self) -> str:
         """One line: the realization, iteration and the datasets rebuilt."""
@@ -764,12 +775,18 @@ class CalibratedInputs:
             When the run has no frozen snapshot (prepare it again), its packages do not
             line up with its manifest or the realization's name file, a dataset is not
             an option of its package, a list record's cell differs from the run's (the
-            template is not this run's), or one label is calibrated on two models.
+            template is not this run's), or one label is calibrated on two models; and
+            when a file of a package this calibration substitutes is not what the run's
+            record writes (``run.inputs`` reads ``"edited"``, or -- for a run written
+            before runs recorded their inputs -- the record, built and written beside
+            the files, differs there): PEST calibrated the files, and the values would
+            be substituted into another model (ledger 611).
         """
 
         if self._packages is not None:
             return dict(self._packages)
         run = self._run()
+        self._refuse_departed_packages(run)
         spec = thaw_simulation(self.run_workspace, run_name=run.name)
         if spec is None:
             raise ValueError(
@@ -797,6 +814,52 @@ class CalibratedInputs:
             packages[label] = self._substitute(current, dataset, label, run)
         self._packages = packages
         return dict(packages)
+
+    def _run_departures(self, run: Run) -> dict[str, str]:
+        """Each of the run's input files that is not what its record writes, and how (cached).
+
+        ``Run._record_departures`` (ledger 611): the hashes and marks the run
+        recorded when it last wrote its files, and -- for a run written before runs
+        recorded them -- its record built and written beside the files and compared.
+        """
+
+        if self._departs is None:
+            self._departs = run._record_departures()
+        return dict(self._departs)
+
+    def _refuse_departed_packages(self, run: Run) -> None:
+        """Refuse when a file of a package this calibration substitutes departs from the record.
+
+        PEST calibrated the run's FILES -- a build copies them (ledger 356) -- while
+        :meth:`packages` substitutes into its RECORD; where the two differ in a package
+        it substitutes, the write-back would describe another model. A departure
+        elsewhere (a hand-edited TDIS) leaves these packages' values meaningful, and
+        only the simulation fork refuses it (ledger 611, the shape of
+        ledger 562).
+        """
+
+        departs = self._run_departures(run)
+        if not departs:
+            return
+        owners = _scan_simulation_inputs(self.run_workspace)[4]
+        mine = {dataset.file for dataset in self._datasets.values() if dataset.file}
+        hit = {
+            name: why for name, why in departs.items()
+            if owners.get(Path(name), Path(name)).as_posix() in mine
+        }
+        if hit:
+            files = "; ".join(f"{name}: {why}" for name, why in sorted(hit.items()))
+            raise ValueError(
+                f"The calibration's run {run.name!r} ({self.run_workspace}) has input files "
+                f"that are not what its record writes, in package(s) this calibration "
+                f"substitutes ({files}). PEST calibrated the FILES -- a build copies them "
+                "(ledger 356) -- and packages()/to_library() substitute into the RECORD "
+                "(its frozen snapshot and library copies), so the write-back would "
+                "describe another model. Declare the change the files hold "
+                "(project.packages.fork / project.simulations.fork), prepare and execute "
+                f"that run, and calibrate it; project.runs[{run.name!r}].inputs says how "
+                "each file departs."
+            )
 
     def _base_package(self, spec, copies, labels, dataset: _Dataset) -> tuple[str, PackageSpec]:
         """The run's label and built package for the FloPy package ``dataset`` names."""
@@ -925,6 +988,9 @@ class CalibratedInputs:
         run recorded (what ``project.runs.drift()`` calls ``edited``/``removed``).
         Otherwise the calibrated values would ride beside packages the calibration
         never ran with, and the fork would not reproduce the realization -- in silence.
+        It is refused too when any of the run's input files is not what its record
+        writes (``run.inputs``, ledger 611): PEST calibrated the files, and the
+        fork is built from the record.
 
         Parameters
         ----------
@@ -962,7 +1028,11 @@ class CalibratedInputs:
         ValueError
             When ``project`` does not own the calibration's run; when the simulation
             to fork is no longer what the run ran (above; pass ``simulation=False``
-            to register the packages alone); and what :meth:`packages` raises.
+            to register the packages alone); when ANY of the run's input files is not
+            what its record writes and a simulation is to be forked -- the fork is
+            built from the record and PEST calibrated the files (``simulation=False``
+            registers the packages alone; ledger 611); and what
+            :meth:`packages` raises.
         KeyError
             For a ``keys`` label the calibration did not touch, a key or simulation
             already registered without ``overwrite=True``, or a run whose simulation is
@@ -1007,6 +1077,20 @@ class CalibratedInputs:
         for (model, _package), label in (self._labels or {}).items():
             swap.setdefault(model, {})[label] = chosen[label]
         if name is not None:
+            departs = self._run_departures(run)
+            if departs:
+                files = "; ".join(f"{file}: {why}" for file, why in sorted(departs.items()))
+                raise ValueError(
+                    f"The calibration's run {run.name!r} ({self.run_workspace}) has input "
+                    f"files that are not what its record writes ({files}), so a fork of "
+                    "its simulation would not be the model PEST calibrated: a build "
+                    "copies the FILES (ledger 356), and the fork is built from the "
+                    "RECORD. Pass simulation=False to register the calibrated packages "
+                    "alone, or declare the change the files hold (project.packages.fork / "
+                    "project.simulations.fork), prepare and execute that run, and "
+                    f"calibrate it; project.runs[{run.name!r}].inputs says how each file "
+                    "departs."
+                )
             self._refuse_a_moved_simulation(project, run, source_simulation, swap)
             # Validated before anything is registered: a swap the fork refuses must
             # not leave the packages behind.
@@ -1160,6 +1244,9 @@ def calibrated_inputs(results: IesResults, realization="base", *, iteration=None
                 raise ValueError(f"The replayed simulation has no model {dataset.model!r}.")
             dataset.value = _read(model, dataset)
             name_files[dataset.model] = _name_file_packages(model)
+            names, files = name_files[dataset.model], _name_file_files(model)
+            if dataset.package in names:
+                dataset.file = files[names.index(dataset.package)]
     run_workspace = Path(results._metadata["original_workspace"])
     if (run_workspace / "mfsim.nam").exists():
         base_models = _load(run_workspace, datasets.values())

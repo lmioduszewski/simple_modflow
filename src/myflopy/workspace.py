@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import flopy
+from flopy.mf6.data.mfdata import MFTransient
 
 from myflopy._logging import get_logger
 from myflopy.areas import Area, register_project_areas
@@ -27,11 +28,19 @@ from myflopy.library import (
     SimulationLibrary,
     SpecLibrary,
 )
-from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outcome
+from myflopy.run_record import (
+    InputsVerdict,
+    ListingOutcome,
+    _scan_simulation_inputs,
+    pest_tree_root,
+    read_listing_outcome,
+    written_differences,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
 from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
+from myflopy.modflow.mf6.package_explorer_utils import written_period_blocks
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.bundle import bundle_grid_sources, bundle_package_sources
 from myflopy.project.freeze import (
@@ -131,7 +140,11 @@ def load_run(
     load : bool, optional
         ``True`` (the default) loads the FloPy simulation from the MF6 files now
         (``run.open()``; no ``mfsim.nam`` then raises ``FileNotFoundError``);
-        ``False`` defers it.
+        ``False`` defers it. Either way ``run.execute()`` runs the files as they
+        stand -- it opens them first when nothing is loaded, and never rebuilds the
+        run's record over them; ``run.build()`` first does that (ledger
+        611). ``run.inputs`` says whether the files are what the record
+        writes.
 
     Returns
     -------
@@ -940,6 +953,7 @@ class RunLibrary(SpecLibrary["Run"]):
         "status",
         "outcome",
         "stale",
+        "inputs",
         "drift",
         "grid",
         "elapsed",
@@ -1363,6 +1377,27 @@ class RunLibrary(SpecLibrary["Run"]):
                 notes.append(f"{name}: {count} cell{'s' if count != 1 else ''} repaired")
         return ", ".join(notes) if notes else "—"
 
+    @staticmethod
+    def _inputs_label(entry: Run) -> str:
+        """Whether the run's input files are what its record writes (``run.inputs``).
+
+        ``ok``; ``edited (ss.tdis)`` naming up to two files, ``edited (5 of 15)`` past
+        that; ``unfingerprinted`` for a run written before runs recorded their inputs;
+        ``—`` for a run with no record or nothing written of its own (ledger
+        611).
+        """
+
+        verdict = entry.inputs
+        if verdict.verdict in ("no record", "unwritten"):
+            return "—"
+        if verdict.verdict != "edited":
+            return verdict.verdict
+        names = sorted(verdict.departs)
+        if len(names) <= 2:
+            return f"edited ({', '.join(names)})"
+        stored = ((entry.metadata or {}).get(Run.INPUTS) or {}).get("sha") or {}
+        return f"edited ({len(names)} of {len(set(stored) | set(names))})"
+
     def _row(self, key: str, entry: Run) -> dict[str, Any]:
         """Summarize one run: what myflopy did, and what MF6 did."""
 
@@ -1375,6 +1410,7 @@ class RunLibrary(SpecLibrary["Run"]):
             "status": entry.status,
             "outcome": outcome.outcome,
             "stale": outcome.stale,
+            "inputs": self._inputs_label(entry),
             "drift": self._drift_label(entry, self._library_digest_memo()),
             "grid": self._grid_label(entry),
             "elapsed": outcome.elapsed or "—",
@@ -1384,6 +1420,143 @@ class RunLibrary(SpecLibrary["Run"]):
             "updated": entry.updated_at,
             "path": str(entry.workspace),
         }
+
+
+#: The statuses of a run whose folder holds input files myflopy wrote FOR it.
+_WRITTEN_STATUSES = frozenset({"written", "completed", "failed"})
+
+
+def _inputs_why(verdict: InputsVerdict) -> str:
+    """Why files of verdict ``verdict`` are not known to be what the record writes."""
+
+    if verdict.verdict == "edited":
+        files = "; ".join(f"{name} {why}" for name, why in sorted(verdict.departs.items()))
+        return f"not what the record writes (run.inputs: edited -- {files})"
+    return (
+        "not known to be what the record writes (run.inputs: unfingerprinted -- written "
+        "before myflopy recorded what it wrote)"
+    )
+
+
+def _fingerprint_bytes(value: Any) -> bytes:
+    """``value`` as bytes for :func:`_simulation_fingerprint`: arrays by shape and value."""
+
+    import numpy as np
+
+    if isinstance(value, np.ndarray):
+        if value.dtype.hasobject or value.dtype.names:
+            return repr(value.tolist()).encode()
+        # By VALUE: FloPy hands back an int32 ICELLTYPE as int64 once the array is
+        # stored externally, which writes the same file (measured).
+        kind = value.dtype.kind
+        if kind in "iub":
+            value = value.astype(np.int64)
+        elif kind == "f":
+            value = value.astype(np.float64)
+        return repr(value.shape).encode() + value.dtype.str.encode() + value.tobytes()
+    if isinstance(value, dict):
+        return b"{" + b",".join(
+            repr(key).encode() + b":" + _fingerprint_bytes(value[key])
+            for key in sorted(value, key=repr)
+        ) + b"}"
+    if isinstance(value, (list, tuple)):
+        return b"[" + b",".join(_fingerprint_bytes(item) for item in value) + b"]"
+    return repr(value).encode()
+
+
+def _simulation_fingerprint(simulation: Any) -> dict[str, str]:
+    """``{package file: digest}`` over every dataset a FloPy simulation HOLDS, in memory.
+
+    What ``Run.write``/``execute`` compare to tell a simulation edited through FloPy
+    from the one last written or opened (ledger 611): the simulation and model
+    name files, every simulation-level package, every model package and every child
+    package (OBS, ATS, TS ...), each dataset's ``get_data()`` hashed under the file the
+    package writes -- so an external array counts toward its package's file. Measured
+    0.10-0.24 s on a 38-period, 20,323-cell Ten Trails run. **Valid within ONE FloPy
+    lineage only**: a
+    simulation loaded from files and the one that wrote them differ on every file
+    (FloPy writes 8 decimals and reads keywords in the case written), so only compare
+    two fingerprints of the same object.
+    """
+
+    packages: dict[str, Any] = {}
+
+    def _walk(package: Any) -> None:
+        filename = getattr(package, "filename", None)
+        if filename is None or id(package) in seen:
+            return
+        seen.add(id(package))
+        packages.setdefault(str(filename), package)
+        for child in getattr(package, "_packagelist", None) or []:
+            _walk(child)
+
+    seen: set[int] = set()
+    _walk(simulation.name_file)
+    for package in simulation.sim_package_list:
+        _walk(package)
+    for name in simulation.model_names:
+        model = simulation.get_model(name)
+        _walk(model.name_file)
+        for package in model.packagelist:
+            _walk(package)
+    # Quiet while sizes are filled: FloPy prints each MAXBOUND it changes otherwise,
+    # which `write_simulation(silent=True)` suppresses the same way.
+    simulation_data = getattr(simulation, "simulation_data", None)
+    saved = getattr(simulation_data, "verbosity_level", None)
+    if saved is not None:
+        simulation_data.verbosity_level = flopy.mf6.mfbase.VerbosityLevel.quiet
+    try:
+        return _package_digests(packages)
+    finally:
+        if saved is not None:
+            simulation_data.verbosity_level = saved
+
+
+def _package_digests(packages: dict[str, Any]) -> dict[str, str]:
+    """``{file: digest}`` over each package's datasets, for :func:`_simulation_fingerprint`."""
+
+    import hashlib
+
+    digests: dict[str, str] = {}
+    for filename, package in packages.items():
+        # FloPy fills a list package's MAXBOUND when it WRITES (`_update_size_defs`), so
+        # a built simulation's fingerprint moved across its first write (measured on
+        # five list packages of a Ten Trails run). Applied here first, as write applies
+        # it: it only ever grows a size to what the data holds.
+        update_sizes = getattr(package, "_update_size_defs", None)
+        if callable(update_sizes) and getattr(
+            getattr(package, "simulation_data", None), "auto_set_sizes", False
+        ):
+            update_sizes()
+        digest = hashlib.sha256()
+        for block_name, block in package.blocks.items():
+            for data_name, data in block.datasets.items():
+                digest.update(f"{block_name}.{data_name}=".encode())
+                # A period dataset is read through the one reader that never asks
+                # FloPy for a period it does not hold: `get_data()` there CREATES a
+                # block, and an STO fingerprinted that way gained a STEADY-STATE
+                # block 0 (ledger 449's trap, caught by its own test).
+                value = (
+                    written_period_blocks(data)
+                    if isinstance(data, MFTransient) else data.get_data()
+                )
+                digest.update(_fingerprint_bytes(value))
+        digests[filename] = digest.hexdigest()[:16]
+    return digests
+
+
+def _input_file_hashes(workspace: Path) -> dict[str, str | None]:
+    """Each MF6 input file of ``workspace`` -- what its name files lead MF6 to read -- by content hash.
+
+    ``run_record._scan_simulation_inputs`` is the one rule for which files those are
+    (ledger 611) and ``grid_identity.source_fingerprint`` the one file hash;
+    ``None`` for a file that could not be read.
+    """
+
+    return {
+        name.as_posix(): source_fingerprint(workspace / name)
+        for name in _scan_simulation_inputs(workspace)[0]
+    }
 
 
 def _workspace_timestamp(name_file: Path) -> str:
@@ -1531,9 +1704,12 @@ class Run:
         The run directory, where the MF6 files, ``run.json`` and the run's own
         library copies live; a ``str`` is converted on construction.
     spec : SimulationSpec or None, optional
-        The simulation :meth:`build` builds. ``None`` (the default) for a run
-        discovered or loaded without a manifest, or reopened from a manifest
-        holding no rebuildable recipe and no frozen snapshot.
+        The simulation :meth:`build` builds -- the run's RECORD, with its frozen
+        snapshot and library copies; the MF6 input files are what runs, and
+        :attr:`inputs` says whether the two still agree (ledger 611).
+        ``None`` (the default) for a run discovered or loaded without a manifest, or
+        reopened from a manifest holding no rebuildable recipe and no frozen
+        snapshot.
     executable : str or os.PathLike, optional
         MF6 executable name or path that :meth:`execute` runs. Default ``"mf6"``.
         A path is stored as its text (``os.fspath``); anything but a ``str`` or
@@ -1543,7 +1719,8 @@ class Run:
         did (that is :attr:`outcome`): ``"created"`` (the default), ``"built"``,
         ``"written"``, ``"completed"``, ``"failed"``; ``"loaded"``,
         ``"discovered"`` and ``"unreadable"`` for runs opened without a usable
-        manifest.
+        manifest. It says what the library did, not whether the files still say what
+        the record says (that is :attr:`inputs`).
     created_at : str, optional
         ISO-8601 UTC timestamp of the run's preparation; default the moment of
         construction. :attr:`outcome` treats a listing older than this as
@@ -1658,6 +1835,17 @@ class Run:
     _from_library: dict[str, tuple[PackageSpec, str | None]] = field(
         default_factory=dict, init=False, repr=False
     )
+    # The record against the files (ledger 611). What the simulation held
+    # came from -- "record" (built) or "files" (opened) -- and its in-memory
+    # fingerprint when built, opened or last written; the input-file hashes when it
+    # was opened or last written; what the files departed by when they were opened,
+    # and whether that was known. A fingerprint compares within one FloPy lineage only.
+    _record_fingerprint: dict[str, str] | None = field(default=None, init=False, repr=False)
+    _held_from: str | None = field(default=None, init=False, repr=False)
+    _held_fingerprint: dict[str, str] | None = field(default=None, init=False, repr=False)
+    _held_hashes: dict[str, str | None] | None = field(default=None, init=False, repr=False)
+    _opened_departs: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _opened_known: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Coerce ``workspace`` to a :class:`~pathlib.Path` and ``executable`` to a ``str``.
@@ -1721,6 +1909,10 @@ class Run:
         edited. A key it holds no copy of resolves from the build context's
         library; on a run reopened through ``Project.reopen_run`` that WARNS
         when the library's version is not the one the run recorded.
+
+        Building replaces the simulation this run holds with its RECORD; a
+        :meth:`write` or :meth:`execute` after it puts the record over the run's input
+        files, which is the one spelling that does (ledger 611).
         """
 
         if self.spec is None:
@@ -1751,6 +1943,11 @@ class Run:
         patch_simulation_plot(self.simulation)
         self.simulation.exe_name = self.executable
         self._model_views.clear()
+        # What the RECORD writes, so `write()` can say which files a FloPy edit made
+        # depart from it (ledger 611). Building touches no file.
+        self._record_fingerprint = _simulation_fingerprint(self.simulation)
+        self._held_from, self._held_fingerprint, self._held_hashes = "record", None, None
+        self._opened_departs, self._opened_known = {}, False
         self._from_library = self._check_library_fallback(build_context)
         self._record_built_from(build_context)
         self._record_grids()
@@ -2121,9 +2318,18 @@ class Run:
         self._from_library = {}
 
     def write(self, silent=False) -> Path:
-        """Write MF6 input files, building first when necessary.
+        """Write the simulation this run holds as MF6 input files, building first when it holds none.
 
-        Records ``status="written"`` in the manifest.
+        Records ``status="written"`` and, in the manifest's ``metadata["inputs"]``, a
+        content hash of every input file written and which of them depart from the
+        run's RECORD -- what :attr:`inputs` reads (ledger 611). A simulation
+        edited through FloPy after :meth:`build` (or after :meth:`open`) is written as
+        it stands, its edited files are marked ``edited`` and a ``UserWarning`` says
+        so: the record (``spec``, the frozen snapshot, the library copies) still says
+        what was built, and ``calibrated().to_library()`` refuses to describe the files
+        by it. To make such a change part of a record,
+        declare it (``project.packages.fork(...)`` / ``project.simulations.fork(...)``
+        and ``prepare_run``).
 
         Parameters
         ----------
@@ -2136,21 +2342,121 @@ class Run:
         -------
         pathlib.Path
             The run workspace.
+
+        Raises
+        ------
+        ValueError
+            When the run holds no simulation and its folder holds files written for
+            it that are not known to be what its record writes (:attr:`inputs` reads
+            ``"edited"`` or ``"unfingerprinted"``): building the record would replace
+            them in silence. :meth:`open` keeps the files; :meth:`build` then
+            :meth:`write` replaces them with the record.
         """
 
         if self.simulation is None:
+            if self._files_written() and self.manifest_path.exists():
+                verdict = self.inputs
+                if verdict.verdict != "ok":
+                    raise ValueError(
+                        f"Run {self.name!r} holds no simulation, so write() would rebuild "
+                        "its RECORD (run.spec, its frozen snapshot) and write that over "
+                        f"its input files -- and those files are {_inputs_why(verdict)}. "
+                        "Say which you mean: run.open() keeps the files (execute() then "
+                        "runs them as they are), or run.build() then run.write() "
+                        "replaces them with the record."
+                    )
             self.build()
         assert self.simulation is not None  # build() populates it
+        fingerprint = _simulation_fingerprint(self.simulation)
         self.simulation.write_simulation(silent=silent)
         if self._from_library:
             self._adopt_library_versions()
+        self._record_inputs(fingerprint)
         self._record_status("written")
         return self.workspace
 
-    def execute(self, *, silent: bool = True) -> tuple[bool, list[str]]:
-        """Write the MF6 input files (if needed) and run the simulation.
+    #: Key under which a run records what its last write wrote (ledger 611),
+    #: inside ``metadata`` for the reason ``BUILT_FROM`` gives.
+    INPUTS = "inputs"
 
-        Records the run's success and MF6 report in the manifest.
+    def _files_written(self) -> bool:
+        """Whether this run's folder holds MF6 input files that are THIS run's.
+
+        A run myflopy wrote (``written``/``completed``/``failed``), or a workspace with
+        no manifest, whose files ARE the run. A run prepared or rebuilt since its last
+        write (``created``/``built``) holds files that are an earlier write's.
+        """
+
+        if not (self.workspace / "mfsim.nam").is_file():
+            return False
+        return self.status in _WRITTEN_STATUSES or not self.manifest_path.exists()
+
+    def _record_inputs(self, fingerprint: dict[str, str]) -> None:
+        """Record what was just written: each input file's hash, and which depart, and why."""
+
+        stored = (self.metadata or {}).get(self.INPUTS) or {}
+        previous = dict(stored.get("departs") or {})
+        if self._held_from == "record":
+            departs: dict[str, str] = {}
+            base = self._record_fingerprint or {}
+            reason, known, verb = "edited through FloPy after run.build()", True, "built"
+        else:
+            departs = dict(self._opened_departs)
+            base = self._held_fingerprint if self._held_fingerprint is not None else fingerprint
+            reason, known, verb = (
+                "edited through FloPy after run.open()", self._opened_known, "opened"
+            )
+        for name in sorted(set(base) | set(fingerprint)):
+            if base.get(name) == fingerprint.get(name):
+                continue
+            earlier = departs.get(name)
+            if earlier is None:
+                departs[name] = reason
+            elif reason not in earlier:
+                departs[name] = f"{earlier}, then {reason}"
+        hashes = _input_file_hashes(self.workspace)
+        self.metadata = {
+            **(self.metadata or {}),
+            self.INPUTS: {
+                "written_at": _utc_now(),
+                "sha": hashes,
+                "departs": departs,
+                "known": bool(known),
+            },
+        }
+        self._held_fingerprint, self._held_hashes = fingerprint, hashes
+        if self._held_from != "record":
+            self._held_from, self._opened_departs = "files", dict(departs)
+        fresh = sorted(
+            name for name, why in departs.items()
+            if "edited through FloPy" in why and previous.get(name) != why
+        )
+        if fresh:
+            message = (
+                f"Run {self.name!r} was written from a simulation edited through FloPy "
+                f"after it was {verb} ({', '.join(fresh)}), so its input files no longer "
+                "say what its record says (run.spec, the frozen snapshot, its library "
+                "copies). The run is marked: run.inputs reads 'edited', "
+                "project.runs.summary() shows it, and calibrated().to_library() refuses "
+                "it (run.to_library() too, unless files_differ='keep_record'). To make "
+                "the change part of a record, declare it -- project.packages.fork(...) / "
+                "project.simulations.fork(...) and prepare_run -- rather than editing "
+                "run.simulation."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+
+    def execute(self, *, silent: bool = True) -> tuple[bool, list[str]]:
+        """Run MF6 on this run's input files, writing the simulation held when it changed.
+
+        Writes the simulation this run holds (:meth:`write`) when it was never written
+        or was changed -- through FloPy -- since it was last written or opened, then
+        runs MF6 on the files. A run holding no simulation whose folder holds files
+        written for it -- one reopened with ``load=False``, ``project.runs[key]`` --
+        runs those files AS THEY STAND (:meth:`open` first): it is never rebuilt from
+        its record over them. ``run.build()`` first is the one spelling that does
+        that. Records the run's success and MF6 report in the manifest (ledger
+        611).
 
         Parameters
         ----------
@@ -2163,18 +2469,45 @@ class Run:
             ``(success, report)`` -- whether MF6 converged, and its captured
             output lines.
 
+        Raises
+        ------
+        ValueError
+            When the input files changed on disk after this session last wrote or
+            opened them while a simulation is held: which of the two to run is not
+            picked in silence. :meth:`open` then ``execute()`` runs the files as they
+            are; :meth:`write` then ``execute()`` replaces them with the simulation held.
+
         Examples
         --------
         >>> ok, report = run.execute()
         >>> if not ok: print("\\n".join(report[-20:]))
         """
 
-        if (
-            self.status not in {"written", "completed", "failed"}
-            or self.simulation is None
+        if self.simulation is None:
+            if self._files_written():
+                self.open()
+            else:
+                self.write()
+        elif (
+            self._held_fingerprint is None
+            or self.status not in _WRITTEN_STATUSES
+            or _simulation_fingerprint(self.simulation) != self._held_fingerprint
         ):
             self.write()
-        assert self.simulation is not None  # write()/build() populate it
+        else:
+            now = _input_file_hashes(self.workspace)
+            if now != self._held_hashes:
+                held = self._held_hashes or {}
+                changed = sorted(n for n in set(now) | set(held) if now.get(n) != held.get(n))
+                raise ValueError(
+                    f"Run {self.name!r}'s input files changed after this session last "
+                    f"wrote or opened them ({', '.join(changed)}), so the simulation it "
+                    "holds is not what is on disk and execute() will not pick one in "
+                    "silence. run.open() then run.execute() runs the files as they are "
+                    "now; run.write() then run.execute() replaces them with the "
+                    "simulation held."
+                )
+        assert self.simulation is not None  # write()/build()/open() populate it
         self.simulation.exe_name = self.executable
         # A lake written with LAK IMPLICIT needs an MF6 that reads it: the executable is
         # probed once (cached per file) and one that does not is WARNED about -- the run
@@ -2191,7 +2524,11 @@ class Run:
         """Load this run's native MF6 simulation from disk.
 
         Replaces :attr:`simulation` with FloPy's load of the files and clears the
-        cached model views, so later edits and writes act on what is on disk.
+        cached model views, so later edits and writes act on what is on disk:
+        :meth:`execute` then runs the files as they are, and a :meth:`write` after a
+        FloPy edit marks the files it changes ``edited`` (:attr:`inputs`, ledger
+        611). Whatever the files departed from the record by when opened is
+        carried into that mark.
 
         Parameters
         ----------
@@ -2225,6 +2562,12 @@ class Run:
         self._from_library = {}
         patch_simulation_plot(self.simulation)
         self._model_views.clear()
+        verdict = self.inputs
+        self._held_from = "files"
+        self._held_fingerprint = _simulation_fingerprint(self.simulation)
+        self._held_hashes = _input_file_hashes(self.workspace)
+        self._opened_departs = dict(verdict.departs)
+        self._opened_known = verdict.verdict in ("ok", "edited")
         return self.simulation
 
     @property
@@ -2394,6 +2737,164 @@ class Run:
 
         return read_listing_outcome(self.workspace, since=self._prepared_at())
 
+    @property
+    def inputs(self) -> InputsVerdict:
+        """Whether this run's MF6 input files still say what its record says, read fresh.
+
+        A run folder holds two descriptions of one model (ledger 611). The
+        RECORD is what the run was prepared and built from -- :attr:`spec` (its frozen
+        snapshot, which wins on reopen, ledger 251), its own library copies (ledger
+        230) and digests -- and is what a rebuild, ``project.runs.drift()`` and
+        ``calibrated().to_library()`` read. The FILES are what
+        MF6 runs. They part when a simulation edited through FloPy is written
+        (:meth:`write` records which files), or when a file is changed after myflopy
+        last wrote it -- by hand, by another program, or by FloPy writing directly --
+        which this reads by hashing every input file MF6's own name files lead to
+        against the hashes that write recorded. Like :attr:`outcome` it is never cached
+        and never written: reading it changes nothing.
+
+        Returns
+        -------
+        InputsVerdict
+            ``verdict`` ``"ok"``, ``"edited"`` (``departs`` names each file and how),
+            ``"unfingerprinted"`` (written before myflopy recorded what it wrote -- not
+            evidence of agreement), ``"unwritten"`` (the record held now has not been
+            written; any files present are an earlier write's), or ``"no record"`` (a
+            workspace opened without a ``run.json``).
+        """
+
+        if not self.manifest_path.exists():
+            return InputsVerdict("no record")
+        if self.status not in _WRITTEN_STATUSES:
+            return InputsVerdict("unwritten")
+        stored = (self.metadata or {}).get(self.INPUTS)
+        if not stored:
+            return InputsVerdict("unfingerprinted")
+        departs = dict(stored.get("departs") or {})
+        recorded = stored.get("sha") or {}
+        now = _input_file_hashes(self.workspace)
+        for name in sorted(set(recorded) | set(now)):
+            if name not in now:
+                why = "missing"
+            elif name not in recorded:
+                why = "added"
+            elif now[name] != recorded[name]:
+                why = "changed outside myflopy after its last write"
+            else:
+                continue
+            departs[name] = f"{departs[name]}, then {why}" if name in departs else why
+        if departs:
+            verdict = "edited"
+        else:
+            verdict = "ok" if stored.get("known") else "unfingerprinted"
+        return InputsVerdict(verdict, departs, stored.get("written_at"))
+
+    def _record_departures(self, *, full: bool = False) -> dict[str, str]:
+        """Input file to how it departs from this run's record; empty when they agree.
+
+        The one helper the write-backs ask (ledger 611). By default it reads
+        :attr:`inputs` -- hashes, cheap -- and runs the FULL check
+        (:meth:`_record_differences`, which builds and writes the record in a scratch
+        directory) only when that cannot answer: a run written before runs recorded
+        their inputs (``"unfingerprinted"``). ``full=True`` always runs it. A run with
+        no input files of its own (``"unwritten"``, ``"no record"``) has nothing to
+        compare and returns ``{}``.
+        """
+
+        verdict = self.inputs
+        if verdict.verdict in ("unwritten", "no record"):
+            return {}
+        if not full and verdict.verdict in ("ok", "edited"):
+            return dict(verdict.departs)
+        departs: dict[str, list[str]] = {}
+        for name, block, what in self._record_differences():
+            departs.setdefault(name, []).append(f"{block}: {what}" if block else what)
+        return {
+            name: "not what the record writes -- " + "; ".join(whats)
+            for name, whats in departs.items()
+        }
+
+    def _record_differences(self) -> list[tuple[str, str, str]]:
+        """``(file, block, what)`` for every way this run's input files differ from its record.
+
+        The full check (ledger 611): the record -- :meth:`_declared_spec`,
+        its library copies passed as the packages its references resolve to -- is
+        BUILT and WRITTEN in a temporary directory
+        and compared with the run's own input files by
+        :func:`~myflopy.run_record.written_differences`. Never :meth:`build`, which
+        writes into the run. Seconds on a large model (measured in the ledger entry).
+        """
+
+        import tempfile
+
+        declared = self._declared_spec()
+        with tempfile.TemporaryDirectory(prefix="myflopy-record-") as scratch:
+            scratch_path = Path(scratch)
+            context = self._context_for_build() or SpecBuildContext(
+                project_root=self.project_root
+            )
+            context = replace(
+                context,
+                simulation_workspace=scratch_path,
+                grid_workspace=scratch_path / "_grid",
+            )
+            built = declared.build_flopy(scratch_path, build_context=context)
+            built.simulation.write_simulation(silent=True)
+            return written_differences(self.workspace, scratch_path)
+
+    def _declared_spec(self) -> SimulationSpec:
+        """The simulation this run's record declares, its library slots as ``mf.ref(key)``.
+
+        Its frozen snapshot (ledger 251) when it has one, else :attr:`spec`. The
+        snapshot holds a LAZY library package's RESOLVED form in that package's slot
+        (``freeze``'s ``_for``), so each slot the manifest labels with a library key the
+        run recorded is put back as ``PackageRef(key)``: building it resolves the run's
+        own copy of that key. Paired with :attr:`package_keys` by position, over the
+        ENABLED entries the manifest lists.
+
+        Raises
+        ------
+        ValueError
+            When the run holds no record (no snapshot and no :attr:`spec`), or a model's
+            enabled entries do not pair with the labels its manifest lists.
+        """
+
+        spec = thaw_simulation(self.workspace, run_name=self.name) or self.spec
+        if spec is None:
+            raise ValueError(
+                f"Run {self.name!r} holds neither a frozen snapshot nor a rebuildable "
+                "recipe, so there is no record of what it declared."
+            )
+        keys = {*(self.package_digests or {}), *(self.package_snapshot or {})}
+        block = self.spec_block or {}
+
+        def _restored(entries, labels, where):
+            entries = tuple(entries)
+            enabled = [i for i, entry in enumerate(entries) if getattr(entry, "enabled", True)]
+            labels = list(labels)
+            if not labels:
+                return entries
+            if len(labels) != len(enabled):
+                raise ValueError(
+                    f"Run {self.name!r}: {where} lists {len(labels)} package(s) in its "
+                    f"manifest and {len(enabled)} in its record; they cannot be paired."
+                )
+            out = list(entries)
+            for index, label in zip(enabled, labels, strict=True):
+                if label in keys and not isinstance(out[index], PackageRef):
+                    out[index] = PackageRef(label)
+            return tuple(out)
+
+        models = []
+        for model in spec.models:
+            labels = self.package_keys.get(model.name, ())
+            models.append(replace(
+                model, packages=_restored(model.packages, labels, f"model {model.name!r}")
+            ))
+        packages = _restored(spec.packages, block.get("simulation_packages") or (),
+                             "the simulation")
+        return replace(spec, models=tuple(models), packages=packages)
+
     def _prepared_at(self) -> float | None:
         """When this run was prepared, as a POSIX timestamp, if it is knowable.
 
@@ -2562,7 +3063,10 @@ class Run:
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
             files (:meth:`open`, which raises ``FileNotFoundError`` without an
-            ``mfsim.nam``); ``False`` reads the manifest only.
+            ``mfsim.nam``); ``False`` reads the manifest only. Either way
+            :meth:`execute` runs the files as they stand -- opening them first when
+            nothing is loaded -- and never rebuilds the record over them; :meth:`build`
+            first does that (ledger 611).
         """
 
         workspace = Path(workspace)
@@ -3300,7 +3804,11 @@ class Project:
             ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
-            files; ``False`` reads the manifest only.
+            files; ``False`` reads the manifest only. Either way ``run.execute()``
+            runs the files as they stand and never rebuilds the run's record over
+            them; ``run.build()`` first does that -- so a run prepared before runs
+            kept copies is rebuilt from the library as it is now only by
+            ``build()`` (ledger 611).
         """
 
         run = Run.reopen(self.runs_dir / name, executable=executable, load=load)
