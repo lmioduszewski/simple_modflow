@@ -54,6 +54,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _read_declared_observations,
     _reading_weight_first,
     _readings,
+    _refuse_a_weight_column_not_there,
     _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
@@ -169,22 +170,26 @@ def _normalize_zone_locations(
     south drains listed by column read 245 of their 935 records.
     """
 
+    mapping = None
     if isinstance(locations, pd.Series):
         frame = locations.rename("cells").rename_axis(name_column).reset_index()
         if frame.columns[0] != name_column:
             frame = frame.rename(columns={frame.columns[0]: name_column})
+        mapping = "Series of name -> cells"
     elif isinstance(locations, dict):
         lower_keys = {str(key).strip().lower() for key in locations.keys()}
         if "name" in lower_keys or "cells" in lower_keys or "geometry" in lower_keys:
             frame = pd.DataFrame(locations)
         else:
             frame = pd.DataFrame({name_column: list(locations.keys()), "cells": list(locations.values())})
+            mapping = "dict of name -> cells"
     elif isinstance(locations, (list, tuple)):
         frame = pd.DataFrame(locations)
     elif isinstance(locations, (pd.DataFrame, gpd.GeoDataFrame)):
         frame = locations.copy()
     else:
         frame = gpd.read_file(locations)
+    _refuse_a_weight_column_not_there(frame.columns, weight_column, owner=owner, mapping=mapping)
 
     if name_column not in frame.columns:
         raise ValueError(f"{owner} locations must include a name column.")

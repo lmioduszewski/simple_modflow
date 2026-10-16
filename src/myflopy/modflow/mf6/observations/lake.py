@@ -278,9 +278,11 @@ class LakeStageTargets:
     weight_column : str or None, optional
         Column of a ``DataFrame`` or list-of-records ``locations`` holding each
         lake target's PEST weight, matched exactly and carried as ``weight``.
-        Default ``"weight"``; ``None``, or a table without the column, gives no
-        location weights, and a ``{name: lake}`` dict or a ``Series`` carries
-        none. A blank is "none of its own"; anything but a blank or a finite
+        Default ``"weight"``; ``None``, or a table without the default column,
+        gives no location weights, and a ``{name: lake}`` dict or a ``Series``
+        carries none. Any OTHER name the table lacks, or given with such a dict
+        or ``Series``, raises ``ValueError`` naming the columns the table has
+        (ledger 609). A blank is "none of its own"; anything but a blank or a finite
         number from 0 raises ``ValueError`` naming the target. It is the weight
         of each of the target's readings that holds a value and has no weight of
         its own in ``values`` -- a reading's own weight beats it, and it beats the

@@ -1076,7 +1076,10 @@ own, a weight that is not a finite number from 0 is refused, and a WIDE table wi
 `weight` column is refused naming the LONG form. Every family's locations carry a
 location weight (`weight_column=`, default `"weight"`), lake and SFR sets included --
 they dropped it until ledger 609; the spec's set `weight=` sits below it (a lake
-spec's `weight` no longer overrides a reading's). A location weight is checked as a
+spec's `weight` no longer overrides a reading's). A `weight_column=` other than the
+default that the locations table lacks -- or given with `{name: id}` dict or `Series`
+locations, which carry no columns -- is refused naming the columns the table has; the
+default absent still means no location weights. A location weight is checked as a
 reading's is, a lake or reach name given twice in a locations table is refused naming
 both rows, and `HeadTargets.from_records` and `LakeStageTargets.from_records` read a
 record's `weight` as that reading's.

@@ -66,9 +66,12 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         Column of ``locations`` holding a per-location PEST weight, carried as
         ``weight``; a value that is not ``NaN`` becomes the weight of each of
         that location's observations that has a target value. Default
-        ``"weight"``; ``None`` or absent leaves ``NaN``. A blank is "none of its
-        own"; anything but a blank or a finite number from 0 raises
-        ``ValueError`` naming the location (ledger 609).
+        ``"weight"``; ``None``, or the default absent, leaves ``NaN``. Any OTHER
+        name the table lacks raises ``ValueError`` naming the columns it has, as
+        does any other name given with ``{name: cell}`` dict or ``Series``
+        locations, which carry no columns. A blank is "none of its own";
+        anything but a blank or a finite number from 0 raises ``ValueError``
+        naming the location (ledger 609).
     time_column : str, optional
         Column of ``values`` holding each row's time label, read as a zero-based
         stress period, by number, by :meth:`compare` and the PEST build: ``1.0``

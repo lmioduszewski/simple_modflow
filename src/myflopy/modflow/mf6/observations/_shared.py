@@ -1215,6 +1215,7 @@ def _load_locations(
     naming ``owner``; ledger 609).
     """
 
+    mapping = None
     if isinstance(locations, gpd.GeoDataFrame):
         frame = locations.copy()
     elif isinstance(locations, pd.Series):
@@ -1222,18 +1223,21 @@ def _load_locations(
         frame = locations.rename("cell").rename_axis(index_name).reset_index()
         if index_name != name_column:
             frame = frame.rename(columns={index_name: name_column})
+        mapping = "Series of name -> cell"
     elif isinstance(locations, dict):
         lower_keys = {str(key).strip().lower() for key in locations.keys()}
         if {"name", "cell"} & lower_keys or {"name", "node"} & lower_keys:
             frame = pd.DataFrame(locations)
         else:
             frame = pd.DataFrame({name_column: list(locations.keys()), "cell": list(locations.values())})
+            mapping = "dict of name -> cell"
     elif isinstance(locations, (list, tuple)):
         frame = pd.DataFrame(locations)
     elif isinstance(locations, pd.DataFrame):
         frame = locations.copy()
     else:
         frame = gpd.read_file(locations)
+    _refuse_a_weight_column_not_there(frame.columns, weight_column, owner=owner, mapping=mapping)
 
     required = [name_column]
     missing = [column for column in required if column not in frame.columns]
@@ -1599,6 +1603,41 @@ def _refuse_names_repeated_in_a_layer(frame: pd.DataFrame) -> None:
 #: 504), matched ignoring case. It beats the location's weight, which beats
 #: the set's, which beats 1.0.
 ROW_WEIGHT_COLUMN = "weight"
+
+
+def _refuse_a_weight_column_not_there(
+    columns, weight_column: str | None, *, owner: str, mapping: str | None = None
+) -> None:
+    """Refuse a ``weight_column`` the caller NAMED that the locations do not carry (ledger 609).
+
+    The ONE check, for every family taking ``weight_column`` -- heads,
+    concentrations, DRN/RIV zones, lake and SFR stage/flow. The DEFAULT,
+    ``"weight"``, absent still means "no location weights", and ``None`` reads
+    none; any other name is a column the caller expects read, so a table
+    without it -- a typo, a renamed column -- left every location to the set's
+    weight, or 1.0, in silence. ``mapping`` names the shape of locations given
+    as ``{name: id}`` (a ``dict`` or ``Series``), which carry no columns at all.
+    The refusal names the columns the table has.
+    """
+
+    if weight_column is None or weight_column == ROW_WEIGHT_COLUMN:
+        return
+    if mapping is not None:
+        raise ValueError(
+            f"{owner} locations: weight_column={weight_column!r} names a column, and these "
+            f"locations are a {mapping}, which carries no columns. Give them as a table "
+            f"carrying {weight_column!r} (a DataFrame, a list of records or a file), or pass "
+            "weight_column=None to read no location weights."
+        )
+    columns = [str(column) for column in columns]
+    if weight_column in columns:
+        return
+    raise ValueError(
+        f"{owner} locations: weight_column={weight_column!r} names a column the locations "
+        f"table does not have; its columns are {_listing([repr(c) for c in columns], limit=20)}. "
+        "Name one of them, or pass weight_column=None to read no location weights (only "
+        "the default, 'weight', may be absent: it then means none)."
+    )
 
 #: Where a reading's own weight waits while its values meet the locations table,
 #: which carries a ``weight`` column of its own (ledger 504).
@@ -2214,8 +2253,10 @@ def _normalize_named_integer_locations(
     columns = ["name", id_column, "weight"]
     if locations is None:
         return pd.DataFrame(columns=columns)
+    mapping = None
     if isinstance(locations, pd.Series):
         frame = pd.DataFrame({"name": list(locations.index), id_column: list(locations.to_numpy())})
+        mapping = f"Series of name -> {id_column}"
     elif isinstance(locations, pd.DataFrame):
         required = {"name", id_column}
         if required - set(locations.columns):
@@ -2231,6 +2272,8 @@ def _normalize_named_integer_locations(
     else:
         source = dict(locations)
         frame = pd.DataFrame({"name": list(source.keys()), id_column: list(source.values())})
+        mapping = f"dict of name -> {id_column}"
+    _refuse_a_weight_column_not_there(frame.columns, weight_column, owner=target_name, mapping=mapping)
     if frame.empty:
         return pd.DataFrame(columns=columns)
 

@@ -230,8 +230,11 @@ class HeadTargets:
         observation at that location that has a target value and no weight of
         its own in ``values`` (a reading's weight wins, ledger 504), and
         ``NaN`` gives those observations weight 1; a period with no target value
-        carries weight 0 (ledger 340). Default ``"weight"``; ``None`` or an
-        absent column leaves it ``NaN``. A blank is "none of its own";
+        carries weight 0 (ledger 340). Default ``"weight"``; ``None``, or the
+        default absent, leaves it ``NaN``. Any OTHER name the table lacks raises
+        ``ValueError`` naming the columns it has, as does any other name given
+        with ``{name: cell}`` dict or ``Series`` locations, which carry no
+        columns (ledger 609). A blank is "none of its own";
         anything but a blank or a finite number from 0 raises ``ValueError``
         naming the location (ledger 609: it was not checked, and a
         weight of -3 reached the control file as -3.0).

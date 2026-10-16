@@ -160,8 +160,11 @@ class RivFlowTargets(_CellZoneFlowTargets):
         :meth:`compare` alike (ledger 359).
     weight_column : str or None, optional
         Column of ``locations`` holding each zone's observation weight, renamed
-        ``weight``. Default ``"weight"``; ``None`` or an absent column leaves it
-        ``NaN``. A PEST build sets a zone's non-``NaN`` weight on each
+        ``weight``. Default ``"weight"``; ``None``, or the default absent, leaves
+        it ``NaN``. Any OTHER name the table lacks raises ``ValueError`` naming
+        the columns it has, as does any other name given with ``{name: cells}``
+        dict or ``Series`` locations, which carry no columns (ledger 609).
+        A PEST build sets a zone's non-``NaN`` weight on each
         observation of that zone that has a target value and no weight of its
         own, and weight 1 where both are ``NaN``; a zone given as rows with
         DIFFERENT weights is refused, and every period without a target value

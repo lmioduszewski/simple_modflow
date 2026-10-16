@@ -425,7 +425,10 @@ lake, SFR stage and flow, DRN/RIV zones), which beats the set's
 (`LakeStageObservationSpec(weight=)`, `SfrStageObservationSpec(weight=)`,
 `SfrFlowObservationSpec(weight=)`, `DrnFlowObservationSpec(weight=)`,
 `RivFlowObservationSpec(weight=)`), which beats 1.0. A blank weight means "none of its
-own". A WIDE values table cannot carry one and is refused naming the LONG form. A location
+own". A WIDE values table cannot carry one and is refused naming the LONG form. A
+`weight_column=` other than the default that the locations table lacks (or given with
+`{name: id}` dict or `Series` locations, which carry no columns) is refused naming the
+table's columns; the default `"weight"` absent means no location weights. A location
 weight that is not blank or a finite number from 0 is refused naming the location, and a
 lake or reach name given twice in a locations table is refused naming both rows (ledger
 609: lake and SFR sets dropped their locations' weight column, so those

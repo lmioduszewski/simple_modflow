@@ -268,3 +268,65 @@ def test_a_specs_set_weight_is_documented_below_the_locations(spec):
     doc = inspect.cleandoc(spec.__doc__)
     entry = re.search(r"^weight : .*?(?=^\w+ : |\Z)", doc, re.S | re.M).group(0)
     assert "weight_column" in entry and "locations table" in entry, entry
+
+
+_EVERY_FAMILY_TABLE = {
+    mf.HeadTargets: ("cell", 1), mf.ConcTargets: ("cell", 1),
+    mf.LakeStageTargets: ("lake", 0), mf.SfrStageTargets: ("reach", 0),
+    mf.SfrFlowTargets: ("reach", 0),
+    mf.DrnFlowTargets: ("cells", [1]), mf.RivFlowTargets: ("cells", [1]),
+}
+
+
+@pytest.mark.parametrize("family", list(_EVERY_FAMILY_TABLE))
+@pytest.mark.parametrize("shape", ["frame", "records"])
+def test_a_named_weight_column_the_table_lacks_is_refused_naming_its_columns(family, shape):
+    """A typo'd ``weight_column`` left every location to the set's weight, or 1.0, in silence.
+
+    Only the DEFAULT, ``"weight"``, may be absent (no location weights); any other
+    name is refused through one helper, naming the columns the table has.
+    """
+
+    id_column, ident = _EVERY_FAMILY_TABLE[family]
+    rows = [{"name": "a", id_column: ident, "wt": 5.0}]
+    locations = pd.DataFrame(rows) if shape == "frame" else rows
+    values = pd.DataFrame({"time": [0], "a": [-1.0]})
+    with pytest.raises(ValueError, match=(
+        rf"{family.__name__} locations: weight_column='w' names a column the locations table "
+        rf"does not have; its columns are 'name'; '{id_column}'; 'wt'"
+    )):
+        family(locations=locations, values=values, weight_column="w")
+    # The column it names, the default absent and None all read.
+    assert family(locations=locations, values=values, weight_column="wt").get()["weight"].tolist() == [5.0]
+    assert np.isnan(family(locations=locations, values=values).get()["weight"].iloc[0])
+    assert np.isnan(family(locations=locations, values=values, weight_column=None).get()["weight"].iloc[0])
+
+
+@pytest.mark.parametrize("family", list(_EVERY_FAMILY_TABLE))
+@pytest.mark.parametrize("shape", ["dict", "series"])
+def test_a_named_weight_column_on_name_to_id_locations_is_refused(family, shape):
+    """A ``{name: id}`` dict or ``Series`` carries no columns, so a named weight column has none to read."""
+
+    id_column, ident = _EVERY_FAMILY_TABLE[family]
+    locations = {"a": ident} if shape == "dict" else pd.Series({"a": ident})
+    values = pd.DataFrame({"time": [0], "a": [-1.0]})
+    kind = "dict" if shape == "dict" else "Series"
+    with pytest.raises(ValueError, match=(
+        rf"{family.__name__} locations: weight_column='w' names a column, and these locations "
+        rf"are a {kind} of name -> {id_column}, which carries no columns"
+    )):
+        family(locations=locations, values=values, weight_column="w")
+    assert np.isnan(family(locations=locations, values=values).get()["weight"].iloc[0])
+    assert np.isnan(family(locations=locations, values=values, weight_column=None).get()["weight"].iloc[0])
+
+
+def test_from_hydrographs_refuses_a_named_weight_column_the_table_lacks():
+    """The hydrograph route reads its locations through the same loaders (no model needed to refuse)."""
+
+    readings = pd.DataFrame({"date": ["2024-01-01"], "a": [1.0]})
+    with pytest.raises(ValueError, match=r"HeadTargets locations: weight_column='w' names a column"):
+        mf.HeadTargets.from_hydrographs(
+            pd.DataFrame({"name": ["a"], "cell": [1]}), readings, model=None, weight_column="w")
+    with pytest.raises(ValueError, match=r"LakeStageTargets locations: weight_column='w' names a column"):
+        mf.LakeStageTargets.from_hydrographs(
+            pd.DataFrame({"name": ["a"], "lake": [0]}), readings, model=None, weight_column="w")

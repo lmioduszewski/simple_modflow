@@ -22771,6 +22771,11 @@ same day, which is the useful part of the result.
       the first) and reads a record's `weight` as that reading's (it dropped it). The
       refusals that named `cal.observe(..., weight=)` -- which does not exist -- or "the
       locations' weight column" -- the one that was dropped -- now name `weight_column=`.
+      A `weight_column=` other than the default that the table lacks, or given with `{name:
+      id}` dict/`Series` locations (no columns), is REFUSED naming the table's columns on
+      every family, through ONE `_shared._refuse_a_weight_column_not_there` (coordinator
+      decision, 2026-10-16: a typo left every location to the set's weight in silence); the
+      default `"weight"` absent still means no location weights.
       **Judgment calls:** a set given no values shows its location weight in `compare()`
       although the build gives each such row weight 0 (the zones' precedent). The
       forward-run snapshot stays `name`/`lake|reach`: weights are a build-time matter, so a
