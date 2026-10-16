@@ -95,3 +95,42 @@ def test_plain_raster_surface_is_not_derived(tmp_path):
     surface = Surface.raster(tmp_path / "r.tif")
     assert surface.is_derived is False
     assert surface.cache_status() is None
+
+
+def test_a_stale_cache_missing_a_required_parameter_is_refused(tmp_path):
+    """`requires=` (ledger 602): a cache made under a rule since found wrong.
+
+    Such a cache is refused, `warn=False` included; `refresh=True` rebuilds it; and a
+    stale cache whose sidecar DOES record the parameter keeps the stale-reuse rule.
+    """
+
+    src = tmp_path / "s.txt"
+    src.write_text("x")
+    out = tmp_path / "o.tif"
+    calls = {"n": 0}
+
+    def produce():
+        calls["n"] += 1
+        out.write_text("r")
+
+    DerivedRaster(out, [src], {"resolution": 4}, produce).ensure()   # the old rule's cache
+    current = DerivedRaster(out, [src], {"resolution": 4, "moved": {"a": "EPSG:4326"}},
+                            produce, requires={"moved": "made by the old rule"})
+    assert current.status() == "stale"
+    for warn in (True, False):
+        with pytest.raises(ValueError, match="made by the old rule"):
+            current.ensure(warn=warn)
+    assert calls["n"] == 1
+
+    current.ensure(refresh=True)
+    assert calls["n"] == 2 and current.status() == "fresh"
+
+    src.write_text("y")                       # stale again, but the sidecar records `moved`
+    with pytest.warns(UserWarning, match="stale"):
+        current.ensure()
+    assert calls["n"] == 2
+
+
+def test_a_requirement_must_be_a_parameter(tmp_path):
+    with pytest.raises(ValueError, match="requires= names"):
+        DerivedRaster(tmp_path / "o.tif", [], {"a": 1}, lambda: None, requires={"b": "m"})

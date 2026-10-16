@@ -548,6 +548,16 @@ release-group boundnames; without them it names the fix and offers
   builders write an abbreviation an EXISTING spec holds -- a saved project, a
   frozen run -- as MF6's word (`"ft"` -> `FEET`), and refuse an unknown word
   (ledger 432).
+- `mf.Contours(contours, z=, region_vector= | region_raster=, resolution=, epsg=)` —
+  a surface interpolated by GRASS in its LOCATION's CRS (`epsg=`, default 2927;
+  `resolution=` in its units). The contour file and a `region_vector` in another CRS
+  are reprojected into it, by the rule every `.gpkg` source follows, and a file
+  carrying no CRS is read as already in it (ledger 602; before, a 4326
+  contour file interpolated 0 of 6,000 pixels in silence). Refused before GRASS
+  starts, each naming the spelling: a `region_raster` in another CRS (pass
+  `region_vector=`), an `epsg=` an existing location contradicts (pass `location=`),
+  contours reaching no part of the region's extent (both extents in the message);
+  and a cache interpolated before this from a file in another CRS (`refresh=True`).
 - `stack.excavate(bottom, within, *, name=, layer=, min_remnant=0.1)` — a void cut
   into the stack: a pond, basin, pit or trench (ledger 320). Inside `within` — the
   SAME polygons you pass to `mf.lak(lakes=)`, read by the same reader and covering

@@ -47,7 +47,13 @@ from myflopy.modflow.mf6.grid.geometry import (
     refuse_footprint_misses,
 )
 from myflopy.modflow.mf6.grid.surfaces import _area_weighted_sample, get_raster_vals_at_centroids
+from myflopy.modflow.utils.contour_interp import (
+    ContourFrame,
+    contour_frame,
+    interpolate_contours_to_raster,
+)
 from myflopy.modflow.utils.datatypes.readers import _vector_layer_name
+from myflopy.modflow.utils.derived_raster import DerivedRaster
 
 _logger = get_logger(__name__)
 
@@ -645,17 +651,23 @@ class Surface:
     z : str, default "Elev"
         The contours' elevation attribute.
     region_raster : pathlib.Path, optional
-        Raster whose extent is the GRASS region.
+        Raster whose extent is the GRASS region; it must already be in the GRASS
+        location's CRS (``epsg``), or carry none.
     region_vector : pathlib.Path, optional
-        Polygon whose extent (and shape, with ``clip``) is the GRASS region.
+        Polygon whose extent (and shape, with ``clip``) is the GRASS region,
+        reprojected into the location's CRS like ``contours``.
     clip : bool, default True
         Null the interpolation outside the region.
     resolution : float, default 4
-        Cell size of the interpolated raster, in the CRS's units.
+        Output cell size, in the units of the GRASS location's CRS (``epsg``): feet at
+        the default EPSG:2927, whatever CRS the contour file is in.
     out : pathlib.Path, optional
         Where the interpolated GeoTIFF (the cache) is written.
     epsg : str, default "2927"
-        EPSG code of the GRASS location.
+        EPSG code of the GRASS location: the CRS GRASS interpolates in, the raster is
+        written in, and ``contours``/``region_vector`` are reprojected into. An
+        existing location keeps its own CRS, so one that disagrees is refused, naming
+        ``location=``.
     grass_kwargs : dict, optional
         Extra keywords for the GRASS interpolator; part of the cache signature.
     progress : bool, default False
@@ -1020,7 +1032,13 @@ class Surface:
         Parameters
         ----------
         contours : Path or str
-            Vector file of labelled elevation contour lines. Stored as a ``Path``.
+            Vector file of labelled elevation contour lines, read as its first layer.
+            In a CRS other than the location's (``epsg=``) it is reprojected into it
+            when the surface is first resolved, by the rule every ``.gpkg`` source
+            follows (ledger 602); a file carrying NO CRS is read as already
+            in the location's CRS, as every myflopy vector reader reads one.
+            Contours reaching no part of the region's extent are refused before
+            GRASS starts, naming both extents. Stored as a ``Path``.
         z : str, default "Elev"
             The attribute holding each contour's elevation.
         region_raster : Path or str, optional
@@ -1032,20 +1050,32 @@ class Surface:
             model makes every interpolation proportionally slower, and the extra
             area is the worst case for ``r.surf.contour`` because it has no
             contours to work from out there. Prefer ``region_vector``.
+
+            It must already be in the location's CRS (or carry none, and be read
+            as in it): a raster region is read as it is, never reprojected, so one
+            in another CRS is refused at resolution, naming ``region_vector=``.
         region_vector : Path or str, optional
             Polygon whose extent becomes the GRASS region -- usually your model
             domain, which is normally what you want interpolated and no more.
             Stored as a ``Path``: a ``str`` was kept as given while
             :meth:`from_dict` revives a ``Path``, so a saved-and-reloaded contour
             surface compared ``!=`` the original with an identical payload (found
-            2026-09-25).
+            2026-09-25). Reprojected into the location's CRS like ``contours``; one
+            carrying no CRS is read as already in it.
         resolution : float, default 4
-            Output cell size, in the CRS's units.
+            Output cell size, in the units of the GRASS location's CRS (``epsg=``):
+            feet at the default EPSG:2927, whatever CRS the contour file is in.
         out : Path or str, optional
-            Where the interpolated GeoTIFF lands. Defaults to the contours path
-            with a ``.interp.tif`` suffix. Stored as a ``Path``.
+            Where the interpolated GeoTIFF lands, written in the location's CRS.
+            Defaults to the contours path with a ``.interp.tif`` suffix. Stored as a
+            ``Path``.
         epsg : str, default "2927"
-            EPSG code for the GRASS location.
+            The bare EPSG code of the GRASS location: the CRS GRASS interpolates in,
+            the raster is written in, and ``contours``/``region_vector`` are
+            reprojected into. It is used to CREATE the location on first use; an
+            existing location keeps its own CRS, so one that disagrees is refused at
+            resolution, naming ``location=``. The sampled values are right in any
+            CRS, because :meth:`values` reprojects the grid's cells to the raster's.
         units : str, optional
             Length unit of the elevations, converted to the model's if they differ.
         clip : bool, default True
@@ -1851,17 +1881,34 @@ class Surface:
 
         return self.kind == "contours"
 
-    def _derived_raster(self):
-        """Return the :class:`DerivedRaster` cache handle for a derived surface."""
+    def _contour_frame(self) -> ContourFrame:
+        """The frame this contour surface's GRASS location works in, and its inputs' CRSs.
 
-        from myflopy.modflow.utils.derived_raster import DerivedRaster
+        Reads CRSs only (:func:`~myflopy.modflow.utils.contour_interp.contour_frame`).
+        Built from the surface's fields and the ``grassdata``/``location`` it passes
+        GRASS -- not by constructing the interpolator, which would refuse a
+        ``grass_kwargs`` name it does not take here rather than at the GRASS run.
+        """
+
+        return contour_frame(
+            self.contours,
+            region_vector=self.region_vector,
+            region_raster=self.region_raster,
+            epsg=self.epsg,
+            grassdata=self.grass_kwargs.get("grassdata"),
+            location=self.grass_kwargs.get("location"),
+        )
+
+    def _derived_raster(self, frame: ContourFrame | None = None):
+        """Return the :class:`DerivedRaster` cache handle for a derived surface.
+
+        ``frame`` is this surface's :meth:`_contour_frame`, read here when not given.
+        """
+
+        frame = frame if frame is not None else self._contour_frame()
 
         def produce() -> None:
             """Regenerate the derived raster by interpolating this surface's contours."""
-
-            from myflopy.modflow.utils.contour_interp import (
-                interpolate_contours_to_raster,
-            )
 
             interpolate_contours_to_raster(
                 self.contours,
@@ -1894,7 +1941,25 @@ class Surface:
             "clip": self.clip,
             "grass_kwargs": {k: str(v) for k, v in self.grass_kwargs.items()},
         }
-        return DerivedRaster(self.out, sources, params, produce)
+        requires = None
+        moved = frame.reprojected
+        if moved:
+            # Recorded ONLY when an input moves (ledger 602): a surface
+            # whose files are in the location's CRS keeps a byte-identical key, so no
+            # correct cache moves. A cache whose sidecar lacks it, while an input now
+            # moves, was interpolated before inputs were reprojected -- at the file's
+            # raw coordinates -- so it is REFUSED rather than reused as merely stale.
+            params["reprojected"] = moved
+            read = " and ".join(f"{role} in {crs}" for role, crs in moved.items())
+            requires = {"reprojected": (
+                f"The cached raster '{self.out.name}' was interpolated before myflopy "
+                "reprojected a contour surface's inputs (ledger 602): "
+                f"{read} reached GRASS read as {frame.target}, so it holds the wrong "
+                "place, not an older version of the right one. It is not reused. "
+                "Rebuild it: values(vor, refresh=True) / resolve_source(refresh=True), "
+                "or refresh=True on the stack's build()/qc()/to_disv()."
+            )}
+        return DerivedRaster(self.out, sources, params, produce, requires=requires)
 
     def cache_status(self) -> str | None:
         """``"missing"``/``"fresh"``/``"stale"`` for derived surfaces, else ``None``."""
@@ -1905,7 +1970,9 @@ class Surface:
         """Return a raster path or flat constant for centroid sampling.
 
         Derived surfaces (contours) interpolate to a cached raster on first use;
-        a stale cache is reused with a warning unless ``refresh=True``.
+        a stale cache is reused with a warning unless ``refresh=True``. Before any
+        cache is read, a contour surface's frame is checked (ledger
+        602): its inputs' CRSs against the GRASS location's.
 
         Parameters
         ----------
@@ -1929,6 +1996,13 @@ class Surface:
         TypeError
             Any other kind -- relative, points, array or algebra surfaces have no
             single raster or constant.
+        ValueError
+            For a contour surface, before any cache is read or GRASS started: the
+            GRASS location already exists in a CRS other than ``epsg=``'s (pass
+            ``location=``), or ``region_raster`` is in another CRS (pass
+            ``region_vector=``). When GRASS must run: no contour reaches the region's
+            extent. And a cache interpolated, before inputs were reprojected, from a
+            file in another CRS is refused unless ``refresh=True``.
         """
 
         if self.kind == "flat":
@@ -1936,7 +2010,9 @@ class Surface:
         if self.kind == "raster":
             return self.path
         if self.kind == "contours":
-            return self._derived_raster().ensure(refresh=refresh, warn=warn)
+            frame = self._contour_frame()
+            frame.refuse()
+            return self._derived_raster(frame).ensure(refresh=refresh, warn=warn)
         raise TypeError(f"Surface kind '{self.kind}' has no raster/constant source.")
 
     def _basin_label(self) -> str:
@@ -2091,7 +2167,10 @@ class Surface:
             wrong size; an unknown ``fill``; an unknown ``method`` on a raster; with
             ``units=`` on a relative or algebra surface, an unknown length unit on
             either side, or ``units=`` on a surface sampled with no
-            ``length_units``.
+            ``length_units``. For a contour surface, what :meth:`resolve_source`
+            refuses: a GRASS location or region raster in another CRS, contours
+            reaching none of the region, a cache interpolated before its inputs were
+            reprojected (ledger 602).
         TypeError
             An unknown ``kind``.
         """

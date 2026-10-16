@@ -4,6 +4,13 @@ This wraps GRASS ``r.surf.contour`` to build a raster elevation surface from
 drawn elevation contours -- the contour-following interpolation myflopy's
 ``Surface.from_contours`` relies on.
 
+GRASS works in ONE frame, its location's CRS, and imports with ``-o`` (no
+projection check of its own). So every input is brought into that frame first
+(ledger 602): :func:`contour_frame` reads each file's CRS and the
+location's, :meth:`ContourFrame.refuse` refuses what cannot be reconciled, and
+:func:`stage_contour_inputs` writes the contours and a region polygon,
+reprojected, as the GeoPackage copies GRASS is actually given.
+
 GRASS is an optional **system** dependency (it is not installed via pip), so its
 Python modules are imported lazily. Importing this module never requires GRASS;
 only actually running an interpolation does.
@@ -16,11 +23,20 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+from dataclasses import dataclass
 from pathlib import Path
+
+import geopandas as gpd
+import rasterio
+import shapely
+from pyproj import CRS
 
 from myflopy._defaults import DEFAULT_EPSG
 from myflopy._logging import get_logger
+from myflopy.areas import _same_crs
+from myflopy.modflow.utils.datatypes.readers import read_vector_layer
 
 logger = get_logger(__name__)
 
@@ -28,6 +44,16 @@ logger = get_logger(__name__)
 #: ship the unversioned ``grass``; the versioned names are the fallbacks for
 #: installs that keep several side by side.
 _GRASS_EXECUTABLES = ("grass", "grass84", "grass83", "grass8", "grass78")
+
+#: The GRASS location every contour surface shares unless ``location=`` names
+#: another. One location has ONE CRS, set when it is created.
+DEFAULT_LOCATION = "myflopy_interp"
+
+
+def _default_grassdata() -> Path:
+    """The GRASS database directory used when ``grassdata=`` is not given."""
+
+    return Path.home() / "grassdata"
 
 
 def _import_grass_modules():
@@ -258,12 +284,373 @@ def _teed_console(enabled: bool):
             sink.close()
 
 
+def _location_crs(location_path: Path | str) -> str | None:
+    """The CRS a GRASS location was created in, or ``None`` when it does not exist.
+
+    Read from the files GRASS writes into ``PERMANENT``: ``PROJ_SRID`` (GRASS 8,
+    ``EPSG:2927``), then ``PROJ_WKT``, then GRASS 7's ``PROJ_EPSG`` (``epsg: 2927``).
+    A location holding none of them (an XY location, or one not created yet) has no
+    CRS to compare against and reads ``None``.
+    """
+
+    permanent = Path(location_path) / "PERMANENT"
+    srid = permanent / "PROJ_SRID"
+    if srid.is_file() and srid.read_text().strip():
+        return srid.read_text().strip()
+    wkt = permanent / "PROJ_WKT"
+    if wkt.is_file() and wkt.read_text().strip():
+        return wkt.read_text().strip()
+    epsg = permanent / "PROJ_EPSG"
+    if epsg.is_file():
+        for line in epsg.read_text().splitlines():
+            key, _, value = line.partition(":")
+            if key.strip().lower() == "epsg" and value.strip():
+                return f"EPSG:{value.strip()}"
+    return None
+
+
+def _crs_label(crs) -> str:
+    """A CRS as a message names it: ``EPSG:n`` when it has a code, else its name."""
+
+    parsed = CRS.from_user_input(crs)
+    code = parsed.to_epsg()
+    return f"EPSG:{code}" if code is not None else parsed.name
+
+
+@dataclass(frozen=True)
+class ContourInput:
+    """One file a contour surface reads, and the CRS it carries.
+
+    Attributes
+    ----------
+    role : {'contours', 'region_vector', 'region_raster'}
+        What the file is to the interpolation; messages name it by this.
+    path : pathlib.Path
+        The file, as the surface declared it.
+    crs : str or None
+        Its CRS as ``pyproj``'s ``to_string()`` spells it (``"EPSG:4326"``), or
+        ``None`` when the file carries none -- or does not exist yet.
+    exists : bool
+        Whether the file exists. A missing file is never refused here: a cache is
+        reused under the stale rule, and GRASS names the path if it must run.
+    """
+
+    role: str
+    path: Path
+    crs: str | None
+    exists: bool
+
+    @property
+    def is_vector(self) -> bool:
+        """True for the contours and a region polygon, the two inputs that are reprojected."""
+
+        return self.role != "region_raster"
+
+
+@dataclass(frozen=True)
+class ContourFrame:
+    """The frame a GRASS contour interpolation works in, and each input's own CRS.
+
+    Built by :func:`contour_frame`, which reads CRSs and nothing else. GRASS works in
+    its LOCATION's CRS and imports with ``-o``, so it never compares the two itself;
+    this is where they are compared (ledger 602).
+
+    Attributes
+    ----------
+    target : str
+        ``"EPSG:<epsg>"``, the CRS the inputs are reprojected into and the raster is
+        written in.
+    location : pathlib.Path
+        The GRASS location directory, ``<grassdata>/<location>``.
+    location_crs : str or None
+        The CRS that location was created in, as GRASS recorded it; ``None`` while
+        the location does not exist (it is created in ``target`` on first use).
+    inputs : tuple of ContourInput
+        The contours, then the region (a polygon or a raster), each with its CRS.
+    """
+
+    target: str
+    location: Path
+    location_crs: str | None
+    inputs: tuple[ContourInput, ...]
+
+    def _input(self, role: str) -> ContourInput | None:
+        """The input playing ``role``, or ``None``."""
+
+        return next((item for item in self.inputs if item.role == role), None)
+
+    @property
+    def reprojected(self) -> dict[str, str]:
+        """``{role: crs}`` for each existing vector input in a CRS other than ``target``.
+
+        Empty when every input is already in the location's frame -- or carries no
+        CRS, which is READ as that frame, the rule every myflopy vector reader follows
+        -- so a surface whose files never move keeps its cache key unchanged.
+        """
+
+        return {
+            item.role: item.crs
+            for item in self.inputs
+            if item.is_vector and item.exists and item.crs is not None
+            and not _same_crs(item.crs, self.target)
+        }
+
+    def refuse(self) -> None:
+        """Raise for a frame no reprojection can reconcile; otherwise return ``None``.
+
+        Run before any cache is read and before GRASS starts, so a refusal needs no
+        GRASS and a cache made under such a frame is never reused in silence.
+
+        Raises
+        ------
+        ValueError
+            The GRASS location already exists in a CRS other than ``target`` -- GRASS
+            reads ``epsg=`` only when it CREATES a location, so the raster would be
+            written in the location's CRS whatever ``epsg=`` says (measured: ``"32610"``
+            on an EPSG:2927 location wrote a raster labelled EPSG:2927 holding metre
+            coordinates). Or a ``region_raster`` is in another CRS: a raster region is
+            read as it is, never reprojected.
+        """
+
+        if self.location_crs is not None and not _same_crs(self.location_crs, self.target):
+            have = _crs_label(self.location_crs)
+            code = self.target.split(":", 1)[1]
+            raise ValueError(
+                f"The GRASS location '{self.location}' already exists in {have}, and "
+                f"epsg={code!r} asks for {self.target}. GRASS works in the location's own "
+                "CRS and never reads epsg= again, so the raster would be written in "
+                f"{have}. Pass location='{self.location.name}_{code}' (a location of its "
+                f"own, created on first use), or epsg={have.split(':', 1)[-1]!r}."
+            )
+        raster = self._input("region_raster")
+        if (
+            raster is not None and raster.exists and raster.crs is not None
+            and not _same_crs(raster.crs, self.target)
+        ):
+            raise ValueError(
+                f"region_raster '{raster.path.name}' is in {_crs_label(raster.crs)}, and "
+                f"GRASS works in its location's {self.target}. A raster region is read as "
+                "it is, never reprojected, so its extent would land in the wrong place. "
+                "Pass region_vector=<the domain polygon>, which is reprojected for you, or "
+                f"reproject the raster to {self.target} first."
+            )
+
+
+def _vector_crs(path: Path) -> str | None:
+    """A vector file's CRS as ``to_string()`` spells it, reading one feature."""
+
+    crs = gpd.read_file(path, rows=1).crs
+    return None if crs is None else crs.to_string()
+
+
+def _raster_crs(path: Path) -> str | None:
+    """A raster's CRS as ``to_string()`` spells it, or ``None`` when it carries none."""
+
+    with rasterio.open(path) as handle:
+        return None if handle.crs is None else handle.crs.to_string()
+
+
+def contour_frame(
+    contours: Path | str,
+    *,
+    region_vector: Path | str | None = None,
+    region_raster: Path | str | None = None,
+    epsg: str | int = str(DEFAULT_EPSG),
+    grassdata: Path | str | None = None,
+    location: str | None = None,
+) -> ContourFrame:
+    """Read the CRS of a contour interpolation's inputs and of its GRASS location.
+
+    Reads CRSs only -- one feature of each vector file, a raster's header, the
+    location's ``PERMANENT`` projection files -- so it is cheap enough to run on every
+    resolution of a contour surface, and it raises nothing for a file that does not
+    exist yet (``cache_status()`` is asked about paths not yet written).
+
+    Parameters
+    ----------
+    contours : str or pathlib.Path
+        The contour-line vector file.
+    region_vector : str or pathlib.Path, optional
+        The region polygon, when the region is a vector. Default None.
+    region_raster : str or pathlib.Path, optional
+        The region raster, when the region is a raster. Default None.
+    epsg : str or int, default "2927"
+        The EPSG code (bare, as ``"2927"`` or ``2927``) of the GRASS location: the
+        CRS the vector inputs are reprojected into and the raster is written in.
+    grassdata : str or pathlib.Path, optional
+        The GRASS database directory. ``None`` (the default) is ``~/grassdata``, as
+        :class:`ContourSurfaceInterpolator` uses.
+    location : str, optional
+        The GRASS location's name inside ``grassdata``. ``None`` (the default) is
+        ``"myflopy_interp"``.
+
+    Returns
+    -------
+    ContourFrame
+        The target CRS, the location and its CRS (``None`` while it does not exist),
+        and each input with its own CRS.
+    """
+
+    grassdata = Path(grassdata) if grassdata is not None else _default_grassdata()
+    location_path = grassdata / (location if location is not None else DEFAULT_LOCATION)
+    inputs = []
+    for role, path, reader in (
+        ("contours", contours, _vector_crs),
+        ("region_vector", region_vector, _vector_crs),
+        ("region_raster", region_raster, _raster_crs),
+    ):
+        if path is None:
+            continue
+        path = Path(path)
+        exists = path.exists()
+        inputs.append(ContourInput(role, path, reader(path) if exists else None, exists))
+    return ContourFrame(
+        target=f"EPSG:{epsg}",
+        location=location_path,
+        location_crs=_location_crs(location_path),
+        inputs=tuple(inputs),
+    )
+
+
+def _in_target(frame: ContourFrame, item: ContourInput) -> gpd.GeoDataFrame:
+    """A vector input read and brought into ``frame.target``.
+
+    A file in another CRS is reprojected (``to_crs``, the rule every ``.gpkg`` source
+    follows); one carrying NO CRS is read as already in the location's frame -- the
+    rule every myflopy vector reader follows (decided 2026-10-16, ledger
+    602) -- and labelled so.
+    """
+
+    frame_gdf = read_vector_layer(item.path)
+    if frame_gdf.crs is None:
+        return frame_gdf.set_crs(frame.target)
+    if not _same_crs(frame_gdf.crs, frame.target):
+        return frame_gdf.to_crs(frame.target)
+    return frame_gdf
+
+
+def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path, Path | None]:
+    """Write the contours and a region polygon, in the location's CRS, for GRASS.
+
+    The staged GeoPackage copies are the only files GRASS imports. A copy of a file
+    already in the frame imports identically to the file itself (measured: 17,688
+    pixels, max |diff| 0.0), so staging always happens, one code path. A contour file
+    holding several layers is read as its FIRST, as every myflopy vector reader reads
+    one.
+
+    Parameters
+    ----------
+    frame : ContourFrame
+        From :func:`contour_frame`, already passed through :meth:`ContourFrame.refuse`.
+    scratch : str or pathlib.Path
+        An existing directory to write into; the caller removes it.
+
+    Returns
+    -------
+    tuple of (pathlib.Path, pathlib.Path or None)
+        The staged contours, and the staged region polygon (``None`` when the region
+        is a raster, which GRASS reads as it is).
+
+    Raises
+    ------
+    ValueError
+        No contour reaches the region's extent -- GRASS's computational region is
+        that box, so ``r.surf.contour`` would have nothing to interpolate from and
+        runs at 0% indefinitely (ledger 149). The message gives both extents in the
+        location's CRS and, when the contour file was moved or carries no CRS, what
+        it was read as.
+    """
+
+    scratch = Path(scratch)
+    contours_item = frame._input("contours")
+    contours = _in_target(frame, contours_item)
+    region_vector = frame._input("region_vector")
+    region_raster = frame._input("region_raster")
+    staged_region = None
+    if region_vector is not None:
+        region = _in_target(frame, region_vector)
+        bounds, region_path = tuple(region.total_bounds), region_vector.path
+        staged_region = scratch / "region.gpkg"
+        region.to_file(staged_region, driver="GPKG")
+    elif region_raster is not None and region_raster.exists:
+        with rasterio.open(region_raster.path) as handle:
+            bounds, region_path = tuple(handle.bounds), region_raster.path
+    else:
+        bounds = region_path = None
+    if bounds is not None:
+        box = shapely.box(*bounds)
+        if not contours.geometry.intersects(box).any():
+            def extent(values) -> str:
+                return "(" + ", ".join(f"{value:,.6g}" for value in values) + ")"
+
+            if contours_item.crs is None:
+                read_as = (f" The contours' file carries no CRS and was read as "
+                           f"{frame.target}.")
+            elif not _same_crs(contours_item.crs, frame.target):
+                read_as = f" The contours' file is in {_crs_label(contours_item.crs)}."
+            else:
+                read_as = ""
+            raise ValueError(
+                f"None of the {len(contours)} contours in '{contours_item.path.name}' "
+                f"reach the extent of region '{region_path.name}', so GRASS has no "
+                "contour to interpolate from -- r.surf.contour then runs at 0% "
+                f"indefinitely (ledger 149). The contours cover "
+                f"{extent(contours.total_bounds)} and the region "
+                f"{extent(bounds)}, both in {frame.target}.{read_as} Check they are the "
+                "same place in the same CRS."
+            )
+    staged_contours = scratch / "contours.gpkg"
+    contours.to_file(staged_contours, driver="GPKG")
+    return staged_contours, staged_region
+
+
 class ContourSurfaceInterpolator:
     """Create an interpolated raster surface from vector elevation contours.
 
     Parameters mirror the GRASS workflow: import the contours, set a region from
     a raster or vector, rasterize the contours by their elevation attribute,
     interpolate with ``r.surf.contour``, optionally clip, and write a GeoTIFF.
+
+    GRASS works in its LOCATION's CRS. :meth:`run` first brings the contours and a
+    region polygon into it (:func:`contour_frame`, :func:`stage_contour_inputs`),
+    and refuses before GRASS starts what it cannot reconcile (ledger
+    602).
+
+    Parameters
+    ----------
+    contours : str or pathlib.Path
+        Vector file of elevation contour lines, read as its first layer. In a CRS
+        other than ``epsg``'s it is reprojected into it; one carrying no CRS is read
+        as already in it.
+    out : str or pathlib.Path
+        Where the GeoTIFF is written, in the location's CRS.
+    region_raster : str or pathlib.Path, optional
+        Raster whose extent is the GRASS region. It must already be in the
+        location's CRS (or carry none, and be read as in it): a raster is read as it
+        is, so one in another CRS is refused. One of this or ``region_vector`` is
+        needed.
+    region_vector : str or pathlib.Path, optional
+        Polygon whose extent (and shape, with ``clip``) is the GRASS region,
+        reprojected like ``contours``. Used when ``region_raster`` is not given.
+    z_field : str, default "Elev"
+        The contours' elevation attribute.
+    resolution : float, default 4
+        Cell size, in the units of the location's CRS.
+    epsg : str, default "2927"
+        Bare EPSG code of the GRASS location, used to create it on first use. An
+        existing location keeps its own CRS, so one that disagrees is refused,
+        naming ``location=``.
+    grass_bin : str or pathlib.Path, optional
+        The GRASS launcher; ``None`` finds it (``GRASS_BIN``, then discovery).
+    grassdata : str or pathlib.Path, optional
+        The GRASS database directory; ``None`` is ``~/grassdata``.
+    location : str, default "myflopy_interp"
+        The GRASS location's name inside ``grassdata``.
+    clip : bool, default True
+        Null the result outside the region (the polygon itself, for a vector).
+    progress : bool, default False
+        Re-emit GRASS's own progress through ``sys.stdout`` (see
+        :func:`_teed_console`).
     """
 
     def __init__(
@@ -278,7 +665,7 @@ class ContourSurfaceInterpolator:
         epsg: str = str(DEFAULT_EPSG),
         grass_bin: Path | str | None = None,
         grassdata: Path | str | None = None,
-        location: str = "myflopy_interp",
+        location: str = DEFAULT_LOCATION,
         clip: bool = True,
         progress: bool = False,
     ):
@@ -292,7 +679,7 @@ class ContourSurfaceInterpolator:
         self.resolution = resolution
         self.epsg = str(epsg)
         self.grass_bin = Path(grass_bin) if grass_bin else None
-        self.grassdata = Path(grassdata) if grassdata else Path.home() / "grassdata"
+        self.grassdata = Path(grassdata) if grassdata else _default_grassdata()
         self.location = location
         self.clip = clip
         self.progress = progress
@@ -306,19 +693,49 @@ class ContourSurfaceInterpolator:
 
         return self.grassdata / self.location
 
+    def frame(self) -> ContourFrame:
+        """The frame this interpolation works in: :func:`contour_frame` of its inputs."""
+
+        return contour_frame(
+            self.contours, region_vector=self.region_vector, region_raster=self.region_raster,
+            epsg=self.epsg, grassdata=self.grassdata, location=self.location,
+        )
+
     def run(self) -> Path:
-        """Run the full interpolation and return the written GeoTIFF path."""
+        """Run the full interpolation and return the written GeoTIFF path.
 
-        r, g, v, gsetup = _grass_modules(self.grass_bin)
-        with _teed_console(self.progress):
-            return self._run_grass(r, g, v, gsetup)
+        The inputs' frame is checked and the vector inputs staged in the location's
+        CRS before GRASS is imported or started, so every refusal needs no GRASS.
 
-    def _run_grass(self, r, g, v, gsetup) -> Path:
-        """The GRASS pipeline itself, with the console already routed if asked."""
+        Raises
+        ------
+        ValueError
+            From :meth:`ContourFrame.refuse` (an existing location in another CRS than
+            ``epsg``, a region raster in another CRS) or :func:`stage_contour_inputs`
+            (no contour reaches the region's extent).
+        """
+
+        frame = self.frame()
+        frame.refuse()
+        with tempfile.TemporaryDirectory(prefix="myflopy-contours-") as scratch:
+            contours, region_vector = stage_contour_inputs(frame, scratch)
+            r, g, v, gsetup = _grass_modules(self.grass_bin)
+            with _teed_console(self.progress):
+                return self._run_grass(
+                    r, g, v, gsetup, contours=contours, region_vector=region_vector
+                )
+
+    def _run_grass(self, r, g, v, gsetup, *, contours: Path, region_vector: Path | None) -> Path:
+        """The GRASS pipeline itself, with the console already routed if asked.
+
+        ``contours``/``region_vector`` are the STAGED copies, already in the
+        location's CRS: ``-o`` skips GRASS's own projection check, which names
+        neither CRS, because the frame was checked before GRASS started.
+        """
 
         self._start_session(gsetup)
-        v.in_ogr(input=self.contours.as_posix(), output=self._vect, overwrite=True, flags="o")
-        self._set_region(r, g, v)
+        v.in_ogr(input=Path(contours).as_posix(), output=self._vect, overwrite=True, flags="o")
+        self._set_region(r, g, v, region_vector=region_vector)
         v.to_rast(
             overwrite=True,
             input=self._vect,
@@ -374,13 +791,17 @@ class ContourSurfaceInterpolator:
                 + result.stderr.decode(errors="ignore")
             )
 
-    def _set_region(self, r, g, v) -> None:
-        """Set the GRASS computational region + mask from the region raster or vector."""
+    def _set_region(self, r, g, v, *, region_vector: Path | None) -> None:
+        """Set the GRASS computational region + mask from the region raster or vector.
+
+        ``region_vector`` is the staged polygon; the raster is read as it is, which
+        :meth:`ContourFrame.refuse` made safe by refusing one in another CRS.
+        """
 
         if self.region_raster:
             r.in_gdal(overwrite=True, input=str(self.region_raster), output="Region", flags="o")
-        elif self.region_vector:
-            v.in_ogr(overwrite=True, input=str(self.region_vector), output="VRegion", flags="o")
+        elif region_vector is not None:
+            v.in_ogr(overwrite=True, input=Path(region_vector).as_posix(), output="VRegion", flags="o")
             g.region(vector="VRegion", res=self.resolution, flags="p")
             v.to_rast(overwrite=True, input="VRegion", output="Region", use="value", value=1)
         else:
@@ -395,7 +816,9 @@ def interpolate_contours_to_raster(
 ) -> Path:
     """Interpolate an elevation raster from vector contours via GRASS.
 
-    Convenience wrapper around :class:`ContourSurfaceInterpolator`.
+    Convenience wrapper around :class:`ContourSurfaceInterpolator`: ``contours``,
+    ``out`` and every keyword (``**kwargs``) go to its constructor, documented there,
+    and its :meth:`~ContourSurfaceInterpolator.run` is returned.
     """
 
     return ContourSurfaceInterpolator(contours, out=out, **kwargs).run()

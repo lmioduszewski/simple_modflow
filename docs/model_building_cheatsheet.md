@@ -182,16 +182,28 @@ bounding box — so a domain-shaped raster with nodata in the bbox corners. Veri
 on a real domain: raster bounds equal to the domain's, 64% of pixels non-null.
 Pass `clip=False` only when a neighbouring model needs the overlap.
 
-**myflopy does not reproject for you.** GRASS is given `-o` (override projection
-check), so contours and region are placed at their raw coordinates and a CRS
-mismatch is silently accepted, not corrected. Contours in EPSG:2926 with a
-region raster in EPSG:2927 landed 597,000 ft apart — `v.to.rast` then rasterized
-nothing inside the region, `r.surf.contour` had no seed cells, and it scanned
-forever at 0%. Reproject first:
+**GRASS works in its location's CRS (`epsg=`, default 2927), and the inputs are
+brought into it for you** (ledger 602). The contour file and a
+`region_vector` in another CRS are reprojected into it, by the rule every `.gpkg`
+source follows, and a file carrying NO CRS is read as already in it. GRASS itself
+imports with `-o` and never compared the frames: contours in EPSG:4326 inside an
+EPSG:2927 location interpolated **0 of 6,000 pixels**, with no warning
+(`docs/reproducers/contours_in_another_crs.py`). `resolution=` is in the
+location's units — feet at 2927, whatever the contour file is in. What cannot be
+reconciled is refused before GRASS starts, each naming the spelling:
 
-```python
-gpd.read_file(src).to_crs("EPSG:2927").to_file(dst, driver="GPKG")
-```
+- a `region_raster` in another CRS — a raster region is read as it is, never
+  reprojected — pass `region_vector=` (or reproject the raster first);
+- an `epsg=` an EXISTING location contradicts — GRASS reads `epsg=` only when it
+  creates the location, so `"32610"` on a 2927 location wrote a raster labelled
+  2927 holding metre coordinates — pass `location=` (a location of its own);
+- contours that reach no part of the region's extent — a file in the wrong place,
+  or carrying no CRS where it needed one. Before, `r.surf.contour` had no seed
+  cells and scanned forever at 0% (contours 597,000 ft from their region). The
+  message gives both extents.
+
+A cached raster interpolated, before this, from a file in another CRS is refused
+rather than reused — it holds the wrong place — so rebuild it with `refresh=True`.
 
 The interpolated GeoTIFF lands beside the contours as `<name>.interp.tif` and is
 reused on later runs. Pass `out=` to place it elsewhere.
@@ -769,9 +781,12 @@ Three things worth knowing when the sources are mixed:
   to `<name>.interp.tif`, and is reused on every later build. Rasters are read
   directly. So a stack with one contoured contact is slow on the *first* build
   and fast thereafter.
-* **Mismatched CRS is the one thing to check yourself.** Sources are sampled in
-  the grid's CRS; a contact in a different projection samples in the wrong place
-  and shows up as a nonsense `qc()` thickness rather than an error.
+* **A source in another CRS is reprojected; a source whose CRS is MISSING or
+  WRONG is the one thing to check yourself.** Rasters are sampled through the
+  grid's cells reprojected to the raster's CRS, and contours are reprojected into
+  the GRASS location (ledger 602). A file whose declared CRS is missing
+  or not the one it was drawn in still samples in the wrong place, and shows up as a
+  nonsense `qc()` thickness rather than an error.
 
 A contact you have *neither* a raster nor contours for is derived (`clay_top
 .below(20)` above) — see the algebra table in §2.
@@ -1637,9 +1652,10 @@ line profile).
    `mf.ref`** still raises — that is a mistake with a fix — but only after the
    write, so the library persists regardless.
 10. **Mixed source resolutions need no pre-alignment.** Area-weighted sampling
-    puts a 25-ft DEM and a coarse contoured contact on the same footing. A
-    mismatched **CRS**, though, samples in the wrong place and surfaces as a
-    nonsense `qc()` thickness rather than an error — check that yourself.
+    puts a 25-ft DEM and a coarse contoured contact on the same footing, and a
+    source in another CRS is reprojected. A MISSING or WRONG declared **CRS**,
+    though, samples in the wrong place and surfaces as a nonsense `qc()`
+    thickness rather than an error — check that yourself.
 11. **A lake on a stack whose top is the ground exchanges nothing through most of
     its floor.** MF6 counts a VERTICAL lake connection from its cell's TOP, not
     from the bed written for it, so a bed inside a cell leaks nothing until the

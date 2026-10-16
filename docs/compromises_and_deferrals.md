@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 601 entries (606 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 602 entries (607 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 602 | `mf.Contours` interpolates where its contours ARE: its inputs reach GRASS in the location's CRS, and the fr... | 2026-10-16 |
 | 601 | `values=` on a map is ONE layer's field, checked at the call on every scope and backend; a field for every... | 2026-10-16 |
 | 600 | `with_grid(remap=True)` carries an input `ic.strt` linear between cell centres -- one rule for moving heads | 2026-10-15 |
 | 599 | `coverage_on` and `Run.resolution` read a model's `grid=` too, and `GridSpec.resolve()` writes only where i... | 2026-10-15 |
@@ -4137,11 +4138,15 @@ same day, which is the useful part of the result.
        test fixtures relied on the old laxity (they check `cache_status` without
        ever interpolating) and were updated. Existing caches invalidate once,
        because `params` changes shape when `region_vector` leaves `grass_kwargs`.
-     - NOT done: myflopy still does not reproject contours to the region's CRS.
+     - ~~NOT done: myflopy still does not reproject contours to the region's CRS.
        GRASS is invoked with `-o`, so a mismatch is accepted silently rather than
        corrected -- measured cost, a 597,000 ft offset that hangs `r.surf.contour`
        at 0% forever. A CRS check and a no-overlap check are filed as a task; the
-       cheat sheet documents the manual `to_crs` in the meantime.
+       cheat sheet documents the manual `to_crs` in the meantime.~~ **Restated by
+       ledger 602:** the contours and a region polygon are reprojected
+       into the GRASS location's CRS before GRASS sees them (`-o` stays: the check
+       is myflopy's now), and contours reaching none of the region's extent are
+       refused before GRASS starts -- the no-overlap check, closing the 0% hang.
 
 150. **`clip` promoted alongside `region_vector`; it stays in the cache signature (2026-08-27).**
      Same invisibility as ledger 149 -- reachable only through `**grass_kwargs` --
@@ -22556,3 +22561,42 @@ same day, which is the useful part of the result.
       which is loud. Two IES map builders still `list()` an `(ncpl,)` vector they built
       themselves before handing it to `Choro`; harmless, left.
       `docs/reproducers/map_values_shape.py`.
+
+602. **`mf.Contours` interpolates where its contours ARE: its inputs reach GRASS in the location's CRS, and the frames it cannot reconcile are refused (2026-10-16).**
+      GRASS works in its LOCATION's CRS and myflopy imported with `-o`, so a contour file
+      in another CRS was interpolated at its raw coordinates, in silence: a copy of the
+      user's EPSG:4326 Qpog shapefile gave 0 of 1,300 cells on a toy grid over its domain
+      (672 once reprojected by hand), a synthetic 4326 file 0 of 6,000 pixels against
+      6,000 (`docs/reproducers/contours_in_another_crs.py`), and the blank cache then
+      read `fresh`. Chosen:
+      - **Reprojected, by the `.gpkg` sources' rule:** the contour file and a
+        `region_vector` are read with `read_vector_layer` and `to_crs`'d when
+        `_same_crs` says they differ (`contour_interp.contour_frame` /
+        `stage_contour_inputs`), then staged as GeoPackage copies -- the only path into
+        GRASS, always taken: a staged copy of a file already in the frame interpolates
+        exactly as the file (max |diff| 0.0). A contour file of several layers now reads
+        its FIRST, as every myflopy vector reader does (GRASS's `v.in.ogr` imported all).
+      - **A vector file with NO CRS is read as the location's frame, never refused** (the
+        user's call, 2026-10-16, against the design's refusal): the rule every myflopy
+        vector reader follows. The guard is zero overlap instead: contours reaching none
+        of the region's bounding box (GRASS's computational region) are refused before
+        GRASS starts, both extents in the message, and it says when the file carried no
+        CRS or was moved -- ledger 149's no-overlap check. Contours reaching the region
+        only in part are normal and pass.
+      - **Refused, naming the spelling, before any cache is read:** a `region_raster`
+        in another CRS (`region_vector=`; a raster region is read as given, no warp
+        exists) -- one with NO CRS is read as the location's frame, like a vector; and an
+        `epsg=` an EXISTING location contradicts (`location=`): GRASS reads `epsg=` only
+        when it creates a location, and measured, `"32610"` on a 2927 location wrote a
+        raster LABELLED EPSG:2927 holding metre coordinates.
+      - **Cache:** the key gains `reprojected` ONLY when an input moves, so no correct
+        cache moves (pinned against the old key, verbatim). A stale cache whose sidecar
+        lacks it while an input now moves was made at the raw coordinates -- the wrong
+        place, not an old version of the right one -- so it is REFUSED
+        (`DerivedRaster(requires=)`), `warn=False` included, until `refresh=True`.
+      - **NOT done:** no raster warp of a region raster; no `layer=` for the contour
+        file; an old blank cache made from SAME-CRS contours that never reached the
+        region is still reused (no frame changed, so nothing marks it); `epsg=` keeps
+        ledger 225's default rather than following the file -- a location is shared per
+        `(grassdata, location)`, so following each file would contradict the next
+        surface; GRASS's "Over-riding projection check" line stays.

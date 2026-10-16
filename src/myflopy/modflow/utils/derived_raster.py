@@ -8,7 +8,10 @@ parameters. On resolve:
 - **missing** cache  -> produce it now,
 - **fresh**   cache  -> reuse it,
 - **stale**   cache  -> warn and reuse it (the source or params changed); the
-  caller must explicitly ``refresh`` to rebuild.
+  caller must explicitly ``refresh`` to rebuild -- unless its sidecar lacks a
+  parameter the caller declared it ``requires``: such a cache was made by a rule
+  that is now known to be WRONG, not an older version of the right answer, so it
+  is refused rather than reused (ledger 602).
 
 This keeps the "auto-detect change, rebuild only when I tell you" workflow, and
 is independent of how the raster is produced (so it is testable without GRASS).
@@ -19,7 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 
@@ -36,7 +39,26 @@ def _hash_file(path: Path) -> str | None:
 
 
 class DerivedRaster:
-    """Cache + provenance for a single produced raster file."""
+    """Cache + provenance for a single produced raster file.
+
+    Parameters
+    ----------
+    out : str or pathlib.Path
+        The produced raster; its sidecar is ``<out>.provenance.json``.
+    sources : sequence of str or pathlib.Path
+        Files whose CONTENT keys the cache (hashed; a missing one hashes ``None``).
+    params : dict
+        Values that key the cache, compared after a JSON round trip.
+    produce : callable
+        Called with no arguments to write ``out``.
+    requires : mapping of str to str, optional
+        ``{params key: message}``. Each key must be a key of ``params``. A STALE
+        cache whose sidecar records no such parameter is refused by :meth:`ensure`
+        with ``ValueError(message)`` instead of being reused -- for a parameter that
+        marks a cache made by a rule since found wrong (ledger 602). A
+        cache with no readable sidecar keeps the stale rule. Default None: the
+        stale-reuse rule is unchanged.
+    """
 
     def __init__(
         self,
@@ -44,6 +66,7 @@ class DerivedRaster:
         sources: Sequence[Path | str],
         params: dict,
         produce: Callable[[], None],
+        requires: Mapping[str, str] | None = None,
     ):
         """Bind an output raster path to its ``sources``, ``params``, and a ``produce()`` builder."""
 
@@ -51,6 +74,13 @@ class DerivedRaster:
         self.sources = [Path(s) for s in sources]
         self.params = dict(params)
         self.produce = produce
+        self.requires = dict(requires or {})
+        unknown = sorted(set(self.requires) - set(self.params))
+        if unknown:
+            raise ValueError(
+                f"requires= names {unknown}, which params does not hold: a requirement "
+                "is a parameter the CURRENT key records."
+            )
 
     @property
     def sidecar(self) -> Path:
@@ -97,8 +127,34 @@ class DerivedRaster:
 
         ``refresh=True`` rebuilds unconditionally. A *stale* cache is reused with
         a warning (unless ``warn=False``) -- it is only rebuilt on ``refresh``.
+
+        Parameters
+        ----------
+        refresh : bool, default False
+            Rebuild even a fresh cache. A missing cache is always built.
+        warn : bool, default True
+            Warn when a stale cache is reused; ``False`` reuses it silently. It does
+            not silence a ``requires=`` refusal.
+
+        Returns
+        -------
+        pathlib.Path
+            ``out``.
+
+        Raises
+        ------
+        ValueError
+            A stale cache whose sidecar lacks a parameter named in ``requires=``,
+            with that parameter's message, unless ``refresh=True``.
         """
         state = self.status()
+        if not refresh and state == "stale" and self.requires:
+            cached = self._cached_key()
+            recorded = cached.get("params") if isinstance(cached, dict) else None
+            if isinstance(recorded, dict):
+                for key, message in self.requires.items():
+                    if key not in recorded:
+                        raise ValueError(message)
         if refresh or state == "missing":
             self._write()
         elif state == "stale" and warn:
