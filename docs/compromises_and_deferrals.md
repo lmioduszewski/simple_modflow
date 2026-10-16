@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 612 entries (617 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 613 entries (618 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 613 | A run's own packages, simulation and mesh go into a project's library: `run.to_library(project)`, checked f... | 2026-10-16 |
 | 612 | An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration | 2026-10-16 |
 | 611 | A run's record is not its files: `run.inputs` says when they part, and `execute()` never rebuilds the recor... | 2026-10-16 |
 | 610 | `with_grid(remap=True)` carries a library-referenced npf onto a new mesh: a discretization is never carried... | 2026-10-16 |
@@ -11686,7 +11687,10 @@ same day, which is the useful part of the result.
       been able to READ it (`mf.load_mf6_run(ws).config.ims["outer_maximum"]`), so unlike
       `NEWTON` this one is visible to anyone who looks -- it wants kwargs shaping, not a
       new reader, and `usg/convert.py:_ims_spec` argues a half-copied solver block is
-      worse than a named preset. Left for `project.import_run` (plan D2).
+      worse than a named preset. ~~Left for `project.import_run` (plan D2).~~ --
+      **RESTATED 2026-10-16 (ledger 613):** left for the bare-workspace half of
+      plan D2, which is still not built; the verb that was built, `run.to_library`, imports
+      a run's RECORD -- its own IMS included -- and refuses a bare MF6 folder.
 
 287. **Every PART of a multi-part point was a whole feature (2026-09-18).**
       `cell_shares` divides a feature by its own extent -- length for a line, area for a
@@ -22944,3 +22948,57 @@ same day, which is the useful part of the result.
       decoding a package file whose bytes name no `FILEIN`/`OPEN/CLOSE`/`FILEOUT` -- 0.20 s
       to 0.09 s per read on a copy of `from_usg` (40 MB of inputs), paid by `outcome`,
       `inputs` and `execute()`.
+
+613. **A run's own packages, simulation and mesh go into a project's library: `run.to_library(project)`, checked file against file (2026-10-16).**
+      The user's call, renaming Phase-2 D2's `project.import_run`; on `Run`, because every
+      door to a run (`load_run`, `reopen_run`, `project.runs[key]`) hands back one.
+      **Chosen:**
+      - **What goes in is the RECORD**: the `_library` copies under the keys the run
+        recorded (each must still digest to the recorded value), the simulation from
+        `_declared_spec()` -- the snapshot, each slot the manifest labels with a library
+        key back as `mf.ref(key)` (the snapshot holds a LAZY ref's slot resolved) -- and
+        each model's mesh.
+      - **An inline package is taken from the manifest's RECIPE** (paired by position and
+        name, when it revives): the snapshot holds an inline lazy `mf.disv(stack)` RESOLVED,
+        digesting 2544a91b... against the declaration's c587a47e... (reproducer), so an
+        import of it was unsaveable and `calibrated()`'s fork check refused it as "inline
+        package changed". An eager entry digests the same either way; with no recipe (an
+        inline array) the snapshot's entry stays. The write-backs' frozen-record check
+        (ledger 612) does not use `_declared_spec()` and is unchanged.
+      - **The mesh is registered** (decisions item 2) in `project.grids` under
+        `"<model>/<grid_pin>"` -- the run's own `grid_ref` key when its recipe declared one
+        -- NEVER prefixed (ss and the sw_* runs share meshes), no `@` (`save()` flattens
+        it), the model declared on `mf.grid_ref(key)` with a context of metadata and units
+        only, so it builds the same in session as after `save()`/`load()` and
+        `with_grid(remap=True)` still finds what its arrays are on. Same pin, vertices and
+        cells = identical; a grid held as a RECIPE under the key is never BUILT to be
+        compared -- it collides.
+      - **The check builds and WRITES the import, exactly as registered, in a scratch
+        directory** and compares file by file (`run_record.written_differences`, the
+        ledger 611 comparison; a `LibraryReport` carries its verdict in
+        `run.inputs`' words plus the `(file, block, what)` rows). Not `ModelDiff`: on the
+        toy its package tier has no `ic` row and its config tier sees only TDIS, so an
+        `ic.strt` edit is invisible. Not in memory: k = 1/3 "differs" in 25 of 25 cells
+        against FloPy's 8-decimal file. Measured on COPIES of the 23 Ten Trails runs with
+        a `run.json`: 19 hold a snapshot and copies, 18 import `ok` and `ss` raises on
+        `ss.tdis` PERIODDATA alone (perlen 1 vs 31, nstp 1 vs 10, changed outside myflopy
+        after the write); 4 have no record and are refused; 3.3-4.8 s each.
+      - **A difference RAISES by default; `files_differ="keep_record"`** imports the
+        record, warns (`UserWarning` + logger) and lists every row; the docs show the TDIS
+        correction right after. There is no "keep files": reading MF6 files into specs is
+        D2's unbuilt half, and a bare folder is refused naming it.
+      - **Collisions RAISE** naming `prefix=`/`overwrite=True`, never auto-prefixed; an
+        identical entry is left alone, so a second call is a no-op. **A run you calibrate
+        goes in unprefixed** -- both `to_library` docstrings and `calibrated().to_library`'s
+        refusal say so. `prefix=` renames refs directly (not `simulations.fork(swap=)`,
+        which needs the source registered and sets a `derived_from` `save()` then skips);
+        the import clears `derived_from` and records itself in `lineage`.
+      - **A relative source path is refused across project roots**: there it names
+        another file.
+      - **`calibrated()._refuse_a_moved_simulation` compares through the same
+        `_declared_spec()` and `_simulation_differences`**: it read the thawed snapshot,
+        so every run with a lazy library ref was refused as "inline package 'chd' changed"
+        (measured on the toy), and it now also compares model options and meshes.
+      **Not built:** a public `run.packages`; importing a bare MF6 folder; a
+      `CalibratedInputs.to_library` return-type change (decisions: no); a one-call remap
+      verb (decisions: no).

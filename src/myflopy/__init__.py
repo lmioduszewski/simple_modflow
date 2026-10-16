@@ -266,6 +266,7 @@ if TYPE_CHECKING:
     )
     from myflopy.surfaces import ExcavationRecord, LayerSurfaces, Surface
     from myflopy.workspace import (
+        LibraryReport,
         ModelView,
         Project,
         ProjectLayout,
@@ -362,11 +363,13 @@ _EXPORTS = {
     "Project": ("myflopy.workspace", "Project"),
     "Run": ("myflopy.workspace", "Run"),
     "load_run": ("myflopy.workspace", "load_run"),
-    # Types a PUBLIC method hands back. `project.save()` returns a SaveReport and
-    # `run.outcome` a ListingOutcome and `run.inputs` an InputsVerdict, so without
+    # Types a PUBLIC method hands back. `project.save()` returns a SaveReport,
+    # `run.to_library()` a LibraryReport, `run.outcome` a ListingOutcome and
+    # `run.inputs` an InputsVerdict, so without
     # these you get an object whose type you cannot name without reaching into a
     # submodule.
     "SaveReport": ("myflopy.workspace", "SaveReport"),
+    "LibraryReport": ("myflopy.workspace", "LibraryReport"),
     "ListingOutcome": ("myflopy.run_record", "ListingOutcome"),
     "InputsVerdict": ("myflopy.run_record", "InputsVerdict"),
     "read_listing_outcome": ("myflopy.run_record", "read_listing_outcome"),

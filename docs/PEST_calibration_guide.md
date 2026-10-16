@@ -1376,6 +1376,14 @@ so its fit is the one `obs_residuals()` shows; it is read at 16 digits from
 `<case>.<it>.base.par`. Any other label (`ies.best("min_phi")`, `"7"`) reads the parameter
 ensemble's 6 significant digits.
 
+The run's simulation must be in `project.simulations` under its own name, with the keys
+the run recorded: when the library that prepared the run is not the one in hand -- never
+saved, or saved elsewhere -- `project.runs[<run>].to_library(project)` puts the run's own
+packages, simulation and mesh there first, checked file by file against what the run wrote
+(ledger 613). Adopt a run you calibrate WITHOUT `prefix=`: the write-back forks the
+simulation under the run's own name and keeps the keys it recorded, so a prefixed import is
+refused naming this.
+
 `to_library` starts from what the RUN built -- its frozen snapshot and its own library
 copies -- not from the library as it is now, and forks to new keys: earlier runs and
 `project.runs.drift()` are untouched, and drift's `source` column follows the parameter
@@ -1466,6 +1474,8 @@ ies.plot_field_mosaic("k", stat="mean"); ies.plot_obs_residuals()
 ies.report("review.html")
 
 # 7: learn, revise, repeat -- or take the calibrated model home
+# (a run not prepared from this session's library: project.runs[<run>].to_library(project)
+#  first, without prefix=)
 keys = ies.calibrated().to_library(project)
 ```
 

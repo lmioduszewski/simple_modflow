@@ -60,6 +60,12 @@ def test_the_tour_runs_top_to_bottom(tmp_path, monkeypatch):
     ]
     assert sorted(project.simulations) == ["baseline", "high_k"]
     assert sorted(project.refresh_runs()) == ["baseline", "high_k"]
+    # A run back into an empty library, as it ran (ledger 613): npf/base was
+    # edited to k=3.0 after the run; the run's own copy says 1.0.
+    fresh = namespace["fresh"]
+    assert fresh.simulations.names() == ["baseline"]
+    assert fresh.package("npf/base").options["k"] == 1.0
+    assert namespace["report"].inputs.verdict == "ok"
 
 
 def test_the_tour_teaches_the_distinctions_that_cost_the_most(tmp_path, monkeypatch):

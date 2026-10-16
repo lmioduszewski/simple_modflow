@@ -379,6 +379,19 @@ def _values_only_substitution_keeps_the_pin_and_drops_the_move_recipe(calibratio
     assert [r[0] for r in records] == [r[0] for r in declared.options["stress_period_data"][0]]
 
 
+def _a_run_put_into_a_fresh_library_takes_its_calibration_back(calibration, base):
+    """A library that never held the run's packages: ``run.to_library`` (no prefix) puts
+    them there, and the write-back then forks the run's simulation (ledger 613)."""
+
+    fresh = mf.Project(calibration.project.root, name="fresh")
+    report = fresh.runs["r"].to_library(fresh)
+    assert report.inputs.verdict == "ok" and report.simulation == "s"
+    keys = base.to_library(fresh, simulation="s/fresh")
+    assert set(keys) == set(_KEYS)
+    run = fresh.prepare_run("fresh_wb", fresh.simulations["s/fresh"])
+    assert run.status == "built"
+
+
 def test_a_list_record_on_another_cell_is_refused():
     """A cellid that differs from the run's record means the template is not this run's."""
 
@@ -629,6 +642,17 @@ def _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         base.to_library(mf.Project(tmp_path / "other", name="o"))
 
 
+def _a_prefixed_import_is_refused_by_the_write_back_naming_why(calibration, base):
+    """A run to be calibrated is adopted WITHOUT a prefix: the write-back matches the
+    simulation name and keys the run recorded (ledger 613)."""
+
+    fresh = mf.Project(calibration.project.root, name="prefixed")
+    fresh.runs["r"].to_library(fresh, prefix="old/")
+    with pytest.raises(KeyError, match=r"to_library\(project\) -- WITHOUT prefix="):
+        base.to_library(fresh, simulation="s/x")
+    assert "s/x" not in fresh.simulations
+
+
 def _to_library_refuses_a_simulation_the_run_did_not_run(calibration, base):
     """The fork keeps the LIBRARY's other packages, so one edited since the run is refused
     -- before any package is registered (ledger 562)."""
@@ -699,6 +723,7 @@ def test_to_library_reproduces_the_base_realization_and_records_where_it_came_fr
     _write_back_reproduces_the_base_realizations_simulated_heads(calibration, base)
     _provenance_rides_in_metadata_and_drift_follows_the_parameter_file(calibration, base)
     _values_only_substitution_keeps_the_pin_and_drops_the_move_recipe(calibration, base)
+    _a_run_put_into_a_fresh_library_takes_its_calibration_back(calibration, base)
 
 
 @pytest.mark.slow
@@ -712,3 +737,4 @@ def test_every_refusal_names_what_to_do(calibration, base, tmp_path):
     _to_library_refuses_a_collision_another_project_and_an_unknown_label(
         calibration, base, tmp_path)
     _to_library_refuses_a_simulation_the_run_did_not_run(calibration, base)
+    _a_prefixed_import_is_refused_by_the_write_back_naming_why(calibration, base)

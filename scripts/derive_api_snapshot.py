@@ -301,7 +301,7 @@ def collect_surfaces() -> dict[str, list[str]]:
         SimulationSpec,
     )
     from myflopy.surfaces import ExcavationRecord, Surface
-    from myflopy.workspace import Project, Run, RunLibrary, SaveReport
+    from myflopy.workspace import LibraryReport, Project, Run, RunLibrary, SaveReport
 
     return {
         "registry.cell_stress": sorted(
@@ -333,6 +333,9 @@ def collect_surfaces() -> dict[str, list[str]]:
         # nothing else. Its entire reporting surface could gain or lose a column
         # without moving a single snapshot row (ledger 293).
         "SaveReport.fields": spec_fields(SaveReport),
+        # What `run.to_library(project)` hands back (ledger 613): all data too.
+        "LibraryReport.members": members(LibraryReport),
+        "LibraryReport.fields": spec_fields(LibraryReport),
         "SpecLibrary.members": members(SpecLibrary),
         "PackageLibrary.members": members(PackageLibrary),
         "GridLibrary.members": members(GridLibrary),

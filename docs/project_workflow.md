@@ -352,6 +352,54 @@ A label matching nothing raises, naming what the source actually carries — a t
 that silently swapped nothing would hand back a "variant" identical to its parent.
 The fork records `derived_from` and appends to `lineage`, one entry per swap.
 
+### A run into the library
+
+A run carries its own record -- its frozen snapshot and a copy of every library package
+it used (`<run>/_library/`, ledger 230) -- so a library that was never saved, or was
+saved somewhere else, can be filled from the run itself (ledger 613):
+
+```python
+project = mf.Project("/models/tentrails", name="tentrails")    # the runs, an empty library
+report = project.runs["ss"].to_library(project, files_differ="keep_record")
+# LibraryReport(run='ss', simulation='ss', added=13, identical=0, replaced=0,
+#               inputs='edited', differences=1)
+report.differences
+# (('ss.tdis', 'PERIODDATA', '2 of 3 values differ: 1 (files) vs 31.00000000 (record); 1 (files) vs 10 (record)'),)
+# ss's TDIS was changed outside myflopy after the write; say in the library what MF6 ran:
+project.add_simulation(project.simulations["ss"].with_packages(
+    mf.tdis(nper=1, perioddata=[(1.0, 1, 1.1)], time_units="days",
+            start_date_time="2017-09-30")), overwrite=True)
+project.simulations.fork("ss", "wet14", swap={"rch/background": "rch/wet14"})
+```
+
+What goes in is the RECORD: each copy under the key the run recorded (it must still
+digest to what the run recorded), the simulation from the snapshot with every library
+slot back as `mf.ref(key)` and every inline package as its recipe declared it, and each
+model's mesh in `project.grids` under `"<model>/<grid_pin>"` (or the key of the
+`mf.grid_ref` the run declared), the model declared on `mf.grid_ref(key)` -- so it keeps
+its mesh through `save()`/`Project.load` and `with_grid(..., remap=True)` still knows
+what its arrays are on. Before anything is registered the import is BUILT and WRITTEN
+in a scratch directory and compared file by file with the run's own input files
+(`run_record.written_differences`: comments dropped, words without regard to case,
+numbers by value to the coarser written precision). On copies of the 19 Ten Trails runs
+with a full record, 18 agree and `ss` differs in `ss.tdis` alone, 3-5 s each
+(`docs/reproducers/run_to_library_check.py`). A disagreement RAISES by default,
+listing each file and block; `files_differ="keep_record"` imports the record anyway,
+warns, and lists every difference in `report.differences` -- then correct the library's
+entry where a reader can see it, as above. The FILES are never imported: reading packages
+out of MF6 files is the unbuilt half of Phase-2 decision D2, and a bare MF6 folder (no
+`run.json`) is refused naming it.
+
+- **A key holding something else RAISES** (`KeyError`), naming every one, `prefix=` and
+  `overwrite=True`; nothing is registered. An entry already holding the same thing is
+  left alone and reported `identical`, so calling it twice changes nothing.
+- **`prefix="sw/"`** registers `"sw/npf/base"` and simulation `"sw/<name>"`, its refs
+  renamed. The grid key is never prefixed: runs sharing a mesh share one entry.
+- **A run you will CALIBRATE goes in WITHOUT a prefix**: `calibrated().to_library(project)`
+  forks the simulation under the run's own name and keeps the keys the run recorded.
+- **A relative source path** (after `save(bundle_sources=True)`) is refused when the
+  project is rooted elsewhere: there it names another file.
+
 ### A calibration back into the library
 
 A PESTPP-IES realization comes back as packages forked from what its RUN built
@@ -370,7 +418,10 @@ parameter file as its `source_path`, so `project.runs.drift()`'s `source` column
 `ok`/`edited`/`missing` for a run that used it. The forked simulation keeps the
 library's other packages, so it is refused when any of them -- an inline package, a TDIS
 or IMS, a library key it keeps -- changed since the run (ledger 562);
-`simulation=False` registers the packages alone.
+`simulation=False` registers the packages alone. The run's simulation must be in the
+library under its own name with the keys the run recorded -- for a run prepared from a
+library you no longer hold, `project.runs[<run>].to_library(project)`, no `prefix=`,
+first.
 
 **The whole recalibration, rehearsed.** `examples/mf6/notebooks/canonical_08_recalibration_rehearsal.ipynb`
 runs the Ten Trails workflow end to end on a small model of the same shape -- a start
@@ -495,6 +546,7 @@ to say.
 `<run>/_library/`, and a rebuild resolves `mf.ref` from those copies first. So
 `edited` means the library has moved on -- preparing the run again from it would
 give a different model -- not that this run can no longer be rebuilt as it ran.
+Those copies are what `run.to_library(project)` registers.
 A run prepared before the copies existed has nothing else to build from: rebuilt
 (`run.build()` -- executing it reopened runs its files instead), it resolves against
 the library as it is now, warns naming each key that differs from what it recorded,

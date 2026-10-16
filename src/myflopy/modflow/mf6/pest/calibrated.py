@@ -63,8 +63,14 @@ from myflopy.modflow.mf6.pest.replay import (
 )
 from myflopy.project.freeze import thaw_simulation
 from myflopy.run_record import _scan_simulation_inputs
-from myflopy.specs import PackageRef, PackageSpec, package_digest, substitute_values
-from myflopy.workspace import Run, _read_package_snapshot
+from myflopy.specs import (
+    PackageRef,
+    PackageSpec,
+    _package_entry_label,
+    package_digest,
+    substitute_values,
+)
+from myflopy.workspace import Run, _read_package_snapshot, _simulation_differences
 
 logger = get_logger(__name__)
 
@@ -985,10 +991,12 @@ class CalibratedInputs:
         The forked simulation is the LIBRARY's entry under the run's simulation name,
         with the calibrated packages swapped in -- so every package it keeps comes from
         the library as it stands now. It is refused when that is not what the run ran
-        (ledger 562): a model whose package labels differ from the run's
-        manifest, an inline package (or a TDIS/IMS) whose digest differs from the run's
-        declared one, or a library key it keeps whose digest differs from the one the
-        run recorded (what ``project.runs.drift()`` calls ``edited``/``removed``).
+        (ledger 562): a model whose package labels, options or mesh differ from the
+        run's declared record, an inline package (or a TDIS/IMS) whose digest differs
+        from the run's declared one, or a library key it keeps whose digest differs from
+        the one the run recorded (what ``project.runs.drift()`` calls
+        ``edited``/``removed``) -- the comparison ``run.to_library`` uses for "already
+        holds the same thing" (ledger 613).
         Otherwise the calibrated values would ride beside packages the calibration
         never ran with, and the fork would not reproduce the realization -- in silence.
         It is refused too when any of the run's input files is not what its record
@@ -999,7 +1007,11 @@ class CalibratedInputs:
         ----------
         project : myflopy.Project
             The project whose run the calibration was built from (its ``runs`` hold a
-            run in :attr:`run_workspace`); another raises ``ValueError``.
+            run in :attr:`run_workspace`); another raises ``ValueError``. Its library
+            need not be the one that prepared the run: ``run.to_library(project)``
+            WITHOUT ``prefix=`` puts the run's packages, simulation and mesh there first
+            -- a run you calibrate is adopted unprefixed, since this matches its name and
+            recorded keys.
         keys : mapping of str to str, optional
             New library key per source LABEL (the keys of :meth:`packages`). A label
             left out gets ``f"{label}/{pest}"`` -- ``"npf/base/cal"`` for an
@@ -1013,7 +1025,10 @@ class CalibratedInputs:
             each calibrated package swapped in as ``mf.ref(<new key>)`` in its model's
             slot. ``None`` (default) names it ``f"{run's simulation}/{pest}"`` (plus
             the realization suffix); ``False`` forks none. The run's simulation must be
-            in ``project.simulations``, else ``KeyError`` naming ``simulation=False``.
+            in ``project.simulations`` under its own name, with the keys the run
+            recorded, else ``KeyError`` naming ``simulation=False``:
+            ``project.runs[<run>].to_library(project)`` WITHOUT ``prefix=`` puts it there
+            (ledger 613).
         overwrite : bool, optional
             ``False`` (default) raises ``KeyError`` when a new key or the simulation
             name is already registered; ``True`` replaces them.
@@ -1068,7 +1083,10 @@ class CalibratedInputs:
             if source_simulation not in project.simulations:
                 raise KeyError(
                     f"The run's simulation {source_simulation!r} is not in the project's "
-                    "simulation library, so it cannot be forked; register it, or pass "
+                    "simulation library, so it cannot be forked. Put the run's own "
+                    "packages, simulation and mesh there with "
+                    f"project.runs[{run.name!r}].to_library(project) -- WITHOUT prefix=, "
+                    "which renames the name and keys this write-back matches -- or pass "
                     "simulation=False to register the packages alone."
                 )
             if name in project.simulations and not overwrite:
@@ -1113,61 +1131,41 @@ class CalibratedInputs:
     def _refuse_a_moved_simulation(self, project, run: Run, source: str, swap) -> None:
         """Refuse to fork ``source`` when the library entry is not what ``run`` ran.
 
-        Compared: each model's package labels against the run's manifest; each inline
-        package and simulation-level package against the run's DECLARED spec (its
-        manifest recipe -- skipped, with a log line, for a run whose recipe could not
-        be stored); and each library key the fork keeps against the digest the run
-        recorded (ledger 562).
+        Compared through the one simulation comparison ``run.to_library`` uses
+        (``workspace._simulation_differences``, ledger 613), against the run's
+        DECLARED record (``Run._declared_spec``: its snapshot, each library slot as
+        ``mf.ref(key)``, each inline package as its recipe declared it): each model's
+        package labels, inline packages (skipped, with a log line, for a run whose recipe
+        could not be stored -- ledger 562), model options and mesh, and the
+        simulation-level packages, exchanges and options; then each library key the fork
+        keeps against the digest the run recorded (ledger 562). Against the snapshot as
+        it stands, a LAZY library package's slot held its resolved form, so every run
+        with one was refused as "inline package changed".
         """
 
         library = project.simulations[source]
         declared = self._run()  # the manifest, reopened: labels, digests, recipe
-        recorded_keys = declared.package_keys
         recorded_digests = declared.package_digests or {}
-        declared_spec = declared.spec if declared.spec_recipe is not None else None
-        problems: list[str] = []
-
-        def _label(entry) -> str:
-            return entry.key if isinstance(entry, PackageRef) else str(entry.name)
-
-        def _inline_digests(packages) -> dict[str, str | None]:
-            return {
-                _label(entry): package_digest(entry)
-                for entry in packages if not isinstance(entry, PackageRef)
-            }
-
-        if declared_spec is not None:
-            ran = _inline_digests(declared_spec.packages)
-            now = _inline_digests(library.packages)
-            problems += [
-                f"simulation package {label!r} changed"
-                for label in sorted(set(ran) | set(now)) if ran.get(label) != now.get(label)
-            ]
-        else:
+        if declared.spec_recipe is None:
             logger.info(
                 "run %r stored no recipe, so the inline packages of simulation %r are "
                 "not compared with what it ran", run.name, source,
             )
-        declared_models = {m.name: m for m in declared_spec.models} if declared_spec else {}
+        replaced = {model: set(labels) for model, labels in (swap or {}).items()}
+        record = declared._declared_spec()
+        problems = _simulation_differences(
+            library, record, skip=replaced, grids=project.grids,
+            project_root=Path(project.root), inline=declared.spec_recipe is not None,
+        )
+        ran = {
+            model.name: [_package_entry_label(entry) for entry in model.packages]
+            for model in record.models
+        }
         for model in library.models:
-            labels = tuple(_label(entry) for entry in model.packages)
-            if labels != tuple(recorded_keys.get(model.name, ())):
-                problems.append(
-                    f"model {model.name!r} carries {list(labels)} where the run carried "
-                    f"{list(recorded_keys.get(model.name, ()))}"
-                )
-                continue
-            replaced = set((swap or {}).get(model.name, {}))
-            if model.name in declared_models:
-                ran = _inline_digests(declared_models[model.name].packages)
-                now = _inline_digests(model.packages)
-                problems += [
-                    f"{model.name}: inline package {label!r} changed"
-                    for label in sorted(set(ran) | set(now))
-                    if label not in replaced and ran.get(label) != now.get(label)
-                ]
+            if [_package_entry_label(entry) for entry in model.packages] != ran.get(model.name):
+                continue  # already reported, label by label
             for entry in model.packages:
-                if not isinstance(entry, PackageRef) or entry.key in replaced:
+                if not isinstance(entry, PackageRef) or entry.key in replaced.get(model.name, ()):
                     continue
                 if entry.key not in project.packages:
                     problems.append(f"{model.name}: library key {entry.key!r} was removed")
@@ -1199,8 +1197,9 @@ class CalibratedInputs:
                     return run
         raise ValueError(
             f"Project {getattr(project, 'name', project)!r} owns no run in "
-            f"{self.run_workspace}, the run this calibration was built from; pass the "
-            "project that prepared it."
+            f"{self.run_workspace}, the run this calibration was built from; pass a "
+            "Project rooted where that run's runs/ folder is (it need not be the session "
+            "that prepared it: project.runs[<run>].to_library(project) fills its library)."
         )
 
 

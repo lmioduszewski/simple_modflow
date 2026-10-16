@@ -746,6 +746,7 @@ answers the same questions. Full walkthrough in
 | make a variant | `project.packages.fork(source, key, **overrides)`, `project.simulations.fork(source, name, swap={...})` |
 | change one in place | `project.packages.edit(key, **overrides)` |
 | how it would persist | `project.packages.persistence()` |
+| a run's own packages, simulation and mesh into the library | `project.runs[key].to_library(project, *, prefix=None, overwrite=False, files_differ="raise")` → `LibraryReport` |
 
 Forks and edits are **built, not patched** — they go through the same
 constructor `mf.npf(...)` does, so a typo raises there rather than at MF6 build
@@ -761,7 +762,14 @@ summary's `inputs` column) says whether the run's MF6 input files are still what
 record -- `run.spec`, frozen snapshot, library copies -- writes: `ok`/`edited` (naming
 each file and how)/`unfingerprinted`/`unwritten`/`no record`; `execute()` runs the
 FILES (a run holding nothing opens them), and `run.build()` first is the one spelling
-that puts the record over them (ledger 611). `project.runs.drift()` reports which
+that puts the record over them (ledger 611). `run.to_library(project)` puts the
+run's RECORD into a project's libraries -- its `_library` copies under the keys it
+recorded, its simulation from the snapshot with library slots back as `mf.ref(key)`, each
+model's mesh in `project.grids` behind `mf.grid_ref("<model>/<grid_pin>")` -- after writing
+that import in a scratch directory and comparing it file by file with the run's own files:
+a difference raises naming `files_differ="keep_record"`, a key holding something else
+raises naming `prefix=`/`overwrite=True`, and a run you will calibrate goes in without a
+prefix (ledger 613). `project.runs.drift()` reports which
 library packages a run used have changed since it ran. `project.save()` returns a
 `SaveReport`, not a path.
 
@@ -1328,7 +1336,7 @@ returns a `CalibratedInputs`:
 | `summary()` | one row per dataset: the parameters scaling it, layers/periods, and how far it moved from the run (`ratio`, or `offset` for an elevation) |
 | `packages()` | `{label: PackageSpec}`: the packages the RUN built (its frozen snapshot and library copies, never the library as it is now) with the values substituted -- an array replaced whole, a list package's calibrated fields only, after every record's cell is checked -- pin and lake rules kept, `metadata["calibrated_from"]` and the parameter file as `source_path` |
 | `parameters` | every parameter's value as the replay filled it, by lower-cased pyEMU name -- what `cal.run_template(folder, values=ies.calibrated())` fills |
-| `to_library(project, *, keys=None, simulation=None, overwrite=False, note=None)` | registers them under NEW keys (`f"{label}/{pest}"`) and forks the run's simulation onto them (`f"{simulation}/{pest}"`; `simulation=False` forks none); returns `{label: key}` |
+| `to_library(project, *, keys=None, simulation=None, overwrite=False, note=None)` | registers them under NEW keys (`f"{label}/{pest}"`) and forks the run's simulation onto them (`f"{simulation}/{pest}"`; `simulation=False` forks none); returns `{label: key}`. The run's simulation must be in the library under its own name -- `run.to_library(project)`, no `prefix=` |
 
 Refused by name: an unknown realization (`base` naming `best(criterion="min_phi")`), an
 iteration not this run's, a template built before the parameter records (rebuild with

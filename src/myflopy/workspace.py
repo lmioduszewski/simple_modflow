@@ -120,7 +120,9 @@ def load_run(
     Reads the run's JSON manifest and (with ``load=True``) the MF6 input files,
     returning a :class:`Run` you can inspect, re-execute, or read results from --
     e.g. ``run.model("flow")`` for the model view, or ``run.pest_runs`` for any
-    calibrations done on it. Use this to come back to a run in a later session.
+    calibrations done on it. Use this to come back to a run in a later session;
+    ``run.to_library(project)`` then puts its own packages, simulation and mesh into a
+    project's libraries (ledger 613).
 
     Parameters
     ----------
@@ -1686,6 +1688,244 @@ class SaveReport:
         return f"SaveReport({', '.join(pieces)})"
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryReport:
+    """What :meth:`Run.to_library` put into a project's libraries, and how it checked it.
+
+    Attributes
+    ----------
+    run : str
+        The run's name.
+    simulation : str
+        The name the run's simulation is registered under in ``project.simulations``
+        -- the run's own, or ``prefix`` + it.
+    library_keys : dict of str to str
+        Each library key the run recorded to the key it is registered under (equal
+        unless ``prefix=`` was given).
+    grids : dict of str to str
+        Each model whose mesh was registered to its key in ``project.grids``,
+        ``"<model>/<grid_pin>"`` unless the run's recipe declared ``mf.grid_ref(key)``
+        (never prefixed). Empty for a model with no mesh (a structured ``mf.dis``
+        model declares none).
+    added : tuple of (str, str)
+        ``(kind, key)`` for each entry newly registered; ``kind`` is ``"package"``,
+        ``"grid"`` or ``"simulation"``.
+    identical : tuple of (str, str)
+        ``(kind, key)`` for each entry the library already held unchanged, and left
+        alone.
+    replaced : tuple of (str, str)
+        ``(kind, key)`` for each entry ``overwrite=True`` replaced.
+    inputs : InputsVerdict
+        Whether the run's input files are what the imported record writes, in
+        ``run.inputs``' words (ledger 611): ``"ok"``, ``"edited"`` (its
+        ``departs`` names each file), or ``"unwritten"`` when the run holds no files of
+        its own to compare.
+    differences : tuple of (str, str, str)
+        ``(file, block, what)`` for every way the files differ from the record, as
+        :func:`~myflopy.run_record.written_differences` lists them. Empty unless
+        ``inputs.verdict`` is ``"edited"`` (only under ``files_differ="keep_record"``).
+    unsaveable : str or None
+        Why ``project.save()`` will skip the imported simulation (an inline package
+        holding an array, as a run's snapshot can), or ``None`` when it will save.
+    """
+
+    run: str
+    simulation: str
+    library_keys: dict[str, str]
+    grids: dict[str, str]
+    added: tuple[tuple[str, str], ...]
+    identical: tuple[tuple[str, str], ...]
+    replaced: tuple[tuple[str, str], ...]
+    inputs: InputsVerdict
+    differences: tuple[tuple[str, str, str], ...] = ()
+    unsaveable: str | None = None
+
+    def __repr__(self) -> str:
+        """One line: the simulation, the counts, and the files verdict."""
+
+        pieces = [
+            f"run={self.run!r}",
+            f"simulation={self.simulation!r}",
+            f"added={len(self.added)}",
+            f"identical={len(self.identical)}",
+            f"replaced={len(self.replaced)}",
+            f"inputs={self.inputs.verdict!r}",
+        ]
+        if self.differences:
+            pieces.append(f"differences={len(self.differences)}")
+        if self.unsaveable:
+            pieces.append("unsaveable=True")
+        return f"LibraryReport({', '.join(pieces)})"
+
+    def _repr_html_(self) -> str:
+        """A table of every entry and what happened to it, then the differences."""
+
+        rows = [
+            (kind, key, verb)
+            for verb, entries in (("added", self.added), ("identical", self.identical),
+                                  ("replaced", self.replaced))
+            for kind, key in entries
+        ]
+        body = "".join(
+            f"<tr><td>{escape(kind)}</td><td>{escape(key)}</td><td>{escape(verb)}</td></tr>"
+            for kind, key, verb in rows
+        )
+        html = (
+            f"<p><b>Run {escape(self.run)!s}</b> &rarr; simulation "
+            f"<code>{escape(self.simulation)}</code>; inputs: "
+            f"<b>{escape(self.inputs.verdict)}</b></p>"
+            f"<table><tr><th>kind</th><th>key</th><th></th></tr>{body}</table>"
+        )
+        if self.differences:
+            html += "<p>The files differ from the imported record:</p><ul>" + "".join(
+                f"<li><code>{escape(name)}</code> {escape(block)}: {escape(what)}</li>"
+                for name, block, what in self.differences
+            ) + "</ul>"
+        if self.unsaveable:
+            html += f"<p>project.save() will skip it: {escape(self.unsaveable)}</p>"
+        return html
+
+
+def _mesh_identity(grid: Any) -> tuple[Any, ...] | None:
+    """``(grid_pin, vertices, cells)`` of a built mesh, or ``None`` when it has none.
+
+    The pin is connectivity only (ledger 250); the vertex coordinates and each cell's
+    ring are compared too, so two meshes are "the same" only when every number a DISV
+    would write agrees.
+    """
+
+    if grid is None or not hasattr(grid, "get_disv_gridprops"):
+        return None
+    pin = grid_pin(grid)
+    if pin is None:
+        return None
+    props = grid.get_disv_gridprops()
+    vertices = tuple(tuple(float(v) for v in vertex[1:3]) for vertex in props["vertices"])
+    cells = tuple(tuple(int(i) for i in cell[4:]) for cell in props["cell2d"])
+    return pin, vertices, cells
+
+
+def _library_mesh(entry: Any, project_root: Path) -> Any:
+    """The built mesh a grid-library entry holds, or ``None`` for a recipe.
+
+    A ``GridSpec.from_object`` hands back its object and a saved one unpickles;
+    a recipe (Voronoi from a boundary file, a ``python`` builder) would have to BUILD a
+    mesh to be compared, which this never does.
+    """
+
+    entry = _grid_entry(entry)
+    if not isinstance(entry, GridSpec) or entry.method not in ("object", "pickle"):
+        return None
+    try:
+        return entry.resolve(project_root=project_root, build=False)
+    except (OSError, ValueError, EOFError, pickle.UnpicklingError) as error:
+        logger.debug("grid entry %r could not be read to compare (%s)", entry.name, error)
+        return None
+
+
+def _model_mesh_label(model: ModelSpec, grids: dict[str, Any] | None,
+                      project_root: Path | None) -> str | None:
+    """What a model's mesh IS, for a comparison: ``ref:<key>`` or ``pin:<grid_pin>``."""
+
+    if isinstance(model.grid, GridRef):
+        if grids is not None and model.grid.key in grids and project_root is not None:
+            mesh = _library_mesh(grids[model.grid.key], project_root)
+            if mesh is not None and (pin := grid_pin(mesh)) is not None:
+                return f"pin:{pin}"
+        return f"ref:{model.grid.key}"
+    mesh = _mesh_in_hand(model)
+    pin = grid_pin(mesh) if mesh is not None else None
+    return f"pin:{pin}" if pin is not None else None
+
+
+def _comparable(value: Any) -> Any:
+    """``value`` as a JSON primitive to compare, or its ``repr`` when it has none."""
+
+    try:
+        if isinstance(value, tuple) and value and hasattr(value[0], "to_dict"):
+            value = [item.to_dict() for item in value]
+        return _json_value(value)
+    except (ValueError, TypeError):
+        return repr(value)
+
+
+def _simulation_differences(
+    ours: SimulationSpec, theirs: SimulationSpec, *, other: str = "the run",
+    skip: dict[str, set[str]] | None = None, grids: dict[str, Any] | None = None,
+    project_root: Path | None = None, inline: bool = True,
+) -> list[str]:
+    """How two simulations differ in what they BUILD, one sentence each; empty when alike.
+
+    The one comparison behind ``run.to_library``'s "already holds the same thing" and
+    ``calibrated().to_library``'s refusal to fork a simulation the run did not run
+    (ledgers 562, 613). Compared: the models (names and types); each model's
+    package labels in order, inline package digests and options; the simulation-level
+    labels and digests, exchanges and options; and each model's mesh -- a
+    ``grid_ref`` key, read through ``grids`` (a project's grid library) to the mesh's
+    ``grid_pin`` where it holds a built one, else the ``grid_pin`` of the mesh in hand;
+    a side with no mesh to name is not compared. NOT compared: the names, ``run_name``,
+    lineage, ``derived_from`` and the model context (a project file drops all but its
+    metadata). A ``mf.ref`` entry compares by KEY -- what the key means is the
+    library's business (``drift()``). ``skip`` names labels per model left out of the
+    inline comparison (a calibration's swap); ``inline=False`` leaves every inline
+    package out (a run that stored no recipe, ledger 562). ``other`` names the second
+    simulation in the sentences.
+    """
+
+    def _inline(entries, left_out=()):
+        if not inline:
+            return {}
+        return {
+            _package_entry_label(entry): package_digest(entry)
+            for entry in entries
+            if not isinstance(entry, PackageRef)
+            and _package_entry_label(entry) not in left_out
+        }
+
+    problems: list[str] = []
+    mine = [(model.name, str(model.model_type)) for model in ours.models]
+    yours = [(model.name, str(model.model_type)) for model in theirs.models]
+    if mine != yours:
+        problems.append(f"it holds models {mine} where {other} held {yours}")
+        return problems
+    labels = [_package_entry_label(entry) for entry in ours.packages]
+    then = [_package_entry_label(entry) for entry in theirs.packages]
+    if labels != then:
+        problems.append(f"the simulation carries {labels} where {other} carried {then}")
+    else:
+        ran, now = _inline(theirs.packages), _inline(ours.packages)
+        problems += [
+            f"simulation package {label!r} changed"
+            for label in sorted(set(ran) | set(now)) if ran.get(label) != now.get(label)
+        ]
+    for mine_model, their_model in zip(ours.models, theirs.models, strict=True):
+        name = mine_model.name
+        labels = tuple(_package_entry_label(entry) for entry in mine_model.packages)
+        then = tuple(_package_entry_label(entry) for entry in their_model.packages)
+        if labels != then:
+            problems.append(
+                f"model {name!r} carries {list(labels)} where {other} carried {list(then)}"
+            )
+            continue
+        left_out = (skip or {}).get(name, set())
+        ran, now = _inline(their_model.packages, left_out), _inline(mine_model.packages, left_out)
+        problems += [
+            f"{name}: inline package {label!r} changed"
+            for label in sorted(set(ran) | set(now)) if ran.get(label) != now.get(label)
+        ]
+        if _comparable(mine_model.options) != _comparable(their_model.options):
+            problems.append(f"{name}: model options changed")
+        here = _model_mesh_label(mine_model, grids, project_root)
+        there = _model_mesh_label(their_model, grids, project_root)
+        if here is not None and there is not None and here != there:
+            problems.append(f"{name}: mesh {here} where {other} had {there}")
+    if _comparable(ours.exchanges) != _comparable(theirs.exchanges):
+        problems.append("exchanges changed")
+    if _comparable(ours.options) != _comparable(theirs.options):
+        problems.append("simulation options changed")
+    return problems
+
+
 @dataclass(slots=True)
 class Run:
     """One materialized execution of a :class:`SimulationSpec`.
@@ -1693,7 +1933,8 @@ class Run:
     A run owns its workspace and lifecycle. It can be created from a spec or
     reopened later from the JSON manifest and native MF6 input files. Get one from
     :meth:`Project.prepare_run`, :meth:`Project.reopen_run`, :func:`load_run` or
-    ``project.runs[key]`` rather than constructing it.
+    ``project.runs[key]`` rather than constructing it. :meth:`to_library` puts the run's
+    own record -- packages, simulation, mesh -- into a project's libraries.
 
     Attributes
     ----------
@@ -2821,7 +3062,11 @@ class Run:
             for name, whats in departs.items()
         }
 
-    def _record_differences(self, *, declared: bool = False) -> list[tuple[str, str, str]]:
+    def _record_differences(
+        self, *, declared: bool = False, record: SimulationSpec | None = None,
+        package_specs: dict[str, PackageSpec] | None = None,
+        grid_specs: dict[str, GridSpec] | None = None,
+    ) -> list[tuple[str, str, str]]:
         """``(file, block, what)`` for every way this run's input files differ from its record.
 
         The full check (ledger 611): the record is BUILT and WRITTEN in a
@@ -2833,12 +3078,18 @@ class Run:
         (ledger 251), else :attr:`spec`, with the run's library copies -- which is what
         :meth:`build` rebuilds and reads no lazy source (ledger 280); ``True`` builds
         :meth:`_declared_spec`, whose library slots resolve the run's copies again, a
-        lazy recipe from its source file (ledger 612).
+        lazy recipe from its source file (ledger 612). ``record`` builds that
+        simulation instead -- ``run.to_library``'s import, exactly as it will be
+        registered -- with ``package_specs`` and ``grid_specs`` resolving its
+        ``mf.ref``/``mf.grid_ref`` entries ahead of the run's own context (ledger
+        613).
         """
 
         import tempfile
 
-        if declared:
+        if record is not None:
+            pass
+        elif declared:
             record = self._declared_spec()
         else:
             record = thaw_simulation(self.workspace, run_name=self.name) or self.spec
@@ -2856,6 +3107,8 @@ class Run:
                 context,
                 simulation_workspace=scratch_path,
                 grid_workspace=scratch_path / "_grid",
+                package_specs={**context.package_specs, **(package_specs or {})},
+                grid_specs={**context.grid_specs, **(grid_specs or {})},
             )
             built = record.build_flopy(scratch_path, build_context=context)
             built.simulation.write_simulation(silent=True)
@@ -2864,12 +3117,17 @@ class Run:
     def _declared_spec(self) -> SimulationSpec:
         """The simulation this run's record declares, its library slots as ``mf.ref(key)``.
 
-        Its frozen snapshot (ledger 251) when it has one, else :attr:`spec`. The
+        Its frozen snapshot (ledger 251) when it has one, else :attr:`spec` -- the
+        snapshot carries the mesh the build resolved, which a recipe cannot. The
         snapshot holds a LAZY library package's RESOLVED form in that package's slot
         (``freeze``'s ``_for``), so each slot the manifest labels with a library key the
         run recorded is put back as ``PackageRef(key)``: building it resolves the run's
         own copy of that key. Paired with :attr:`package_keys` by position, over the
-        ENABLED entries the manifest lists.
+        ENABLED entries the manifest lists. An inline package is taken from the
+        manifest's recipe when the run stored one that revives with the same entries,
+        so an inline lazy package is its declaration too (ledger 613); this is
+        what ``run.to_library`` registers and what ``calibrated().to_library`` compares
+        the library's simulation against.
 
         Raises
         ------
@@ -2886,6 +3144,28 @@ class Run:
             )
         keys = {*(self.package_digests or {}), *(self.package_snapshot or {})}
         block = self.spec_block or {}
+        recipe = _spec_from_recipe(self.spec_recipe, name=self.name)
+        recipe_models = {model.name: model for model in recipe.models} if recipe else {}
+
+        def _declared(entries, declared):
+            """Each INLINE entry as the recipe declared it, paired by position.
+
+            The snapshot holds an inline LAZY package -- ``mf.disv(stack)``, a
+            ``.gpkg`` declared without ``context=`` -- as what it RESOLVED to, so its
+            digest is not the declaration's and it carries arrays no project file can
+            hold (ledger 613). An eager entry digests the same either way.
+            """
+
+            entries = tuple(entries)
+            if declared is None or len(declared) != len(entries):
+                return entries
+            return tuple(
+                theirs if (
+                    isinstance(ours, PackageSpec) and isinstance(theirs, PackageSpec)
+                    and theirs.name == ours.name
+                ) else ours
+                for ours, theirs in zip(entries, declared, strict=True)
+            )
 
         def _restored(entries, labels, where):
             entries = tuple(entries)
@@ -2907,11 +3187,15 @@ class Run:
         models = []
         for model in spec.models:
             labels = self.package_keys.get(model.name, ())
+            declared = recipe_models.get(model.name)
+            entries = _declared(model.packages, declared.packages if declared else None)
             models.append(replace(
-                model, packages=_restored(model.packages, labels, f"model {model.name!r}")
+                model, packages=_restored(entries, labels, f"model {model.name!r}")
             ))
-        packages = _restored(spec.packages, block.get("simulation_packages") or (),
-                             "the simulation")
+        packages = _restored(
+            _declared(spec.packages, recipe.packages if recipe else None),
+            block.get("simulation_packages") or (), "the simulation",
+        )
         return replace(spec, models=tuple(models), packages=packages)
 
     def _prepared_at(self) -> float | None:
@@ -2928,6 +3212,387 @@ class Run:
             return datetime.fromisoformat(self.created_at).timestamp()
         except ValueError:
             return None
+
+    def to_library(
+        self, project: Project, *, prefix: str | None = None, overwrite: bool = False,
+        files_differ: str = "raise",
+    ) -> LibraryReport:
+        """Put this run's own packages, simulation and mesh into ``project``'s libraries.
+
+        What goes in is the run's RECORD (ledger 613): its own copy of every
+        library package it referenced (``<run>/_library/``, ledger 230) under the key the
+        run recorded; its simulation as :meth:`_declared_spec` gives it -- the frozen
+        snapshot (ledger 251), each slot the manifest labels with a library key put back
+        as ``mf.ref(key)`` (the snapshot holds a LAZY package's resolved form there) and
+        each inline package as the manifest's recipe declared it; and each model's mesh,
+        registered in ``project.grids`` and declared on the model as ``mf.grid_ref(key)``,
+        so the imported simulation keeps its mesh through ``project.save()`` and
+        ``Project.load``. Every copy must still digest to what the run recorded.
+        Afterwards ``project.package(key)``, ``packages.fork``, ``simulations.fork``,
+        ``prepare_run`` and ``with_grid`` work on them as on anything declared in the
+        project, and ``ies.calibrated().to_library(project)`` can fork the run's
+        simulation -- which needs it under the name and keys the run recorded, so a run
+        you will CALIBRATE is put in WITHOUT ``prefix=``. Nothing is registered until
+        every check below has passed.
+
+        Before registering, the import is BUILT and WRITTEN in a temporary directory --
+        exactly as it will be registered -- and compared file by file with the run's
+        input files, the files MF6 reads followed from ``mfsim.nam``
+        (:func:`~myflopy.run_record.written_differences`): comments dropped -- FloPy
+        stamps the time it wrote -- words without regard to case, numbers by value to
+        the coarser precision the two were written at. Not in memory: FloPy writes 8
+        decimals, so a value read back is not the value built. This is the same check
+        ``calibrated().packages()`` falls back to for a run with no recorded input
+        hashes (ledger 611), but always run here, and against the DECLARED
+        record: a source a lazy package reads that was edited since the run IS a
+        difference, because the library entry would resolve it again. Seconds on a large
+        model (ledger 611 measured 4.1 s on a 38-period Ten Trails copy).
+
+        Parameters
+        ----------
+        project : Project
+            The project whose ``packages``, ``grids`` and ``simulations`` receive the
+            run's entries. It need not be the project that prepared the run, except that
+            a package naming a RELATIVE source path is refused unless ``project.root``
+            is the run's recorded project root -- elsewhere that path names another
+            file.
+        prefix : str or None, optional
+            Prepended verbatim to every package key and to the simulation's name:
+            ``prefix="sw/"`` registers ``"sw/npf/base"`` and simulation
+            ``"sw/sw_mounding_flow"``, its ``mf.ref`` entries renamed to match -- the
+            way to keep two runs whose keys collide. A grid key is never prefixed: one
+            mesh shared by several runs is one entry. ``None`` (the default) keeps the
+            run's own keys. A run you will CALIBRATE must be put in WITHOUT one:
+            ``ies.calibrated().to_library(project)`` forks the simulation under the name
+            the run recorded and keeps the keys it recorded, and ``project.runs.drift()``
+            reads the run's keys, which a prefixed import leaves ``removed``. An empty
+            string raises ``ValueError``; anything but a ``str`` or ``None`` raises
+            ``TypeError``.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when a key, a grid key or the
+            simulation's name already holds something else, naming every one of them,
+            ``prefix=`` and ``overwrite=True``; nothing is registered. An entry already
+            holding the same thing -- a package of the same digest, a grid with the same
+            ``grid_pin``, vertices and cells, a simulation building the same models,
+            packages, options and meshes (names, lineage and context aside) -- is left
+            alone and reported ``identical``, so calling this twice changes nothing. A
+            grid held as a RECIPE under the key is never built to be compared: it
+            collides. ``True`` replaces each entry that differs, as
+            ``project.add_package(..., overwrite=True)`` does (ledger 208).
+        files_differ : {"raise", "keep_record"}, optional
+            What an import that does not write the run's own input files means.
+            ``"raise"`` (the default) raises ``ValueError`` listing each file, block and
+            the first differing values, and registers nothing. ``"keep_record"``
+            registers the record anyway, warns (``UserWarning`` and the logger) and lists
+            every difference in the report's ``differences``; correct the library's entry
+            afterwards, where a reader can see it --
+            ``project.add_simulation(project.simulations[name].with_packages(...),
+            overwrite=True)``. The FILES are never imported: reading packages back out of
+            MF6 files is the unbuilt half of Phase-2 decision D2. Any other value raises
+            ``ValueError``. A run with no input files of its own (prepared and never
+            written, or rebuilt since its last write: ``run.inputs`` reads
+            ``"unwritten"``) has nothing to compare, and its report says so.
+
+        Returns
+        -------
+        LibraryReport
+            Each recorded key's library key, each model's grid key, which entries were
+            added, identical or replaced, and the file comparison in ``run.inputs``'
+            words, with its ``(file, block, what)`` rows.
+
+        Raises
+        ------
+        ValueError
+            For a run with no ``run.json`` (an MF6 workspace no Project prepared), an
+            unreadable manifest, a run holding no record, a library key the run holds no
+            copy of, a copy no longer digesting to what the run recorded, a relative
+            source across project roots, an import that does not write the run's files
+            under ``files_differ="raise"``, an empty ``prefix`` or an unknown
+            ``files_differ``.
+        TypeError
+            For a ``prefix`` that is neither a ``str`` nor ``None``.
+        KeyError
+            For a key, grid key or simulation name holding something else, without
+            ``overwrite=True``.
+        FileNotFoundError
+            For a copy the manifest names that is missing.
+
+        Examples
+        --------
+        >>> proj = mf.Project("/models/tentrails", name="tentrails")
+        >>> proj.runs["ss"].to_library(proj, files_differ="keep_record")
+        >>> # ss's TDIS was changed outside myflopy after the write: say what MF6 ran
+        >>> proj.add_simulation(proj.simulations["ss"].with_packages(
+        ...     mf.tdis(nper=1, perioddata=[(1.0, 1, 1.1)], time_units="days",
+        ...             start_date_time="2017-09-30")), overwrite=True)
+        >>> proj.simulations.fork("ss", "wet14", swap={"rch/background": "rch/wet14"})
+        """
+
+        if files_differ not in ("raise", "keep_record"):
+            raise ValueError(
+                f'files_differ= is "raise" (the default) or "keep_record", not '
+                f"{files_differ!r}."
+            )
+        if prefix is not None and not isinstance(prefix, str):
+            raise TypeError("prefix= must be a non-empty str or None.")
+        if prefix == "":
+            raise ValueError("prefix= must be a non-empty str or None.")
+        self._refuse_unimportable()
+        declared = self._declared_spec()
+
+        # The run's own copies, read from disk, each checked against its digest.
+        index = dict(self.package_snapshot or {})
+        entries = [*declared.packages, *(p for m in declared.models for p in m.packages)]
+        referenced = {entry.key for entry in entries if isinstance(entry, PackageRef)}
+        keys = sorted({*(self.package_digests or {}), *index, *referenced})
+        uncopied = [key for key in keys if key not in index]
+        if uncopied:
+            raise ValueError(
+                f"Run {self.name!r} references library package(s) {uncopied} and holds no "
+                "copy of them -- it was prepared before runs kept one (ledger 230) -- so "
+                "what those keys meant when it ran is not recorded. Prepare the run again "
+                "from a library that holds them."
+            )
+        copies = _read_package_snapshot(self.workspace, index, run_name=self.name)
+        recorded = self.package_digests or {}
+        for key in keys:
+            then, now = recorded.get(key), package_digest(copies[key])
+            if then is None:
+                logger.debug("run %r recorded no digest for %r; its copy is not checked",
+                             self.name, key)
+            elif now != then:
+                raise ValueError(
+                    f"Run {self.name!r}: its copy of library package {key!r} "
+                    f"({self.workspace / index[key]}) no longer digests to what the run "
+                    f"recorded ({then} against {now}); it was edited after the run was "
+                    "prepared, so it is not what the run ran. Restore it, or prepare the "
+                    "run again."
+                )
+        inline = [entry for entry in entries if isinstance(entry, PackageSpec)]
+        self._refuse_relative_sources(project, [*copies.values(), *inline])
+
+        # Each model's mesh, by the key the run declared or "<model>/<pin>".
+        recipe = _spec_from_recipe(self.spec_recipe, name=self.name)
+        named = {
+            model.name: model.grid.key
+            for model in (recipe.models if recipe else ()) if isinstance(model.grid, GridRef)
+        }
+        meshes: dict[str, Any] = {}
+        grid_keys: dict[str, str] = {}
+        models = []
+        for model in declared.models:
+            mesh = _mesh_in_hand(model)
+            pin = grid_pin(mesh) if mesh is not None else None
+            if pin is None:
+                models.append(model)
+                continue
+            key = named.get(model.name) or f"{model.name}/{pin}"
+            meshes.setdefault(key, mesh)
+            grid_keys[model.name] = key
+            # The context keeps only what a project file holds -- its metadata (the
+            # grid pin among it) and units -- so the import builds the same in this
+            # session as after save()/load(); the check below builds exactly this.
+            models.append(replace(model, grid=GridRef(key), context=replace(
+                model.context, grid=None, domain=None, surfaces=None)))
+
+        def _renamed(packages):
+            if prefix is None:
+                return tuple(packages)
+            return tuple(
+                replace(entry, key=prefix + entry.key) if isinstance(entry, PackageRef)
+                else entry
+                for entry in packages
+            )
+
+        library_keys = {key: (prefix or "") + key for key in keys}
+        source_name = self.spec_name or declared.name
+        name = (prefix or "") + source_name
+        imported = replace(
+            declared,
+            name=name,
+            run_name=name if prefix is not None else declared.run_name,
+            models=tuple(replace(model, packages=_renamed(model.packages)) for model in models),
+            packages=_renamed(declared.packages),
+            derived_from=None,
+            lineage=(*declared.lineage, {
+                "operation": "to_library", "run": self.name,
+                "workspace": str(Path(self.workspace).resolve()), "prefix": prefix,
+                "derived_from": declared.derived_from,
+            }),
+        )
+
+        # What the library already holds under those names.
+        added: list[tuple[str, str]] = []
+        identical: list[tuple[str, str]] = []
+        clashes: list[tuple[str, str]] = []
+        for key in keys:
+            new = library_keys[key]
+            if new not in project.packages:
+                added.append(("package", new))
+                continue
+            held = package_digest(project.packages[new])
+            same = held is not None and held == package_digest(copies[key])
+            (identical if same else clashes).append(("package", new))
+        root = Path(project.root)
+        for key, mesh in meshes.items():
+            if key not in project.grids:
+                added.append(("grid", key))
+                continue
+            held = _library_mesh(project.grids[key], root)
+            same = held is not None and _mesh_identity(held) == _mesh_identity(mesh)
+            (identical if same else clashes).append(("grid", key))
+        if name not in project.simulations:
+            added.append(("simulation", name))
+        else:
+            # Both sides' grid_ref keys are read through the library as it will be:
+            # the meshes this call registers, over what the project holds.
+            grids = {**project.grids, **{key: GridSpec.from_object(m) for key, m in meshes.items()}}
+            moved = _simulation_differences(
+                project.simulations[name], imported, other="the run's record",
+                grids=grids, project_root=root,
+            )
+            (clashes if moved else identical).append(("simulation", name))
+        if clashes and not overwrite:
+            listed = ", ".join(
+                f"{kind} {key!r}" + (f" ({'; '.join(moved)})" if kind == "simulation" else "")
+                for kind, key in clashes
+            )
+            example = prefix or f"{self.name}/"
+            examples = [example + key for key in keys[:2]]
+            grid_note = (
+                " A grid key is never prefixed, so a grid holding another mesh is only "
+                "replaced, with overwrite=True."
+                if any(kind == "grid" for kind, _ in clashes) else ""
+            )
+            raise KeyError(
+                f"Project {project.name!r} already holds different entries under {listed}; "
+                f"nothing was registered. Pass prefix= (e.g. prefix={example!r}) to keep "
+                f"both, its keys becoming {examples}, or overwrite=True to replace them."
+                f"{grid_note} A run you will calibrate must be put in WITHOUT a prefix: "
+                "calibrated().to_library(project) forks the simulation and keeps the keys "
+                "the run recorded."
+            )
+
+        # The import, built and written beside the run's own files.
+        verdict = self.inputs
+        rows: list[tuple[str, str, str]] = []
+        if verdict.verdict in ("unwritten", "no record"):
+            inputs = verdict
+        else:
+            rows = self._record_differences(
+                record=imported,
+                package_specs={library_keys[key]: copies[key] for key in keys},
+                grid_specs={key: GridSpec.from_object(mesh) for key, mesh in meshes.items()},
+            )
+            departs: dict[str, list[str]] = {}
+            for file, block, what in rows:
+                departs.setdefault(file, []).append(f"{block}: {what}" if block else what)
+            inputs = InputsVerdict(
+                "edited" if rows else "ok",
+                {file: "not what the record writes -- " + "; ".join(whats)
+                 for file, whats in departs.items()},
+                verdict.written_at,
+            )
+        if rows:
+            shown = "\n".join(f"  {file} {block}: {what}" for file, block, what in rows[:10])
+            more = f"\n  ...and {len(rows) - 10} more" if len(rows) > 10 else ""
+            versions = (self.frozen or {}).get("versions") or {}
+            under = (
+                " (snapshot written under "
+                + ", ".join(f"{k} {v}" for k, v in sorted(versions.items())) + ")"
+                if versions else ""
+            )
+            if files_differ == "raise":
+                raise ValueError(
+                    f"Run {self.name!r} does not write its own files: its record -- frozen "
+                    "snapshot and _library copies -- built and written beside them differs "
+                    f"in {len(departs)} file(s):\n{shown}{more}\nIts files were changed "
+                    "after the run wrote them (a FloPy edit then a write, or a change "
+                    "outside myflopy after the write), a source a lazy package reads was "
+                    "edited since, or this myflopy/FloPy writes "
+                    f"them differently from the one that ran{under}. What MF6 ran is the "
+                    "files; what the library would get is the record. Pass "
+                    'files_differ="keep_record" to import the record anyway -- it warns '
+                    "and lists every difference in the report -- then correct the "
+                    "library's entry where a reader can see it."
+                )
+            message = (
+                f"Run {self.name!r}: imported its RECORD, which does not write its files "
+                f"({len(departs)} file(s): {', '.join(sorted(departs))}); the report's "
+                "differences lists them."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=2)
+
+        # Register, now that nothing can refuse.
+        replaced = clashes
+        same = set(identical)
+        for key in keys:
+            if ("package", library_keys[key]) not in same:
+                project.add_package(library_keys[key], copies[key], overwrite=True)
+        for key, mesh in meshes.items():
+            if ("grid", key) not in same:
+                project.add_grid(key, mesh, overwrite=True)
+        if ("simulation", name) not in same:
+            project.add_simulation(imported, overwrite=True)
+        return LibraryReport(
+            run=self.name,
+            simulation=name,
+            library_keys=library_keys,
+            grids=grid_keys,
+            added=tuple(added),
+            identical=tuple(identical),
+            replaced=tuple(replaced),
+            inputs=inputs,
+            differences=tuple(rows),
+            unsaveable=project._why_unserializable(project.simulations[name]),
+        )
+
+    def _refuse_unimportable(self) -> None:
+        """Refuse a run :meth:`to_library` has no record of, naming what is not built."""
+
+        if not self.manifest_path.exists():
+            raise ValueError(
+                f"Run {self.name!r} ({self.workspace}) has no run.json: it is an MF6 "
+                "workspace no Project prepared, so it holds no package specs to put in a "
+                "library. Reading packages back out of MF6 files -- the bare-workspace "
+                "half of Phase-2 decision D2 -- is not built. Open it read-only with "
+                "mf.load_run(...) or mf.load_mf6_run(...); a MODFLOW-USG model becomes a "
+                "SimulationSpec through mf.read_usg(...).to_mf6()."
+            )
+        if self.status == "unreadable":
+            raise ValueError(
+                f"Run {self.name!r}: its run.json could not be read, so there is no record "
+                "of what it declared to import."
+            )
+        if self.spec is None and self.frozen is None:
+            raise ValueError(
+                f"Run {self.name!r} holds neither a frozen snapshot nor a rebuildable "
+                "recipe (prepared before snapshots existed, or its freeze failed), so "
+                "there is no record of what it declared. Prepare it again from its "
+                "simulation."
+            )
+
+    def _refuse_relative_sources(self, project: Project, packages) -> None:
+        """Refuse a RELATIVE source path when ``project`` is not rooted where the run's was."""
+
+        here = Path(project.root).resolve()
+        there = Path(self.project_root).resolve() if self.project_root is not None else None
+        if there == here:
+            return
+        relative = sorted({
+            path
+            for package in packages
+            for path in source_paths(package.inputs)
+            if not Path(path).is_absolute()
+        })
+        if relative:
+            raise ValueError(
+                f"Run {self.name!r} reads {relative} relative to its project root "
+                f"{there if there is not None else '(unrecorded)'}; in project "
+                f"{project.root} those paths name other files. Put the run into its own "
+                "project's library."
+            )
 
     def reconcile(self, *, write: bool = True) -> ListingOutcome:
         """Adopt MF6's verdict into ``status``/``success``, persisting by default.

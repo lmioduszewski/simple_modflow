@@ -479,6 +479,19 @@ writes (ledger 611).
 via a content fingerprint stored per run. A reopened run BUILDS from its own copy
 of those packages (`<run>/_library/`, ledger 230), so drift says the library moved
 on, not that the run can no longer be rebuilt as it ran.
+**A run back into a library is `run.to_library(project)`** (ledger 613; Phase-2
+D2's `import_run`, renamed by the user). It registers the RECORD -- the `_library` copies
+under their recorded keys (each must still digest to the recorded value), the simulation
+from the snapshot with library slots back as `mf.ref(key)` (the snapshot holds a LAZY
+ref's slot RESOLVED) and inline packages as the recipe declared them, and each model's
+mesh in `project.grids` under `"<model>/<grid_pin>"` (never prefixed, no `@`: `save()`
+flattens it) behind `mf.grid_ref(key)`, so it survives `save()`/`load()`. Checked by
+BUILDING and WRITING the import in a scratch dir and comparing FILE against FILE
+(`run_record.written_differences`) -- not `ModelDiff` (no array package; it called an
+`ic.strt` edit identical) and not in memory (FloPy writes 8 decimals). A difference
+raises naming `files_differ="keep_record"`; a collision raises naming `prefix=`/
+`overwrite=True`, never auto-prefixed; a run you CALIBRATE goes in unprefixed; a bare
+MF6 folder is refused (reading specs out of MF6 files is D2's unbuilt half).
 **A second column, `source`, says whether the FILE under a package still says what
 it said** (ledger 276) — `ok`/`edited`/`missing`/`unfingerprinted`/`—`. Separate from
 `state` on purpose: a package is routinely `unchanged` (the key means the same) AND
@@ -2294,7 +2307,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `.gpkg` move recipe (a boundname is compared without regard to case: FloPy LOADS it
   lower-cased); forks to `f"{label}/{pest}"` keys plus a forked simulation, never
   edits -- the fork is refused when the library's other packages moved since the run
-  (ledger 562). A fork/edit/`with_options` override over a recipe-filled option REPLACES the
+  (ledger 562), compared against `Run._declared_spec()` through the one
+  `_simulation_differences` `run.to_library` uses (ledger 613); the run's
+  simulation must be in the library under its own name -- `run.to_library(project)`,
+  no `prefix=`, puts it there. A fork/edit/`with_options` override over a recipe-filled option REPLACES the
   recipe (ledger 561). LAK `bedleak` and SFR `rhk` come back too, and FloPy reads their
   columns as TEXT (`bedleak` may say `NONE`, `man` may name a time series): a spelled
   number is a number, never identity, and a keyword the forward run left stays (ledger 563).

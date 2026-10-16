@@ -653,8 +653,8 @@ def written_differences(files: str | Path, record: str | Path) -> list[tuple[str
     """Every difference between two written simulations, file by file (ledger 611).
 
     The ONE record-against-files comparison -- ``Run._record_differences``, the full
-    check behind the write-backs, calls it, and a library import of a run must too --
-    with ``files`` a run's own folder and
+    check behind the write-backs and behind ``run.to_library`` (ledger 613),
+    calls it -- with ``files`` a run's own folder and
     ``record`` its record built and written in a scratch directory. Not in memory --
     FloPy writes 8 decimals, so a value read back from a file is not the value built --
     and not text for text: comments are dropped (FloPy stamps the time it wrote), words

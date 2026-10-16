@@ -2370,6 +2370,18 @@
       "field:KEYWORD_ONLY=None",
       "kwargs:VAR_KEYWORD=<required>"
     ],
+    "LibraryReport": [
+      "run:POSITIONAL_OR_KEYWORD=<required>",
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "library_keys:POSITIONAL_OR_KEYWORD=<required>",
+      "grids:POSITIONAL_OR_KEYWORD=<required>",
+      "added:POSITIONAL_OR_KEYWORD=<required>",
+      "identical:POSITIONAL_OR_KEYWORD=<required>",
+      "replaced:POSITIONAL_OR_KEYWORD=<required>",
+      "inputs:POSITIONAL_OR_KEYWORD=<required>",
+      "differences:POSITIONAL_OR_KEYWORD=()",
+      "unsaveable:POSITIONAL_OR_KEYWORD=None"
+    ],
     "LineProfileView.section": [
       "model:POSITIONAL_OR_KEYWORD=None",
       "line:KEYWORD_ONLY=None",
@@ -3693,6 +3705,12 @@
     ],
     "Run.save_manifest": [],
     "Run.to_dict": [],
+    "Run.to_library": [
+      "project:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "files_differ:KEYWORD_ONLY='raise'"
+    ],
     "Run.write": [
       "silent:POSITIONAL_OR_KEYWORD=False"
     ],
@@ -7052,6 +7070,19 @@
       "to_dict",
       "to_disv"
     ],
+    "LibraryReport.fields": [
+      "added",
+      "differences",
+      "grids",
+      "identical",
+      "inputs",
+      "library_keys",
+      "replaced",
+      "run",
+      "simulation",
+      "unsaveable"
+    ],
+    "LibraryReport.members": [],
     "ModelContext.fields": [
       "dates",
       "domain",
@@ -7192,6 +7223,7 @@
       "save_manifest",
       "spec_name",
       "to_dict",
+      "to_library",
       "write"
     ],
     "RunLibrary.members": [
@@ -7481,6 +7513,7 @@
       "LayerQCReport",
       "LayerStack",
       "LayerSurfaces",
+      "LibraryReport",
       "ListingOutcome",
       "LiteralSource",
       "LoadedMf6Run",
