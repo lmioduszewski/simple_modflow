@@ -438,17 +438,22 @@ def test_a_saved_import_still_has_the_mesh_its_arrays_are_on(made, triangulated_
     assert len(npf.options["k"]) == triangulated_grid_finer.ncpl
 
 
-@pytest.mark.xfail(strict=True, reason="needs the REMAP lane")
 def test_a_saved_import_with_a_built_discretization_moves(made, triangulated_grid_finer):
     """An eager ``mf.disv(result)`` holds top/botm/idomain per cell; ``grid_free`` says it
-    is re-declared, which the remap at this commit does not read (RemapRefused)."""
+    is re-declared, so the remap neither carries nor stamps it and carries K alone (ledger
+    610: a discretization is the mesh, not data on it)."""
 
     stack = mf.LayerStack(top=mf.Surface.flat(100.0))
     stack.add("sand", thickness=50.0)
     later = _imported_with_k_array(made, disv=mf.disv(stack.build(made.grid)))
     with pytest.warns(UserWarning, match="remapped k onto the new mesh"):
-        later.simulations["s"].with_grid(
+        moved = later.simulations["s"].with_grid(
             triangulated_grid_finer, remap=True, library=later, grid_free=("dis/base",))
+    packages = moved.models[0].packages
+    assert isinstance(packages[KEYS.index("dis/base")], PackageRef)
+    npf = packages[KEYS.index("npf/base")]
+    assert isinstance(npf, PackageSpec)
+    assert len(npf.options["k"]) == triangulated_grid_finer.ncpl
 
 
 # -- the write-back's comparison is the same one ---------------------------------------
