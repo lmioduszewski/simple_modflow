@@ -22546,7 +22546,11 @@ same day, which is the useful part of the result.
       ledger 315's no-value): `np.asarray` drops a mask, so leaving it would draw the
       hidden data, where Plotly painted 0.0 before (63 of 63).
       **Refused:** a dict naming `values=data[period]`, a DataFrame, a single number, a
-      ragged sequence, any other size naming the cell count.
+      ragged sequence, any other size naming the cell count. The spelling a refusal names
+      PICKS the layer out of the shape given -- `array[layer]` when the first axis is the
+      layers, `array[:, layer]` for an `(ncpl, nlay)`, the layer-major reshape only for a
+      flat array, none for a stranger shape: the first version named the reshape for an
+      `(ncpl, nlay)` too, which interleaves its layers.
       **Not done:** a `Series` is still read by position, not aligned on its index
       (documented). `contour_values=` keeps its own refusal at render (`_cell_vector`),
       which is loud. Two IES map builders still `list()` an `(ncpl,)` vector they built

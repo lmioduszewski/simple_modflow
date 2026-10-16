@@ -155,7 +155,9 @@ def _checked_cell_values(values, *, ncpl: int, layer: int | None) -> list:
         A dict (a per-period dataset), a ``DataFrame``, or a single number.
     ValueError
         Any other shape whose size is not ``ncpl`` -- a field for every layer
-        naming ``values=array[layer], layer=layer``, else naming the length.
+        naming ``values=array[layer], layer=layer`` (``array[:, layer]`` for an
+        ``(ncpl, nlay)``, the layer-major reshape for a flat one), else naming the
+        length.
     """
 
     ncpl = int(ncpl)
@@ -194,16 +196,27 @@ def _checked_cell_values(values, *, ncpl: int, layer: int | None) -> list:
         return _as_cell_vector(array, ncpl=ncpl, label="values").tolist()
     if array.size > ncpl and array.size % ncpl == 0:
         count = array.size // ncpl
-        # `array[i]` is one layer only when the first axis IS the layers -- an
-        # `(nlay, ncpl)` or a structured `(nlay, nrow, ncol)`; anything else
-        # (flattened, a column) is named through the reshape that makes it so.
+        # The spelling named is one that PICKS a layer from this shape, never one
+        # that scrambles it: `array[i]` when the first axis IS the layers (an
+        # `(nlay, ncpl)`, a structured `(nlay, nrow, ncol)`), `array[:, i]` for the
+        # transpose (`(ncpl, nlay)`, a table's `.to_numpy()`), the layer-major
+        # reshape only for a FLAT array (FloPy's order). `array.reshape(nlay,
+        # ncpl)` of an `(ncpl, nlay)` interleaves the layers -- following that
+        # advice drew a garbled map (review of ledger 601).
         squeezed = np.squeeze(array)
-        row = (
-            "array"
-            if squeezed.ndim > 1 and squeezed.shape[0] == count
-            else f"array.reshape({count}, {ncpl})"
-        )
-        fix = f"values={row}[{layer}], layer={layer}" if named else f"values={row}[i]"
+        pick = "i" if not named else str(layer)
+        if squeezed.ndim > 1 and squeezed.shape[0] == count:
+            spelled = f"array[{pick}]"
+        elif squeezed.shape == (ncpl, count):
+            spelled = f"array[:, {pick}]"
+        elif squeezed.ndim == 1:
+            spelled = f"array.reshape({count}, {ncpl})[{pick}]"
+        else:
+            spelled = None
+        if spelled is None:
+            fix = f"its {ncpl} values for one layer, in cell order"
+        else:
+            fix = f"values={spelled}, layer={layer}" if named else f"values={spelled}"
         raise ValueError(
             f"{head} -- and got shape {array.shape}: {count} values per cell, a field for "
             f"every layer (or every period). Pass one layer's row: {fix}."

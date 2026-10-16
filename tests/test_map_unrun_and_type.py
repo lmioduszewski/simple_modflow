@@ -262,6 +262,33 @@ def test_a_field_for_every_layer_raises_naming_one_layer(unrun_model, scope, bac
     assert caught.match(expected)
 
 
+@pytest.mark.parametrize(
+    "shape", ["stacked", "flattened", "transposed", "column_stack", "padded_axis"]
+)
+def test_the_named_spelling_picks_the_layer_it_names(unrun_model, shape):
+    """Following the refusal's advice draws exactly layer 1 -- for an `(ncpl, nlay)`
+    too, where it named `array.reshape(4, 441)[1]`, which interleaves the layers of a
+    transposed field and so drew a garbled map (review of ledger 601)."""
+
+    import re
+
+    k = _k(unrun_model)
+    array = {
+        "stacked": k,
+        "flattened": k.reshape(-1),
+        "transposed": k.T,  # (441, 4): a table of layers' `.to_numpy()`
+        "column_stack": np.column_stack(list(k)),
+        "padded_axis": k[:, None, :],
+    }[shape]
+    with pytest.raises(ValueError) as caught:
+        unrun_model.plot.map(values=array, layer=1)
+    spelled = re.search(r"row: values=(.+?), layer=1\.$", str(caught.value))
+    assert spelled, str(caught.value)
+    picked = eval(spelled.group(1), {"array": array})  # noqa: S307 - the message's own spelling
+    drawn = np.asarray(unrun_model.plot.map(values=picked, layer=1).fig.data[0].z, dtype=float)
+    assert np.array_equal(drawn, k[1])
+
+
 @pytest.mark.parametrize("backend", ["plotly", "mpl"])
 @pytest.mark.parametrize("scope", sorted(VALUES_SCOPES))
 @pytest.mark.parametrize("size", [100, 442])
