@@ -522,6 +522,15 @@ def _a_run_without_a_frozen_snapshot_is_refused(calibration, tmp_path):
     path.write_text(json.dumps(metadata))
     with pytest.raises(ValueError, match="has no frozen snapshot"):
         IesResults(master).calibrated().packages()
+    # Unfingerprinted and hand-edited too: the snapshot refusal still comes first, since
+    # the record the files are checked against IS that snapshot (ledger 612).
+    manifest = run_copy / "run.json"
+    data = json.loads(manifest.read_text())
+    data["metadata"].pop("inputs")
+    manifest.write_text(json.dumps(data))
+    _edit(run_copy / "m.npf", "0.20000000", "0.30000000")
+    with pytest.raises(ValueError, match="has no frozen snapshot"):
+        IesResults(master).calibrated().packages()
 
 
 def _a_copy_of_the_run(calibration, tmp_path, name, *, fingerprinted=True):

@@ -205,7 +205,12 @@ def _mf6_field(token: str) -> str:
 def _mf6_text(path: Path) -> str | None:
     """``path`` as text with MF6's comments removed, or ``None`` for a binary file."""
 
-    data = path.read_bytes()
+    return _mf6_text_of(path.read_bytes())
+
+
+def _mf6_text_of(data: bytes) -> str | None:
+    """:func:`_mf6_text` of a file's bytes already read."""
+
     if b"\0" in data[:8192]:
         return None
     # Cut only the lines that carry a comment: a regex split per line cost ~1 s over the
@@ -289,7 +294,18 @@ def _scan_simulation_inputs(
         found[relative] = anchor
         if kind == "data":
             continue
-        text = _mf6_text(path)
+        data = path.read_bytes()
+        # A package file naming no file at all -- every array and list file of a large
+        # model -- is not decoded: its text is only ever searched for these three
+        # keywords, and decoding and cutting comments cost 0.2 s per read over a
+        # 20,323-cell model's 40 MB of inputs, paid by `outcome`, `inputs` and
+        # `execute()` alike (ledger 612). A keyword inside a comment only
+        # sends the file down the full path below, which drops it.
+        if kind == "input" and not any(
+            keyword in data.lower() for keyword in (b"filein", b"open/close", b"fileout")
+        ):
+            continue
+        text = _mf6_text_of(data)
         if text is None:
             continue
         if kind in ("simulation", "model"):

@@ -1387,7 +1387,9 @@ not what its record writes is refused too (ledger 611): `packages()` when a
 file of a package it substitutes departs, the simulation fork when any file does --
 `project.runs[<run>].inputs` says which and how (a hand-edited TDIS, a FloPy edit
 written). A run written before runs recorded their inputs is checked by building and
-writing its record beside its files. A calibrated array is `unverifiable` on a grid move, and
+writing its frozen snapshot beside its files -- so a lazy package whose `.gpkg` was edited
+or removed since is not a departure: the snapshot holds what the run resolved (ledger
+612). A calibrated array is `unverifiable` on a grid move, and
 `with_grid(<new grid>, remap=True, library=project)` is its route (ledger 300): the
 registered package is carried as an inline copy, the new grid may be `mf.grid_ref(key)`,
 and an eager discretization beside it reads `stale` and is swapped with

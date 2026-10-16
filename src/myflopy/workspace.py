@@ -2490,7 +2490,7 @@ class Run:
                 self.write()
         elif (
             self._held_fingerprint is None
-            or self.status not in _WRITTEN_STATUSES
+            or not self._files_written()
             or _simulation_fingerprint(self.simulation) != self._held_fingerprint
         ):
             self.write()
@@ -2793,12 +2793,19 @@ class Run:
         """Input file to how it departs from this run's record; empty when they agree.
 
         The one helper the write-backs ask (ledger 611). By default it reads
-        :attr:`inputs` -- hashes, cheap -- and runs the FULL check
-        (:meth:`_record_differences`, which builds and writes the record in a scratch
-        directory) only when that cannot answer: a run written before runs recorded
-        their inputs (``"unfingerprinted"``). ``full=True`` always runs it. A run with
-        no input files of its own (``"unwritten"``, ``"no record"``) has nothing to
-        compare and returns ``{}``.
+        :attr:`inputs` -- hashes, cheap -- and, only when that cannot answer (a run
+        written before runs recorded their inputs, ``"unfingerprinted"``), compares the
+        files with the record AS FROZEN: its snapshot built and written in a scratch
+        directory (:meth:`_record_differences`). That is the question the hashes
+        answer -- whether the files are what the run's own build wrote -- and the base
+        ``calibrated().packages()`` substitutes into, so a LAZY package whose source
+        file has since been edited or removed is no departure here: the snapshot holds
+        what it resolved to (ledgers 280, 612). ``full=True`` instead builds
+        the record as DECLARED (:meth:`_declared_spec`, a lazy recipe resolved again
+        from its source) whatever the hashes say -- what a library import of the run
+        registers, so a moved source IS a difference there. A run with no input files
+        of its own (``"unwritten"``, ``"no record"``) has nothing to compare and
+        returns ``{}``.
         """
 
         verdict = self.inputs
@@ -2807,27 +2814,39 @@ class Run:
         if not full and verdict.verdict in ("ok", "edited"):
             return dict(verdict.departs)
         departs: dict[str, list[str]] = {}
-        for name, block, what in self._record_differences():
+        for name, block, what in self._record_differences(declared=full):
             departs.setdefault(name, []).append(f"{block}: {what}" if block else what)
         return {
             name: "not what the record writes -- " + "; ".join(whats)
             for name, whats in departs.items()
         }
 
-    def _record_differences(self) -> list[tuple[str, str, str]]:
+    def _record_differences(self, *, declared: bool = False) -> list[tuple[str, str, str]]:
         """``(file, block, what)`` for every way this run's input files differ from its record.
 
-        The full check (ledger 611): the record -- :meth:`_declared_spec`,
-        its library copies passed as the packages its references resolve to -- is
-        BUILT and WRITTEN in a temporary directory
-        and compared with the run's own input files by
+        The full check (ledger 611): the record is BUILT and WRITTEN in a
+        temporary directory and compared with the run's own input files by
         :func:`~myflopy.run_record.written_differences`. Never :meth:`build`, which
         writes into the run. Seconds on a large model (measured in the ledger entry).
+
+        ``declared=False`` (the default) builds the record as FROZEN -- the snapshot
+        (ledger 251), else :attr:`spec`, with the run's library copies -- which is what
+        :meth:`build` rebuilds and reads no lazy source (ledger 280); ``True`` builds
+        :meth:`_declared_spec`, whose library slots resolve the run's copies again, a
+        lazy recipe from its source file (ledger 612).
         """
 
         import tempfile
 
-        declared = self._declared_spec()
+        if declared:
+            record = self._declared_spec()
+        else:
+            record = thaw_simulation(self.workspace, run_name=self.name) or self.spec
+            if record is None:
+                raise ValueError(
+                    f"Run {self.name!r} holds neither a frozen snapshot nor a rebuildable "
+                    "recipe, so there is no record of what it declared."
+                )
         with tempfile.TemporaryDirectory(prefix="myflopy-record-") as scratch:
             scratch_path = Path(scratch)
             context = self._context_for_build() or SpecBuildContext(
@@ -2838,7 +2857,7 @@ class Run:
                 simulation_workspace=scratch_path,
                 grid_workspace=scratch_path / "_grid",
             )
-            built = declared.build_flopy(scratch_path, build_context=context)
+            built = record.build_flopy(scratch_path, build_context=context)
             built.simulation.write_simulation(silent=True)
             return written_differences(self.workspace, scratch_path)
 

@@ -264,6 +264,88 @@ def test_an_opened_runs_edit_is_marked_after_open_and_carries_what_it_held(tmp_p
     assert reopened.inputs.departs["flow.npf"] == "edited through FloPy after run.open()"
 
 
+@needs_mf6
+def test_an_unfingerprinted_lazy_run_is_checked_against_what_it_froze(
+        tmp_path, triangulated_grid):
+    """The fallback compares the files with the SNAPSHOT, which reads no lazy source.
+
+    Ledger 612: built from the re-resolved declaration, an edited ``.gpkg``
+    read as the run's CHD file departing (the files were exactly what the run wrote) and
+    a removed one raised ``FileNotFoundError`` out of the write-back. ``full=True`` --
+    the declared record a library import registers -- still sees the edit. On a REAL
+    grid (ledgers 263/265): the snapshot freezes and thaws it.
+    """
+
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    grid = triangulated_grid
+    source = tmp_path / "bc.gpkg"
+    xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
+
+    def _write(head):
+        gpd.GeoDataFrame(
+            {"name": ["west"], "layer": [1], "head": [head]},
+            geometry=[box(xmin, ymin, xmin + (xmax - xmin) * 0.2, ymax)], crs=grid.crs,
+        ).to_file(source, layer="chd", driver="GPKG")
+
+    _write(9.0)
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0))
+    stack.add("sand", thickness=50.0)
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("chd/west", mf.chd.gpkg(source, layer="chd", nper=1, head="head"))
+    simulation = mf.simulation(mf.gwf("m", context=mf.ModelContext(grid=grid), packages=[
+        mf.disv(stack), mf.npf(k=1.0), mf.ic(strt=9.0), mf.ref("chd/west"),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ]), name="s", packages=[mf.tdis(nper=1)])
+    run = project.prepare_run("r", simulation)
+    ok, report = run.execute()
+    assert ok, "\n".join(report[-20:])
+    data = json.loads(run.manifest_path.read_text())
+    data["metadata"].pop("inputs")
+    run.manifest_path.write_text(json.dumps(data))
+
+    def _departures(**kwargs):
+        reopened = mf.load_run(run.workspace, load=False)
+        assert reopened.inputs.verdict == "unfingerprinted"
+        return reopened._record_departures(**kwargs)
+
+    assert _departures() == {}
+    _write(12.0)
+    assert _departures() == {}
+    assert list(_departures(full=True)) == ["m.chd"]
+    source.unlink()
+    assert _departures() == {}
+    # A file that really departs is still seen.
+    _hand_edit(run, "9.00000000E+00", "7.00000000E+00", name="m.chd")
+    assert list(_departures()) == ["m.chd"]
+
+
+@needs_mf6
+def test_a_bare_workspace_loaded_runs_its_files_without_rewriting_them(tmp_path):
+    """``load=True`` and ``load=False`` are one door: neither rewrites what it opened."""
+
+    workspace = tmp_path / "bare"
+    sim = flopy.mf6.MFSimulation(sim_ws=str(workspace))
+    flopy.mf6.ModflowTdis(sim)
+    flopy.mf6.ModflowIms(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="flow")
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=2, ncol=2, top=10.0, botm=0.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=5.0)
+    flopy.mf6.ModflowGwfnpf(gwf, k=1.0)
+    flopy.mf6.ModflowGwfoc(gwf, head_filerecord="flow.hds", saverecord=[("HEAD", "ALL")])
+    sim.write_simulation(silent=True)
+    names = _scan_simulation_inputs(workspace)[0]
+    before = {name: (workspace / name).stat().st_mtime_ns for name in names}
+    time.sleep(0.01)
+    run = mf.load_run(workspace)
+    assert run.inputs.verdict == "no record"
+    ok, report = run.execute()
+    assert ok, "\n".join(report[-20:])
+    assert {name: (workspace / name).stat().st_mtime_ns for name in names} == before
+    assert _heads(run) == pytest.approx(5.0)
+
+
 # -- the fingerprint -------------------------------------------------------------------
 
 

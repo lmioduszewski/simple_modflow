@@ -778,15 +778,15 @@ class CalibratedInputs:
             template is not this run's), or one label is calibrated on two models; and
             when a file of a package this calibration substitutes is not what the run's
             record writes (``run.inputs`` reads ``"edited"``, or -- for a run written
-            before runs recorded their inputs -- the record, built and written beside
-            the files, differs there): PEST calibrated the files, and the values would
-            be substituted into another model (ledger 611).
+            before runs recorded their inputs -- its frozen snapshot, built and written
+            beside the files, differs there; a lazy package's source edited or removed
+            since is no departure, ledger 612): PEST calibrated the files, and
+            the values would be substituted into another model (ledger 611).
         """
 
         if self._packages is not None:
             return dict(self._packages)
         run = self._run()
-        self._refuse_departed_packages(run)
         spec = thaw_simulation(self.run_workspace, run_name=run.name)
         if spec is None:
             raise ValueError(
@@ -794,6 +794,8 @@ class CalibratedInputs:
                 "snapshot, so what it built cannot be read back. Prepare the run again "
                 "(a snapshot is written when a run is built) and calibrate it."
             )
+        # After the snapshot refusal: the comparison builds from that snapshot.
+        self._refuse_departed_packages(run)
         copies = (
             _read_package_snapshot(self.run_workspace, run.package_snapshot, run_name=run.name)
             if run.package_snapshot else {}
@@ -820,7 +822,8 @@ class CalibratedInputs:
 
         ``Run._record_departures`` (ledger 611): the hashes and marks the run
         recorded when it last wrote its files, and -- for a run written before runs
-        recorded them -- its record built and written beside the files and compared.
+        recorded them -- its frozen snapshot built and written beside the files and
+        compared (ledger 612).
         """
 
         if self._departs is None:

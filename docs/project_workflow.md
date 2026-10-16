@@ -445,7 +445,10 @@ What the verbs do with the two:
 - **The write-backs refuse what would describe another model.**
   `calibrated().packages()`/`to_library()` refuse a run whose file of a package the
   calibration SUBSTITUTES departs; the simulation fork refuses any departure, naming
-  `simulation=False` (which registers the packages alone).
+  `simulation=False` (which registers the packages alone). For an `unfingerprinted` run
+  the question is asked by building and writing its frozen snapshot beside the files,
+  which reads no lazy source -- a `.gpkg` edited or removed since is not a departure
+  (ledger 612).
 
 Runs with no `run.json` are listed as `discovered` rather than hidden: there are
 far more bare MF6 workspaces in practice than manifests, and a ledger that

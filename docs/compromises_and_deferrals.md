@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 611 entries (616 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 612 entries (617 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 612 | An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration | 2026-10-16 |
 | 611 | A run's record is not its files: `run.inputs` says when they part, and `execute()` never rebuilds the recor... | 2026-10-16 |
 | 610 | `with_grid(remap=True)` carries a library-referenced npf onto a new mesh: a discretization is never carried... | 2026-10-16 |
 | 609 | Lake and SFR targets read their locations' `weight` column, every location weight is checked by the reading... | 2026-10-16 |
@@ -22882,7 +22883,9 @@ same day, which is the useful part of the result.
         `calibrated().packages()` refuses only when a SUBSTITUTED package's file (or a
         file it names) departs; the simulation fork refuses on ANY departure, naming
         `simulation=False`. An unfingerprinted run gets the FULL check: its record
-        (`Run._declared_spec`, library slots restored as `mf.ref`) built and written in a
+        ~~(`Run._declared_spec`, library slots restored as `mf.ref`)~~ AS FROZEN (its
+        snapshot, what `build()` rebuilds -- ledger 612; `_declared_spec` is
+        `full=True`'s, for a library import) built and written in a
         scratch directory and compared token by token -- comments dropped, words without
         case, numbers by value to the coarser written precision
         (`run_record.written_differences`, the one comparison a run's library import must share).
@@ -22916,3 +22919,28 @@ same day, which is the useful part of the result.
       loader to hold what the files said (IMPLICIT, ledger 326, is the known loss, and is
       carried); a model whose package files sit in a subdirectory keys its FloPy marks by
       FloPy's filename while hashes key by the scan's relative path.
+
+612. **An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration (2026-10-16).**
+      The write-backs' fallback for a run with no recorded hashes (`Run._record_departures()`,
+      what `calibrated().packages()` and the simulation fork ask) builds and writes the run's
+      SNAPSHOT -- what `run.build()` rebuilds and `packages()` substitutes into -- not
+      `_declared_spec()`, whose library slots resolve the run's copies again and a lazy
+      recipe from its source file. The declared build answered a different question from the
+      hashes: on a 6x6 toy whose lazy `mf.chd.gpkg` library package was edited after the run
+      it reported `m.chd` departing (11 of 44 values) though the files were exactly what the
+      run wrote, and with the `.gpkg` removed it raised `FileNotFoundError` out of
+      `packages()` (ledger 280 promises a frozen run needs no source). Read live: 11 of the
+      user's 28 Ten Trails runs -- `ss` and `hm_mounding_final_flow` among them -- carry lazy
+      `BoundarySource` packages (`from_usg/boundaries.gpkg`) and all are unfingerprinted.
+      `_record_departures(full=True)` keeps the DECLARED build, for a library import of the
+      run (P1), where a moved source IS a difference. The decision text said "P1's build"
+      for both; this splits the build by question and keeps the ONE comparison
+      (`written_differences`) and token rule. **Not done:** the simulation fork still does
+      not see a lazy source edited since the run (its library digest is the declaration's,
+      ledger 293), on any run -- `runs.drift()`'s `source` column does.
+      Same pass: `execute()` on a bare MF6 workspace loaded with `load=True` no longer
+      rewrites every input from FloPy's loaded copy before running (it now writes only what
+      was never written or changed, the same door as `load=False`), and the input scan skips
+      decoding a package file whose bytes name no `FILEIN`/`OPEN/CLOSE`/`FILEOUT` -- 0.20 s
+      to 0.09 s per read on a copy of `from_usg` (40 MB of inputs), paid by `outcome`,
+      `inputs` and `execute()`.
