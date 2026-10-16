@@ -1040,17 +1040,35 @@ def _remappable_arrays(package) -> tuple[str, ...]:
     """The per-cell arrays of ``package`` that ``with_grid(remap=True)`` would carry.
 
     Empty for a package that names cells (a typed cellid has no value to weight) or
-    indexes a sibling's features (a mover), and for one holding none of
-    :data:`REMAPPABLE_ARRAYS` per cell. Read without the old mesh's cell count -- the
-    stamp does not carry it -- so "per cell" is :func:`cellwise_options`' conservative
-    form; a package is stamped only when the exact form already found an array.
+    indexes a sibling's features (a mover), for one holding none of
+    :data:`REMAPPABLE_ARRAYS` per cell, and for one holding ANY other per-cell array --
+    an integer flag (``icelltype``) or one with no measured rule -- because the engine
+    refuses the whole package then, and the refusal must not promise a route that is
+    itself refused (found in the review of ledger 610).
+
+    The stamp does not carry the old mesh's cell count, so it is read off the package:
+    the WIDEST per-column payload it holds. A package is stamped only when the exact
+    form (:func:`cellwise_options` with ``ncpl``) found a per-cell array, and a per-LAYER
+    list such as ``k33=[1.0, 0.1]`` is narrower than any per-cell one, so it is not
+    named -- the ncpl-free form named it, and a per-cell ``icelltype`` beside ``k``
+    drew a promise of ``remap=True`` that the engine then refused.
     """
 
     options = getattr(package, "options", None) or {}
     metadata = getattr(package, "metadata", None) or {}
     if metadata.get(INDEXED_PACKAGES) or any(True for _ in _cellids_in(options)):
         return ()
-    return tuple(name for name in cellwise_options(options) if name in REMAPPABLE_ARRAYS)
+
+    def widest(value) -> int:
+        if isinstance(value, dict):
+            return max((widest(item) for item in value.values()), default=0)
+        return column_count(value) or 0
+
+    ncpl = max((widest(options[name]) for name in cellwise_options(options)), default=0)
+    exact = cellwise_options(options, ncpl) if ncpl else ()
+    if not exact or any(name not in REMAPPABLE_ARRAYS for name in exact):
+        return ()
+    return exact
 
 
 def _cellids_in(options: dict[str, Any], *, lengths: tuple[int, ...] = (2, 3)):

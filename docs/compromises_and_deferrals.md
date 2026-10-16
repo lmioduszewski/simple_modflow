@@ -22815,7 +22815,10 @@ same day, which is the useful part of the result.
         refusal names `remap=True` (`library=project` for a ref) only for a package whose
         per-cell arrays the engine carries (`REMAPPABLE_ARRAYS`, restated from
         `remap.py`'s layer-2 sets in layer 1; a test holds them equal) -- not a typed
-        cellid, a mover or an extensive/flag array.
+        cellid, a mover or an extensive/flag array, nor (found in review) a package that
+        holds ANY other per-cell array beside them (a per-cell `icelltype` next to `k`: the
+        remap refuses the whole package), the old cell count read as the widest per-column
+        payload the package holds, so a per-LAYER list is never named a per-cell array.
       - A model whose saved context records a `grid_pin` (ledger 257) and holds no mesh
         was read as gridless: the simulation tier SKIPPED it (returned unmoved, `models:
         []` in lineage) and the model tier moved it unstamped and BUILT the old mesh's K on

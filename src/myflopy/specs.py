@@ -7013,8 +7013,9 @@ class SimulationSpec:
             Default ``None`` keeps the name.
         grid_free : sequence of str, optional
             Package names (a ref's library key) asserted mesh-independent in
-            every moved model; recorded in the ``with_grid`` lineage entry.
-            Default: empty.
+            every moved model -- neither stamped nor remapped, per
+            :meth:`ModelSpec.with_grid`; recorded in the ``with_grid`` lineage
+            entry. Default: empty.
         remap : bool, optional
             Carry per-cell arrays onto the new mesh by area overlay, per
             :meth:`ModelSpec.with_grid`. Default ``False``.
@@ -7036,10 +7037,14 @@ class SimulationSpec:
             The project whose libraries the moved models' ``mf.ref`` and
             ``mf.grid_ref`` entries name, handed to :meth:`ModelSpec.with_grid`
             for each: refs are classified as the packages they name, a
-            ``grid_ref`` grid is resolved to measure against. Required when a
-            moved model holds a ref no earlier move stamped, or a ``grid_ref``
-            grid (``ValueError`` naming it otherwise). Nothing in the library is
-            changed. Default ``None``.
+            ``grid_ref`` grid -- a model's declared one, or the NEW ``grid`` -- is
+            read through it, and its root anchors a recipe's or a reloaded library
+            grid's relative paths. Required when a moved model holds a ref no
+            earlier move stamped, or a ``grid_ref`` grid (``ValueError`` naming it
+            otherwise), for a ``grid_ref`` ``grid`` under ``remap=True``
+            (``TypeError``), and to re-attach a model a save stripped of its mesh
+            (ledger 610). Nothing in the library is changed. Default
+            ``None``.
 
         Returns
         -------

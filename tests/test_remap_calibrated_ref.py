@@ -40,7 +40,7 @@ from myflopy.grid_identity import (
     moved_package_complaints,
 )
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, rectangular_voronoi
-from myflopy.modflow.mf6.grid.remap import CONDUCTIVITY_ARRAYS, INTENSIVE_ARRAYS
+from myflopy.modflow.mf6.grid.remap import CONDUCTIVITY_ARRAYS, INTENSIVE_ARRAYS, RemapRefused
 from myflopy.specs import GridRef, ModelContext, PackageRef, substitute_values
 from myflopy.workspace import Project
 
@@ -288,6 +288,44 @@ def test_the_move_refusal_names_remap_only_for_arrays_it_carries(meshes):
     assert "remap=True" in array_says and "(k)" in array_says
     assert "remap=True" not in well_says, "a typed cellid has no value to weight"
     assert "remap=True" not in recharge_says, "the engine refuses an extensive array"
+
+
+_NPF_SHAPES = {
+    "k per cell": lambda g: mf.npf(k=_k(g), icelltype=1),
+    "k per cell, icelltype per cell": lambda g: mf.npf(
+        k=_k(g), icelltype=np.ones((NLAY, g.ncpl), dtype=int)
+    ),
+    "k per layer, icelltype per cell": lambda g: mf.npf(
+        k=[10.0, 1.0], icelltype=np.ones((NLAY, g.ncpl), dtype=int)
+    ),
+    "k per cell, icelltype per layer": lambda g: mf.npf(k=_k(g), icelltype=[1, 0]),
+    "k per cell, k33 per layer": lambda g: mf.npf(k=_k(g), k33=[1.0, 0.1], icelltype=1),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_NPF_SHAPES))
+def test_the_move_refusal_names_remap_exactly_when_the_remap_carries_it(meshes, quiet, shape):
+    """The sentence and the engine agree, case by case (found in the review of ledger 610).
+
+    Read with the conservative per-column test, a per-cell ``icelltype`` beside ``k``
+    drew "with_grid(..., remap=True) can carry them" -- and that remap then refused the
+    package naming the integer flag; a per-LAYER ``k33`` was named a per-cell array.
+    """
+
+    a, _b, c = meshes
+    npf = _NPF_SHAPES[shape](a)
+    (says,) = moved_package_complaints([npf.with_metadata(**{MOVED_FROM: "x"})])
+    try:
+        moved = _model(a, mf.disv(_layering(a)), npf).with_grid(c, remap=True)
+        carried = _rows(moved)["npf"]["how"] == "remapped"
+    except RemapRefused:
+        carried = False
+
+    assert ("remap=True" in says) == carried, says
+    if carried:
+        named = says.split("per-cell arrays (", 1)[1].split(")", 1)[0].split(", ")
+        widths = {name: np.shape(npf.options[name]) for name in named}
+        assert all(width[-1] == a.ncpl for width in widths.values()), widths
 
 
 def test_the_refusal_states_what_the_engine_carries():
