@@ -29,9 +29,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import rasterio
 import shapely
-from pyproj import CRS
+from pyproj import CRS, Transformer
+from pyproj.exceptions import ProjError
 
 from myflopy._defaults import DEFAULT_EPSG
 from myflopy._logging import get_logger
@@ -309,6 +311,50 @@ def _location_crs(location_path: Path | str) -> str | None:
     return None
 
 
+#: Two CRSs are ONE frame here when carrying a point from one to the other moves it by
+#: no more than this fraction of the target CRS's area of use (ledger 603):
+#: about 0.019 ft over EPSG:2927's 1.9 million ft. pyproj's ``equals`` -- the house
+#: ``_same_crs`` -- is exact, and the user's own lidar DEM and ground-surface contours
+#: carry an EPSG:2927 written with no authority code, a false easting of
+#: 1640416.66666667 where EPSG's definition reads 1640416.667, and its standard
+#: parallels in the other order: ``equals`` says no, and the points move 0.00033 ft.
+#: A real datum change moves feet (EPSG:2286 -> 2927: 4.24 ft) and stays a different
+#: frame.
+_SAME_FRAME_FRACTION = 1e-8
+
+
+def _same_frame(crs, target) -> bool:
+    """Whether ``crs`` is ``target``'s frame: the same CRS, or one ``to_crs`` would not move.
+
+    Measured, not judged by name: a 5 x 5 lattice over ``target``'s area of use, in
+    ``target``'s coordinates, is read as ``crs`` coordinates and carried into ``target``
+    by the transformation ``to_crs`` would use; the two are one frame when no point
+    moves more than ``_SAME_FRAME_FRACTION`` of the area's span. A pair the transform
+    cannot carry (degrees against feet), or a target with no area of use, is not.
+    """
+
+    if _same_crs(crs, target):
+        return True
+    target_crs = CRS.from_user_input(target)
+    area = target_crs.area_of_use
+    if area is None:
+        return False
+    lon, lat = np.meshgrid(np.linspace(area.west, area.east, 5),
+                           np.linspace(area.south, area.north, 5))
+    try:
+        xs, ys = Transformer.from_crs("EPSG:4326", target_crs, always_xy=True).transform(
+            lon.ravel(), lat.ravel())
+        moved_x, moved_y = Transformer.from_crs(
+            CRS.from_user_input(crs), target_crs, always_xy=True).transform(xs, ys)
+    except ProjError:
+        logger.debug("no transformation from %s to %s: not one frame", crs, target,
+                     exc_info=True)
+        return False
+    moved = np.hypot(np.asarray(moved_x) - xs, np.asarray(moved_y) - ys)
+    span = max(np.ptp(xs), np.ptp(ys))
+    return bool(np.isfinite(moved).all() and moved.max() <= _SAME_FRAME_FRACTION * span)
+
+
 def _crs_label(crs) -> str:
     """A CRS as a message names it: ``EPSG:n`` when it has a code, else its name."""
 
@@ -383,16 +429,17 @@ class ContourFrame:
     def reprojected(self) -> dict[str, str]:
         """``{role: crs}`` for each existing vector input in a CRS other than ``target``.
 
-        Empty when every input is already in the location's frame -- or carries no
-        CRS, which is READ as that frame, the rule every myflopy vector reader follows
-        -- so a surface whose files never move keeps its cache key unchanged.
+        Empty when every input is already in the location's frame -- the same CRS, or
+        one reprojecting would not move (ledger 603) -- or carries no CRS,
+        which is READ as that frame, the rule every myflopy vector reader follows; so a
+        surface whose files never move keeps its cache key unchanged.
         """
 
         return {
             item.role: item.crs
             for item in self.inputs
             if item.is_vector and item.exists and item.crs is not None
-            and not _same_crs(item.crs, self.target)
+            and not _same_frame(item.crs, self.target)
         }
 
     def refuse(self) -> None:
@@ -412,20 +459,23 @@ class ContourFrame:
             read as it is, never reprojected.
         """
 
-        if self.location_crs is not None and not _same_crs(self.location_crs, self.target):
+        if self.location_crs is not None and not _same_frame(self.location_crs, self.target):
             have = _crs_label(self.location_crs)
             code = self.target.split(":", 1)[1]
+            # `epsg=` takes a bare code, so it is offered only when the location has one.
+            or_epsg = (f", or epsg={have.split(':', 1)[1]!r}" if have.startswith("EPSG:")
+                       else "")
             raise ValueError(
                 f"The GRASS location '{self.location}' already exists in {have}, and "
                 f"epsg={code!r} asks for {self.target}. GRASS works in the location's own "
                 "CRS and never reads epsg= again, so the raster would be written in "
                 f"{have}. Pass location='{self.location.name}_{code}' (a location of its "
-                f"own, created on first use), or epsg={have.split(':', 1)[-1]!r}."
+                f"own, created on first use){or_epsg}."
             )
         raster = self._input("region_raster")
         if (
             raster is not None and raster.exists and raster.crs is not None
-            and not _same_crs(raster.crs, self.target)
+            and not _same_frame(raster.crs, self.target)
         ):
             raise ValueError(
                 f"region_raster '{raster.path.name}' is in {_crs_label(raster.crs)}, and "
@@ -518,15 +568,17 @@ def _in_target(frame: ContourFrame, item: ContourInput) -> gpd.GeoDataFrame:
     A file in another CRS is reprojected (``to_crs``, the rule every ``.gpkg`` source
     follows); one carrying NO CRS is read as already in the location's frame -- the
     rule every myflopy vector reader follows (decided 2026-10-16, ledger
-    602) -- and labelled so.
+    602) -- and labelled so; and one in a CRS that reprojecting would not
+    move (:func:`_same_frame`, ledger 603) keeps its coordinates and is
+    labelled ``frame.target`` too.
     """
 
     frame_gdf = read_vector_layer(item.path)
     if frame_gdf.crs is None:
         return frame_gdf.set_crs(frame.target)
-    if not _same_crs(frame_gdf.crs, frame.target):
+    if not _same_frame(frame_gdf.crs, frame.target):
         return frame_gdf.to_crs(frame.target)
-    return frame_gdf
+    return frame_gdf.set_crs(frame.target, allow_override=True)
 
 
 def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path, Path | None]:
@@ -567,14 +619,18 @@ def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path
     region_vector = frame._input("region_vector")
     region_raster = frame._input("region_raster")
     staged_region = None
-    if region_vector is not None:
+    # The raster first, as `_set_region` reads them: given both, GRASS's region is
+    # the raster's, so the overlap is checked against it and no polygon is staged.
+    if region_raster is not None:
+        bounds = region_path = None
+        if region_raster.exists:
+            with rasterio.open(region_raster.path) as handle:
+                bounds, region_path = tuple(handle.bounds), region_raster.path
+    elif region_vector is not None:
         region = _in_target(frame, region_vector)
         bounds, region_path = tuple(region.total_bounds), region_vector.path
         staged_region = scratch / "region.gpkg"
         region.to_file(staged_region, driver="GPKG")
-    elif region_raster is not None and region_raster.exists:
-        with rasterio.open(region_raster.path) as handle:
-            bounds, region_path = tuple(handle.bounds), region_raster.path
     else:
         bounds = region_path = None
     if bounds is not None:
@@ -586,7 +642,7 @@ def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path
             if contours_item.crs is None:
                 read_as = (f" The contours' file carries no CRS and was read as "
                            f"{frame.target}.")
-            elif not _same_crs(contours_item.crs, frame.target):
+            elif not _same_frame(contours_item.crs, frame.target):
                 read_as = f" The contours' file is in {_crs_label(contours_item.crs)}."
             else:
                 read_as = ""

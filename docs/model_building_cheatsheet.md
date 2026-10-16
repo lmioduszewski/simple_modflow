@@ -185,7 +185,9 @@ Pass `clip=False` only when a neighbouring model needs the overlap.
 **GRASS works in its location's CRS (`epsg=`, default 2927), and the inputs are
 brought into it for you** (ledger 602). The contour file and a
 `region_vector` in another CRS are reprojected into it, by the rule every `.gpkg`
-source follows, and a file carrying NO CRS is read as already in it. GRASS itself
+source follows, and a file carrying NO CRS is read as already in it — as is one
+whose CRS is the location's spelled differently (a WKT with no EPSG code that
+reprojecting would move by thousandths of a foot; ledger 603). GRASS itself
 imports with `-o` and never compared the frames: contours in EPSG:4326 inside an
 EPSG:2927 location interpolated **0 of 6,000 pixels**, with no warning
 (`docs/reproducers/contours_in_another_crs.py`). `resolution=` is in the

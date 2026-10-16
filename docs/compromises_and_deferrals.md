@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 602 entries (607 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 603 entries (608 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 603 | A contour surface's inputs are in the location's frame when reprojecting would not move them, not only when... | 2026-10-16 |
 | 602 | `mf.Contours` interpolates where its contours ARE: its inputs reach GRASS in the location's CRS, and the fr... | 2026-10-16 |
 | 601 | `values=` on a map is ONE layer's field, checked at the call on every scope and backend; a field for every... | 2026-10-16 |
 | 600 | `with_grid(remap=True)` carries an input `ic.strt` linear between cell centres -- one rule for moving heads | 2026-10-15 |
@@ -22571,7 +22572,8 @@ same day, which is the useful part of the result.
       read `fresh`. Chosen:
       - **Reprojected, by the `.gpkg` sources' rule:** the contour file and a
         `region_vector` are read with `read_vector_layer` and `to_crs`'d when
-        `_same_crs` says they differ (`contour_interp.contour_frame` /
+        they are not one frame (`_same_crs`, widened by ledger 603;
+        `contour_interp.contour_frame` /
         `stage_contour_inputs`), then staged as GeoPackage copies -- the only path into
         GRASS, always taken: a staged copy of a file already in the frame interpolates
         exactly as the file (max |diff| 0.0). A contour file of several layers now reads
@@ -22600,3 +22602,22 @@ same day, which is the useful part of the result.
         ledger 225's default rather than following the file -- a location is shared per
         `(grassdata, location)`, so following each file would contradict the next
         surface; GRASS's "Over-riding projection check" line stays.
+
+603. **A contour surface's inputs are in the location's frame when reprojecting would not move them, not only when pyproj calls the CRSs equal (2026-10-16).**
+      Review of ledger 602, which compared frames with `_same_crs` (pyproj's
+      exact `equals`). The user's own lidar DEM (`Qgis/lidar ten trails.tif`) and
+      ground-surface contours (`Ten Trails/data/tt ground surface elevation
+      contours.gpkg`) carry EPSG:2927 as a WKT with no authority code, a false easting of
+      1640416.66666667 where EPSG's reads 1640416.667, and the standard parallels in the
+      other order: `equals` says no, and `to_crs` moves a point 0.00033 ft. Measured on
+      that DEM as a `region_raster`, 602 REFUSED it as "in another CRS"; the
+      contour file would have been "reprojected" by nothing, putting `reprojected` in the
+      cache key. Chosen: `contour_interp._same_frame` -- the same CRS, or a 5 x 5 lattice
+      over the target's area of use, carried by the transformation `to_crs` would use,
+      moving no point more than 1e-8 of the area's span (about 0.019 ft over EPSG:2927,
+      beside FloPy's 0.01 ft written resolution at state plane, ledger 316). It decides
+      every comparison in the module (reprojection, the cache key, the raster and
+      location refusals); such a file keeps its coordinates and is labelled with the
+      target. A real datum change stays a different frame (EPSG:2286 -> 2927 moves 4.24
+      ft). NOT changed: the house `_same_crs`, which the `.gpkg` sources still use --
+      there a spurious `to_crs` costs nothing visible; here it cost a refusal.

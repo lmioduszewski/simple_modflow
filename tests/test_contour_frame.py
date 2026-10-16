@@ -270,6 +270,71 @@ def test_missing_files_are_not_refused_by_the_frame(files):
     surface._contour_frame().refuse()
 
 
+# ------------------------------------------------- one frame, spelled twice
+
+#: EPSG:2927 as the user's lidar DEM and ground-surface contours carry it: no
+#: authority code and a false easting of 1640416.66666667 where EPSG's WKT reads
+#: 1640416.667. pyproj's `equals` says it is not EPSG:2927; reprojecting moves a
+#: point 0.00033 ft (ledger 603).
+_SPELLED_2927 = CRS(2927).to_wkt("WKT1_GDAL").replace("1640416.667", "1640416.66666667").replace(
+    ',AUTHORITY["EPSG","2927"]]', "]")
+
+
+def test_the_spelled_2927_is_not_equal_but_is_one_frame():
+    """The premise of the three tests below, so none of them passes for the wrong reason."""
+
+    from myflopy.areas import _same_crs
+
+    assert not _same_crs(_SPELLED_2927, "EPSG:2927")
+    assert contour_interp._same_frame(_SPELLED_2927, "EPSG:2927")
+    # A real datum change still moves feet, and degrees cannot be carried at all.
+    assert not contour_interp._same_frame("EPSG:2286", "EPSG:2927")
+    assert not contour_interp._same_frame("EPSG:4326", "EPSG:2927")
+
+
+def test_a_contour_file_in_the_locations_crs_spelled_otherwise_is_not_moved(grass, files):
+    spelled = files.tmp / "spelled.gpkg"
+    gpd.GeoDataFrame({"elev": _ELEV}, geometry=_LINES, crs=_SPELLED_2927).to_file(spelled)
+    surface = _surface(files, spelled)
+
+    assert surface._derived_raster().params == _pre_fix_params(files)    # no cache moves
+    surface.resolve_source()
+    imported = grass.imported["vectContours"]
+    assert imported.crs.to_epsg() == 2927
+    assert imported.geometry.geom_equals_exact(gpd.GeoSeries(_LINES, crs=2927), tolerance=0).all()
+
+
+def test_a_region_raster_in_the_locations_crs_spelled_otherwise_is_read(grass, files):
+    _raster(files.tmp / "lidar.tif", crs=_SPELLED_2927)
+    _surface(files, files.c2927, region_raster=files.tmp / "lidar.tif").resolve_source()
+
+    assert grass.rasters["Region"] == str(files.tmp / "lidar.tif")
+
+
+def test_a_location_with_no_epsg_code_is_refused_naming_location_only(grass, files):
+    _location(files, PROJ_WKT=CRS("+proj=tmerc +lat_0=0 +lon_0=-121 +k=1 +x_0=0 +y_0=0 "
+                                  "+ellps=GRS80 +units=m").to_wkt())
+    with pytest.raises(ValueError, match="location='myflopy_interp_2927'") as caught:
+        _surface(files, files.c2927).resolve_source()
+    assert "or epsg=" not in str(caught.value)
+
+
+def test_given_both_regions_the_interpolator_checks_the_raster_it_uses(grass, files):
+    """`_set_region` reads the raster first; the overlap check and staging follow it."""
+
+    _raster(files.tmp / "dem.tif", crs="EPSG:2927")
+    far = gpd.GeoDataFrame(geometry=[shapely.box(1e6, 0, 1.001e6, 600)], crs=2927)
+    far.to_file(files.tmp / "far_region.gpkg")
+    contour_interp.ContourSurfaceInterpolator(
+        files.c2927, out=files.tmp / "both.tif", region_raster=files.tmp / "dem.tif",
+        region_vector=files.tmp / "far_region.gpkg", z_field="elev", resolution=10,
+        grassdata=files.grassdata,
+    ).run()
+
+    assert grass.rasters["Region"] == str(files.tmp / "dem.tif")
+    assert "VRegion" not in grass.imported
+
+
 # --------------------------------------------------------------------- cache
 
 

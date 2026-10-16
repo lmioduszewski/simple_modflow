@@ -552,7 +552,8 @@ release-group boundnames; without them it names the fix and offers
   a surface interpolated by GRASS in its LOCATION's CRS (`epsg=`, default 2927;
   `resolution=` in its units). The contour file and a `region_vector` in another CRS
   are reprojected into it, by the rule every `.gpkg` source follows, and a file
-  carrying no CRS is read as already in it (ledger 602; before, a 4326
+  carrying no CRS -- or the location's CRS spelled otherwise, which reprojecting would
+  not move (ledger 603) -- is read as already in it (ledger 602; before, a 4326
   contour file interpolated 0 of 6,000 pixels in silence). Refused before GRASS
   starts, each naming the spelling: a `region_raster` in another CRS (pass
   `region_vector=`), an `epsg=` an existing location contradicts (pass `location=`),
