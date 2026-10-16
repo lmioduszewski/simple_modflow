@@ -624,11 +624,19 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8475 passed / 5 skipped**, 2026-10-15, after ledgers 598-600 -- the heads
-  reader's clock and OC file, `coverage_on`/`Run.resolution` reading `grid=`,
-  `GridSpec.resolve()` naming `workspace=`, and `with_grid(remap=True)` carrying `ic.strt`
-  linear): `-n 10` **5m32s** in a worktree outside `.claude`, at a load average of ~1.9 at
-  its start. Before it, 8434 passed / 5 skipped (after a move classifies an `mf.ref`
+- Full suite (**8779 passed / 5 skipped**, 2026-10-16, after ledgers 601-615 -- the
+  recalibration fixes: `plot.map(values=)` shape, `mf.Contours` frames, `cal.run_template`
+  replacing `build(noptmax=)`, the steady-period group refusal, lake/SFR location weights,
+  remapping a library-referenced array, a run's record against its files, `run.to_library`):
+  `-n 10` **5m19s** in a worktree outside `.claude`, at a load average of ~3.0 at its start;
+  serial (`-n0`) **24m18s**, NOT a quiet clock (~11.3 at its start), a ratio of ~4.6x. The
+  first serial run failed one notebook (`layer_management_workflow`'s `mf.Contours` cell):
+  a doctest earlier in the process set `builtins._ = None`, which GRASS's `finish()` calls --
+  order-dependent, fixed in the test. Before it, 8475 passed / 5 skipped (2026-10-15, after
+  ledgers 598-600 -- the heads reader's clock and OC file, `coverage_on`/`Run.resolution`
+  reading `grid=`, `GridSpec.resolve()` naming `workspace=`, and `with_grid(remap=True)`
+  carrying `ic.strt` linear): `-n 10` **5m32s** in a worktree outside `.claude`, at a load
+  average of ~1.9 at its start. Before it, 8434 passed / 5 skipped (after a move classifies an `mf.ref`
   through `library=` -- ledger 597): `-n 10` **5m24s** in a worktree outside `.claude`, at a
   load average of ~2.6 at its start rising to ~17. The two `-n 10` runs before it, at loads of
   ~15-25, each failed ONE `test_sfr_stream_inputs.py` network-validate case -- MF6 6.8's
