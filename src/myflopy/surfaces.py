@@ -1040,7 +1040,10 @@ class Surface:
             Contours reaching no part of the region's extent are refused before
             GRASS starts, naming both extents. Stored as a ``Path``.
         z : str, default "Elev"
-            The attribute holding each contour's elevation.
+            The attribute holding each contour's elevation, matched ignoring case
+            as GRASS matches it (``"ELEV"`` reads a column ``elev``). Contours
+            without it are refused when GRASS would run, before it starts, naming
+            the attributes they carry (ledger 604).
         region_raster : Path or str, optional
             Raster whose extent becomes the GRASS region. **Exactly one of this
             or ``region_vector`` is required** -- without a region GRASS has no

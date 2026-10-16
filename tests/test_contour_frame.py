@@ -101,11 +101,11 @@ def files(tmp_path):
     return paths
 
 
-def _surface(files, contours, *, region_vector=None, region_raster=None, **kwargs):
+def _surface(files, contours, *, region_vector=None, region_raster=None, z="elev", **kwargs):
     if region_vector is None and region_raster is None:
         region_vector = files.r2927
     return Surface.from_contours(
-        contours, z="elev", region_vector=region_vector, region_raster=region_raster,
+        contours, z=z, region_vector=region_vector, region_raster=region_raster,
         resolution=10, out=files.tmp / f"{contours.stem}.interp.tif",
         grassdata=files.grassdata, **kwargs,
     )
@@ -164,6 +164,57 @@ def test_the_staged_copy_of_a_file_in_the_frame_holds_the_same_features(grass, f
     imported = grass.imported["vectContours"]
     original = gpd.read_file(files.c2927)
     assert imported.geometry.geom_equals_exact(original.geometry, tolerance=0).all()
+
+
+def test_a_shapefile_whose_fid_column_is_not_a_key_is_staged(grass, files):
+    """GeoPackage takes a column named `fid` as its key (ledger 604).
+
+    QGIS's "Merge vector layers" writes a shapefile whose `fid` repeats; GRASS
+    imported it as it was, and the staged copy refused it ("UNIQUE constraint
+    failed"). The copy carries the geometry and `z` alone.
+    """
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        gpd.GeoDataFrame({"fid": [1] * len(_ELEV), "elev": _ELEV, "note": "x"},
+                         geometry=_LINES, crs=2927).to_crs(4326).to_file(files.tmp / "merged.shp")
+        gpd.GeoDataFrame({"fid": [1.5]}, geometry=[shapely.box(0, 0, 1000, 600)],
+                         crs=2927).to_file(files.tmp / "region.shp")
+
+    _surface(files, files.tmp / "merged.shp",
+             region_vector=files.tmp / "region.shp").resolve_source()
+
+    contours = grass.imported["vectContours"]
+    assert list(contours.columns) == ["elev", "geometry"]
+    assert contours["elev"].tolist() == _ELEV
+    assert list(grass.imported["VRegion"].columns) == ["geometry"]
+
+
+def test_z_is_matched_ignoring_case_as_grass_matches_it(grass, files):
+    """GRASS's SQLite table reads `ELEV` for a column `elev` (measured on GRASS 8.4)."""
+
+    _surface(files, files.c2927, z="ELEV").resolve_source()
+
+    assert list(grass.imported["vectContours"].columns) == ["elev", "geometry"]
+
+
+def test_contours_without_the_z_attribute_are_refused_before_grass(grass, files):
+    with pytest.raises(ValueError, match=r"carry no attribute 'height'.*They carry: 'elev'"):
+        _surface(files, files.c2927, z="height").resolve_source()
+    assert not grass.started
+
+
+def test_a_crs_no_transformation_reaches_is_refused_naming_set_crs(grass, files):
+    """An engineering CRS (a CAD export's) cannot be carried into 2927 at all."""
+
+    local = ('LOCAL_CS["Unknown",LOCAL_DATUM["Unknown",32767],UNIT["foot",0.3048],'
+             'AXIS["Easting",EAST],AXIS["Northing",NORTH]]')
+    gpd.GeoDataFrame({"elev": _ELEV}, geometry=_LINES, crs=local).to_file(files.tmp / "cad.gpkg")
+
+    with pytest.raises(ValueError, match=r"contours 'cad.gpkg' is in Unknown, which cannot "
+                                         r"be carried into the GRASS location's EPSG:2927.*set_crs"):
+        _surface(files, files.tmp / "cad.gpkg").resolve_source()
+    assert not grass.started
 
 
 # ------------------------------------------------------------------ refusals

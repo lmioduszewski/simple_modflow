@@ -557,7 +557,9 @@ release-group boundnames; without them it names the fix and offers
   contour file interpolated 0 of 6,000 pixels in silence). Refused before GRASS
   starts, each naming the spelling: a `region_raster` in another CRS (pass
   `region_vector=`), an `epsg=` an existing location contradicts (pass `location=`),
-  contours reaching no part of the region's extent (both extents in the message);
+  contours reaching no part of the region's extent (both extents in the message),
+  contours carrying no `z` attribute (matched ignoring case, as GRASS does; ledger
+  604), a CRS nothing carries into the location's (`set_crs`);
   and a cache interpolated before this from a file in another CRS (`refresh=True`).
 - `stack.excavate(bottom, within, *, name=, layer=, min_remnant=0.1)` — a void cut
   into the stack: a pond, basin, pit or trench (ledger 320). Inside `within` — the

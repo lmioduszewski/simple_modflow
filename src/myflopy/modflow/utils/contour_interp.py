@@ -577,18 +577,43 @@ def _in_target(frame: ContourFrame, item: ContourInput) -> gpd.GeoDataFrame:
     if frame_gdf.crs is None:
         return frame_gdf.set_crs(frame.target)
     if not _same_frame(frame_gdf.crs, frame.target):
-        return frame_gdf.to_crs(frame.target)
+        try:
+            return frame_gdf.to_crs(frame.target)
+        except ProjError as error:
+            # pyproj's own message ("Error creating Transformer from CRS.") names
+            # neither CRS nor the file -- a CAD export's engineering CRS does this.
+            raise ValueError(
+                f"{item.role} '{item.path.name}' is in {_crs_label(frame_gdf.crs)}, which "
+                f"cannot be carried into the GRASS location's {frame.target} (ledger "
+                "604). Give the file the CRS it was drawn in: "
+                "gpd.read_file(path).set_crs(<its EPSG>, allow_override=True)"
+                ".to_file(path)."
+            ) from error
     return frame_gdf.set_crs(frame.target, allow_override=True)
 
 
-def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path, Path | None]:
+def _keep_columns(gdf: gpd.GeoDataFrame, names) -> gpd.GeoDataFrame:
+    """``gdf`` holding only its geometry and the columns ``names`` match, ignoring case."""
+
+    wanted = {str(name).lower() for name in names}
+    keep = [column for column in gdf.columns
+            if column != gdf.geometry.name and str(column).lower() in wanted]
+    return gdf[[*keep, gdf.geometry.name]]
+
+
+def stage_contour_inputs(
+    frame: ContourFrame, scratch: Path | str, *, z_field: str | None = None
+) -> tuple[Path, Path | None]:
     """Write the contours and a region polygon, in the location's CRS, for GRASS.
 
     The staged GeoPackage copies are the only files GRASS imports. A copy of a file
     already in the frame imports identically to the file itself (measured: 17,688
     pixels, max |diff| 0.0), so staging always happens, one code path. A contour file
     holding several layers is read as its FIRST, as every myflopy vector reader reads
-    one.
+    one. A copy carries only what GRASS reads -- the region its geometry, the contours
+    theirs and ``z_field`` -- because a GeoPackage refuses attributes another format
+    holds: a shapefile's ``fid`` column that is not a unique integer (what QGIS's
+    "Merge vector layers" writes) is GeoPackage's own key (ledger 604).
 
     Parameters
     ----------
@@ -596,6 +621,12 @@ def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path
         From :func:`contour_frame`, already passed through :meth:`ContourFrame.refuse`.
     scratch : str or pathlib.Path
         An existing directory to write into; the caller removes it.
+    z_field : str, optional
+        The contours' elevation attribute, matched IGNORING CASE as GRASS's SQLite
+        attribute table matches it (``z="ELEV"`` reads a column ``elev``). Given, the
+        staged contours carry it and no other attribute, and a file without it is
+        refused here, before GRASS starts. ``None`` (the default) keeps every
+        attribute of the contours. The region keeps no attribute either way.
 
     Returns
     -------
@@ -610,12 +641,27 @@ def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path
         that box, so ``r.surf.contour`` would have nothing to interpolate from and
         runs at 0% indefinitely (ledger 149). The message gives both extents in the
         location's CRS and, when the contour file was moved or carries no CRS, what
-        it was read as.
+        it was read as. Or the contours carry no ``z_field`` attribute (the message
+        lists those they carry). Or a vector input's CRS cannot be carried into the
+        location's at all (an engineering CRS, as a CAD export writes; ledger
+        604).
     """
 
     scratch = Path(scratch)
     contours_item = frame._input("contours")
     contours = _in_target(frame, contours_item)
+    if z_field is not None:
+        staged = _keep_columns(contours, [z_field])
+        if staged.shape[1] == 1:
+            have = [str(column) for column in contours.columns
+                    if column != contours.geometry.name]
+            raise ValueError(
+                f"Contours '{contours_item.path.name}' carry no attribute {z_field!r}, so "
+                "GRASS has no elevation to rasterize. They carry: "
+                f"{', '.join(map(repr, have)) or 'no attributes'}. Pass z=<that column> "
+                "(z_field= on ContourSurfaceInterpolator)."
+            )
+        contours = staged
     region_vector = frame._input("region_vector")
     region_raster = frame._input("region_raster")
     staged_region = None
@@ -627,7 +673,7 @@ def stage_contour_inputs(frame: ContourFrame, scratch: Path | str) -> tuple[Path
             with rasterio.open(region_raster.path) as handle:
                 bounds, region_path = tuple(handle.bounds), region_raster.path
     elif region_vector is not None:
-        region = _in_target(frame, region_vector)
+        region = _keep_columns(_in_target(frame, region_vector), [])
         bounds, region_path = tuple(region.total_bounds), region_vector.path
         staged_region = scratch / "region.gpkg"
         region.to_file(staged_region, driver="GPKG")
@@ -689,7 +735,8 @@ class ContourSurfaceInterpolator:
         Polygon whose extent (and shape, with ``clip``) is the GRASS region,
         reprojected like ``contours``. Used when ``region_raster`` is not given.
     z_field : str, default "Elev"
-        The contours' elevation attribute.
+        The contours' elevation attribute, matched ignoring case as GRASS matches
+        it. Contours without it are refused before GRASS starts.
     resolution : float, default 4
         Cell size, in the units of the location's CRS.
     epsg : str, default "2927"
@@ -768,13 +815,16 @@ class ContourSurfaceInterpolator:
         ValueError
             From :meth:`ContourFrame.refuse` (an existing location in another CRS than
             ``epsg``, a region raster in another CRS) or :func:`stage_contour_inputs`
-            (no contour reaches the region's extent).
+            (no contour reaches the region's extent, the contours carry no
+            ``z_field``, or an input's CRS cannot be carried into the location's).
         """
 
         frame = self.frame()
         frame.refuse()
         with tempfile.TemporaryDirectory(prefix="myflopy-contours-") as scratch:
-            contours, region_vector = stage_contour_inputs(frame, scratch)
+            contours, region_vector = stage_contour_inputs(
+                frame, scratch, z_field=self.z_field
+            )
             r, g, v, gsetup = _grass_modules(self.grass_bin)
             with _teed_console(self.progress):
                 return self._run_grass(

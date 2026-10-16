@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 603 entries (608 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 604 entries (609 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 604 | A contour surface's staged copies carry only what GRASS reads -- the geometry and `z` -- and a contour file... | 2026-10-16 |
 | 603 | A contour surface's inputs are in the location's frame when reprojecting would not move them, not only when... | 2026-10-16 |
 | 602 | `mf.Contours` interpolates where its contours ARE: its inputs reach GRASS in the location's CRS, and the fr... | 2026-10-16 |
 | 601 | `values=` on a map is ONE layer's field, checked at the call on every scope and backend; a field for every... | 2026-10-16 |
@@ -22621,3 +22622,20 @@ same day, which is the useful part of the result.
       target. A real datum change stays a different frame (EPSG:2286 -> 2927 moves 4.24
       ft). NOT changed: the house `_same_crs`, which the `.gpkg` sources still use --
       there a spurious `to_crs` costs nothing visible; here it cost a refusal.
+
+604. **A contour surface's staged copies carry only what GRASS reads -- the geometry and `z` -- and a contour file without `z`, or in a CRS nothing can carry into the location's, is refused naming the fix (2026-10-16).**
+      Review of ledger 602, which staged EVERY attribute into a GeoPackage
+      copy. GeoPackage takes a column named `fid` as its key, so a shapefile whose `fid`
+      repeats -- what QGIS's "Merge vector layers" writes -- or is not an integer failed
+      staging with GDAL's "UNIQUE constraint failed" where GRASS had imported the file
+      as it was. Chosen: the contours keep `z` alone (matched IGNORING CASE, as GRASS's
+      SQLite table matches it: `z="ELEV"` read a column `elev` on GRASS 8.4, measured),
+      the region polygon no attribute; a real Ten Trails pond surface interpolates
+      identically through the narrowed copy (16,774 pixels, max |diff| 0.0). A file
+      without `z` is refused before GRASS starts, listing the attributes it carries
+      (GRASS said "Column <z> not found" after importing it). An engineering CRS (a CAD
+      export's) has no transformation into the location's: pyproj's "Error creating
+      Transformer from CRS." named neither CRS nor file, and is restated naming
+      `set_crs`. NOT done: an engineering CRS is not read as "no CRS" -- it is a declared
+      frame, and guessing it is the location's is the guess ledger 602
+      refuses for every other declared CRS.
