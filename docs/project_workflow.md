@@ -359,6 +359,8 @@ it used (`<run>/_library/`, ledger 230) -- so a library that was never saved, or
 saved somewhere else, can be filled from the run itself (ledger 613):
 
 ```python
+# ONE Project per root: mf.Project.load(root) where a project is saved there (its
+# specs/project_spec.json), else mf.Project(root, name=...). Nothing is saved here:
 project = mf.Project("/models/tentrails", name="tentrails")    # the runs, an empty library
 report = project.runs["ss"].to_library(project, files_differ="keep_record")
 # LibraryReport(run='ss', simulation='ss', added=13, identical=0, replaced=0,
@@ -376,7 +378,8 @@ What goes in is the RECORD: each copy under the key the run recorded (it must st
 digest to what the run recorded), the simulation from the snapshot with every library
 slot back as `mf.ref(key)` and every inline package as its recipe declared it, and each
 model's mesh in `project.grids` under `"<model>/<grid_pin>"` (or the key of the
-`mf.grid_ref` the run declared), the model declared on `mf.grid_ref(key)` -- so it keeps
+`mf.grid_ref` the run declared, unless the project holds a RECIPE there -- below), the
+model declared on `mf.grid_ref(key)` -- so it keeps
 its mesh through `save()`/`Project.load` and `with_grid(..., remap=True)` still knows
 what its arrays are on. Before anything is registered the import is BUILT and WRITTEN
 in a scratch directory and compared file by file with the run's own input files
@@ -399,15 +402,21 @@ out of MF6 files is the unbuilt half of Phase-2 decision D2, and a bare MF6 fold
   forks the simulation under the run's own name and keeps the keys the run recorded.
 - **A relative source path** (after `save(bundle_sources=True)`) is refused when the
   project is rooted elsewhere: there it names another file.
-- **`mf.Project(root)` is an EMPTY library even where one is saved**, and its `save()`
+- **ONE `Project` per root.** `mf.Project.load(root)` where a project is saved there,
+  else `mf.Project(root, name=...)` -- and never a second one beside a live one.
+  `mf.Project(root)` is an EMPTY library even where one is saved, and its `save()`
   writes over that `project_spec.json` with only what it holds (measured: two saved
-  packages read back as none). Where a project is saved, add to it through
-  `mf.Project.load(root)`. A second live `Project` at one root also takes over the
-  areas of interest its models read (ledger 312, newest wins).
-- **A model declared on `mf.grid_ref(key)` to a RECIPE** keeps that key, and in the
-  project that holds the recipe the import collides on it (a grid key is never
-  prefixed); `overwrite=True` replaces the recipe with the run's built mesh (ledger
-  614).
+  packages read back as none); a second live `Project` at one root also takes over the
+  areas of interest its models read (ledger 312, newest wins). To fill a library that
+  does not hold the run, use the project you have -- or one at ANOTHER root:
+  `project.runs["r"].to_library(other)`.
+- **A model declared on `mf.grid_ref(key)` to a RECIPE** (a `GridSpec.voronoi`) in a
+  project that holds that recipe: the recipe is NEVER replaced, `overwrite=True`
+  included. The mesh the run built is registered beside it under
+  `"<model>/<grid_pin>"`, the imported model is declared on that key, and the report's
+  `kept_recipes` names both (`(("vor", "m/66b3935b4082e2f1"),)`; ledger 615).
+  A BUILT mesh under the run's key is reused when it is the same mesh (pin, vertices,
+  cells) and collides otherwise, naming `overwrite=True`.
 
 ### A calibration back into the library
 

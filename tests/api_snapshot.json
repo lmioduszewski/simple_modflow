@@ -2380,7 +2380,8 @@
       "replaced:POSITIONAL_OR_KEYWORD=<required>",
       "inputs:POSITIONAL_OR_KEYWORD=<required>",
       "differences:POSITIONAL_OR_KEYWORD=()",
-      "unsaveable:POSITIONAL_OR_KEYWORD=None"
+      "unsaveable:POSITIONAL_OR_KEYWORD=None",
+      "kept_recipes:POSITIONAL_OR_KEYWORD=()"
     ],
     "LineProfileView.section": [
       "model:POSITIONAL_OR_KEYWORD=None",
@@ -7076,6 +7077,7 @@
       "grids",
       "identical",
       "inputs",
+      "kept_recipes",
       "library_keys",
       "replaced",
       "run",

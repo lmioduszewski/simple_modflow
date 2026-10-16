@@ -491,7 +491,13 @@ BUILDING and WRITING the import in a scratch dir and comparing FILE against FILE
 `ic.strt` edit identical) and not in memory (FloPy writes 8 decimals). A difference
 raises naming `files_differ="keep_record"`; a collision raises naming `prefix=`/
 `overwrite=True`, never auto-prefixed; a run you CALIBRATE goes in unprefixed; a bare
-MF6 folder is refused (reading specs out of MF6 files is D2's unbuilt half).
+MF6 folder is refused (reading specs out of MF6 files is D2's unbuilt half). A grid
+RECIPE under the run's `grid_ref` key is never replaced, `overwrite=True` included: the
+built mesh goes beside it under `"<model>/<grid_pin>"` (`kept_recipes`, ledger
+615). **Teach ONE `Project` per root** -- `mf.Project.load(root)` where one is
+saved, else `mf.Project(root, name=)`: a second one hides the first's areas of interest
+(ledger 312) and its `save()` writes over a saved library it never loaded (ledger
+613, not yet refused).
 **A second column, `source`, says whether the FILE under a package still says what
 it said** (ledger 276) — `ok`/`edited`/`missing`/`unfingerprinted`/`—`. Separate from
 `state` on purpose: a package is routinely `unchanged` (the key means the same) AND

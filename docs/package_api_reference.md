@@ -765,11 +765,16 @@ FILES (a run holding nothing opens them), and `run.build()` first is the one spe
 that puts the record over them (ledger 611). `run.to_library(project)` puts the
 run's RECORD into a project's libraries -- its `_library` copies under the keys it
 recorded, its simulation from the snapshot with library slots back as `mf.ref(key)`, each
-model's mesh in `project.grids` behind `mf.grid_ref("<model>/<grid_pin>")` -- after writing
+model's mesh in `project.grids` behind `mf.grid_ref("<model>/<grid_pin>")` (the run's own
+`grid_ref` key when it declared one, unless that key holds a RECIPE here: a recipe is never
+replaced, and the report's `kept_recipes` names both keys, ledger 615) -- after writing
 that import in a scratch directory and comparing it file by file with the run's own files:
 a difference raises naming `files_differ="keep_record"`, a key holding something else
 raises naming `prefix=`/`overwrite=True`, and a run you will calibrate goes in without a
-prefix (ledger 613). `project.runs.drift()` reports which
+prefix (ledger 613). One `Project` per root: `mf.Project.load(root)` where a
+project is saved there, else `mf.Project(root, name=...)` -- a second one at the same root
+hides the first's areas of interest (ledger 312) and its `save()` writes over a saved
+library it never loaded. `project.runs.drift()` reports which
 library packages a run used have changed since it ran. `project.save()` returns a
 `SaveReport`, not a path.
 

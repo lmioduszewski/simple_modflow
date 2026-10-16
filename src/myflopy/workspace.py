@@ -1715,7 +1715,8 @@ class LibraryReport:
     grids : dict of str to str
         Each model whose mesh was registered to its key in ``project.grids``,
         ``"<model>/<grid_pin>"`` unless the run's recipe declared ``mf.grid_ref(key)``
-        (never prefixed). Empty for a model with no mesh (a structured ``mf.dis``
+        and that key holds no RECIPE in the project (never prefixed; see
+        ``kept_recipes``). Empty for a model with no mesh (a structured ``mf.dis``
         model declares none).
     added : tuple of (str, str)
         ``(kind, key)`` for each entry newly registered; ``kind`` is ``"package"``,
@@ -1737,6 +1738,13 @@ class LibraryReport:
     unsaveable : str or None
         Why ``project.save()`` will skip the imported simulation (an inline package
         holding an array, as a run's snapshot can), or ``None`` when it will save.
+    kept_recipes : tuple of (str, str)
+        ``(recipe_key, mesh_key)`` for each ``mf.grid_ref`` key the run declared that
+        holds a grid RECIPE (a ``GridSpec.voronoi``, a ``python`` builder) in the
+        project: the recipe is left as it is, ``overwrite=True`` included, and the mesh
+        the run built is registered under ``mesh_key``, ``"<model>/<grid_pin>"``, which
+        the imported model is declared on (ledger 615). Empty when no key held
+        one.
     """
 
     run: str
@@ -1749,6 +1757,7 @@ class LibraryReport:
     inputs: InputsVerdict
     differences: tuple[tuple[str, str, str], ...] = ()
     unsaveable: str | None = None
+    kept_recipes: tuple[tuple[str, str], ...] = ()
 
     def __repr__(self) -> str:
         """One line: the simulation, the counts, and the files verdict."""
@@ -1763,6 +1772,8 @@ class LibraryReport:
         ]
         if self.differences:
             pieces.append(f"differences={len(self.differences)}")
+        if self.kept_recipes:
+            pieces.append(f"kept_recipes={len(self.kept_recipes)}")
         if self.unsaveable:
             pieces.append("unsaveable=True")
         return f"LibraryReport({', '.join(pieces)})"
@@ -1775,6 +1786,9 @@ class LibraryReport:
             for verb, entries in (("added", self.added), ("identical", self.identical),
                                   ("replaced", self.replaced))
             for kind, key in entries
+        ] + [
+            ("grid", recipe_key, f"recipe kept; the run's mesh is {mesh_key!r}")
+            for recipe_key, mesh_key in self.kept_recipes
         ]
         body = "".join(
             f"<tr><td>{escape(kind)}</td><td>{escape(key)}</td><td>{escape(verb)}</td></tr>"
@@ -1831,6 +1845,17 @@ def _library_mesh(entry: Any, project_root: Path) -> Any:
     except (OSError, ValueError, EOFError, pickle.UnpicklingError) as error:
         logger.debug("grid entry %r could not be read to compare (%s)", entry.name, error)
         return None
+
+
+def _is_grid_recipe(entry: Any) -> bool:
+    """Whether a grid-library entry is a RECIPE -- a ``GridSpec`` holding no built mesh.
+
+    A ``GridSpec.voronoi`` from a boundary file or a ``python`` builder; not a
+    ``GridSpec.from_object``/pickle, nor ``None`` (no entry).
+    """
+
+    entry = _grid_entry(entry)
+    return isinstance(entry, GridSpec) and entry.method not in ("object", "pickle")
 
 
 def _model_mesh_label(model: ModelSpec, grids: dict[str, Any] | None,
@@ -2961,7 +2986,31 @@ class Run:
     def spec_name(self) -> str | None:
         """The simulation this run was prepared from, per its manifest."""
 
-        return (self.spec_block or {}).get("name")
+        return (self._summary_block() or {}).get("name")
+
+    def _summary_block(self) -> dict[str, Any] | None:
+        """The manifest's readable summary block, for this run as for one reopened.
+
+        A run prepared in this session holds its spec and not the block its manifest
+        was written with, which is that spec's summary -- so the summary is taken from
+        the spec; without one it is the block read from ``run.json`` (``None`` when
+        there is none).
+        """
+
+        if self.spec_block is None and self.spec is not None:
+            return _spec_summary(self.spec)
+        return self.spec_block
+
+    def _recipe_spec(self) -> SimulationSpec | None:
+        """The simulation the manifest's recipe declares, or ``None`` when it stores none.
+
+        For a run prepared in this session that is the spec it holds, which is what
+        the recipe was written from; a reopened run revives ``spec_recipe``.
+        """
+
+        if self.spec_recipe is not None:
+            return _spec_from_recipe(self.spec_recipe, name=self.name)
+        return self.spec if self.spec_block is None else None
 
     @property
     def package_keys(self) -> dict[str, tuple[str, ...]]:
@@ -2970,7 +3019,9 @@ class Run:
         Read from the manifest's own summary block rather than from
         :attr:`spec`, so it answers for a run reopened in a later session whose
         recipe could not be revived -- that block is the authority on what a run
-        WAS. Returns ``{}`` for a run with no manifest.
+        WAS. A run prepared in this session answers from the spec it holds, which
+        is what that block was written from (it read ``{}`` until ledger
+        615). Returns ``{}`` for a run with neither.
 
         These are labels, not contents: a key says which entry was used, and
         ``project.runs.drift()`` says whether that entry still means the same
@@ -2979,7 +3030,7 @@ class Run:
 
         return {
             model.get("name", "?"): tuple(model.get("packages", ()))
-            for model in (self.spec_block or {}).get("models", ())
+            for model in (self._summary_block() or {}).get("models", ())
         }
 
     @property
@@ -3064,7 +3115,9 @@ class Run:
         what it resolved to (ledgers 280, 612). ``full=True`` instead builds
         the record as DECLARED (:meth:`_declared_spec`, a lazy recipe resolved again
         from its source) whatever the hashes say -- what a library import of the run
-        registers, so a moved source IS a difference there. A run with no input files
+        registers, so a moved source IS a difference there; :meth:`to_library` always
+        runs that declared check, on its import exactly as it registers it (its
+        ``grid_ref`` keys and ``prefix`` applied). A run with no input files
         of its own (``"unwritten"``, ``"no record"``) has nothing to compare and
         returns ``{}``.
         """
@@ -3163,8 +3216,8 @@ class Run:
                 "recipe, so there is no record of what it declared."
             )
         keys = {*(self.package_digests or {}), *(self.package_snapshot or {})}
-        block = self.spec_block or {}
-        recipe = _spec_from_recipe(self.spec_recipe, name=self.name)
+        block = self._summary_block() or {}
+        recipe = self._recipe_spec()
         recipe_models = {model.name: model for model in recipe.models} if recipe else {}
 
         def _declared(entries, declared):
@@ -3245,9 +3298,12 @@ class Run:
         snapshot (ledger 251), each slot the manifest labels with a library key put back
         as ``mf.ref(key)`` (the snapshot holds a LAZY package's resolved form there) and
         each inline package as the manifest's recipe declared it; and each model's mesh,
-        registered in ``project.grids`` and declared on the model as ``mf.grid_ref(key)``,
-        so the imported simulation keeps its mesh through ``project.save()`` and
-        ``Project.load``. Every copy must still digest to what the run recorded.
+        registered in ``project.grids`` and declared on the model as ``mf.grid_ref(key)``
+        -- the key the run's recipe declared, or ``"<model>/<grid_pin>"`` when it
+        declared none or the project holds a RECIPE under it (never replaced, ledger
+        615) -- so the imported simulation keeps its mesh through
+        ``project.save()`` and ``Project.load``. Every copy must still digest to what the
+        run recorded.
         Afterwards ``project.package(key)``, ``packages.fork``, ``simulations.fork``,
         ``prepare_run`` and ``with_grid`` work on them as on anything declared in the
         project, and ``ies.calibrated().to_library(project)`` can fork the run's
@@ -3296,9 +3352,13 @@ class Run:
             ``grid_pin``, vertices and cells, a simulation building the same models,
             packages, options and meshes (names, lineage and context aside) -- is left
             alone and reported ``identical``, so calling this twice changes nothing. A
-            grid held as a RECIPE under the key is never built to be compared: it
-            collides. ``True`` replaces each entry that differs, as
-            ``project.add_package(..., overwrite=True)`` does (ledger 208).
+            grid RECIPE under the run's ``grid_ref`` key is never built to be compared
+            and never replaced, ``True`` included: the run's mesh is registered beside
+            it under ``"<model>/<grid_pin>"`` and the report's ``kept_recipes`` names
+            both keys (ledger 615); a recipe under ``"<model>/<grid_pin>"``
+            itself raises ``KeyError`` whatever this says. ``True`` replaces each other
+            entry that differs, as ``project.add_package(..., overwrite=True)`` does
+            (ledger 208).
         files_differ : {"raise", "keep_record"}, optional
             What an import that does not write the run's own input files means.
             ``"raise"`` (the default) raises ``ValueError`` listing each file, block and
@@ -3333,13 +3393,19 @@ class Run:
             For a ``prefix`` that is neither a ``str`` nor ``None``.
         KeyError
             For a key, grid key or simulation name holding something else, without
-            ``overwrite=True``.
+            ``overwrite=True``; for a grid RECIPE under ``"<model>/<grid_pin>"``, the
+            key the run's mesh goes under, with or without it.
         FileNotFoundError
             For a copy the manifest names that is missing.
 
         Examples
         --------
-        >>> proj = mf.Project("/models/tentrails", name="tentrails")
+        One project per root: ``mf.Project.load(root)`` where a project is saved there,
+        else ``mf.Project(root, name=...)`` -- never a second one beside it (ledger
+        613: it hides the first one's areas of interest, and its ``save()``
+        writes over a saved library it never loaded).
+
+        >>> proj = mf.Project("/models/tentrails", name="tentrails")  # nothing saved there
         >>> proj.runs["ss"].to_library(proj, files_differ="keep_record")
         >>> # ss's TDIS was changed outside myflopy after the write: say what MF6 ran
         >>> proj.add_simulation(proj.simulations["ss"].with_packages(
@@ -3392,13 +3458,14 @@ class Run:
         self._refuse_relative_sources(project, [*copies.values(), *inline])
 
         # Each model's mesh, by the key the run declared or "<model>/<pin>".
-        recipe = _spec_from_recipe(self.spec_recipe, name=self.name)
+        recipe = self._recipe_spec()
         named = {
             model.name: model.grid.key
             for model in (recipe.models if recipe else ()) if isinstance(model.grid, GridRef)
         }
         meshes: dict[str, Any] = {}
         grid_keys: dict[str, str] = {}
+        kept: dict[str, str] = {}
         models = []
         for model in declared.models:
             mesh = _mesh_in_hand(model)
@@ -3407,6 +3474,23 @@ class Run:
                 models.append(model)
                 continue
             key = named.get(model.name) or f"{model.name}/{pin}"
+            # A RECIPE under the key is never replaced (ledger 615): the mesh
+            # the run built goes under "<model>/<pin>" beside it.
+            if key in kept:
+                key = kept[key]
+            elif _is_grid_recipe(project.grids.get(key)):
+                own = f"{model.name}/{pin}"
+                if own == key or _is_grid_recipe(project.grids.get(own)):
+                    raise KeyError(
+                        f"Project {project.name!r} holds a grid RECIPE under {own!r}, the "
+                        f"key run {self.name!r}'s mesh goes under"
+                        + (f" when {key!r} holds one" if own != key else "")
+                        + "; a recipe is never replaced, overwrite=True included, and "
+                        "nothing was registered. Rename that library entry, then import "
+                        "again."
+                    )
+                kept[key] = own
+                key = own
             meshes.setdefault(key, mesh)
             grid_keys[model.name] = key
             # The context keeps only what a project file holds -- its metadata (the
@@ -3545,6 +3629,12 @@ class Run:
             warnings.warn(message, UserWarning, stacklevel=2)
 
         # Register, now that nothing can refuse.
+        for recipe_key, mesh_key in kept.items():
+            logger.info(
+                "run %r: %r holds a grid recipe in project %r, left as it is; the mesh "
+                "the run built is registered under %r", self.name, recipe_key,
+                project.name, mesh_key,
+            )
         replaced = clashes
         same = set(identical)
         for key in keys:
@@ -3566,6 +3656,7 @@ class Run:
             inputs=inputs,
             differences=tuple(rows),
             unsaveable=project._why_unserializable(project.simulations[name]),
+            kept_recipes=tuple(kept.items()),
         )
 
     def _refuse_unimportable(self) -> None:

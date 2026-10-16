@@ -83,7 +83,7 @@ def scenarios(root: Path) -> None:
     reopened = mf.load_run(run.workspace, load=False)
     reopened.execute()
     print(f"S4  load_run(load=False).execute(): ran {_ran(reopened)}, file {_strt_on_disk(run)}")
-    entry = mf.Project(root / "s1", name="p").runs["baseline"]
+    entry = project.refresh_runs()["baseline"]   # from disk, not a second Project
     entry.execute()
     print(f"S5  project.runs['baseline'].execute(): ran {_ran(entry)}")
 

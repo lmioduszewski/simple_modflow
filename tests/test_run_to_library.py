@@ -130,18 +130,24 @@ def test_what_it_imported_writes_the_files_the_run_ran(made):
     assert written_differences(made.run.workspace, again.workspace) == []
 
 
-@pytest.mark.parametrize("door", ["load_run", "reopen_run", "runs"])
+@pytest.mark.parametrize("door", ["load_run", "reopen_run", "runs", "prepare_run"])
 def test_every_door_hands_the_same_verb(made, door):
+    """``prepare_run``: the run this session prepared holds its spec and not the
+    manifest's summary block, so its lazy library slots came back INLINE, resolved
+    (ledger 615)."""
+
     fresh = _fresh(made)
     run = {
         "load_run": lambda: mf.load_run(made.run.workspace, load=False),
         "reopen_run": lambda: made.project.reopen_run("r", load=False),
         "runs": lambda: fresh.runs["r"],
+        "prepare_run": lambda: made.run,
     }[door]()
     assert isinstance(run, Run)
     report = run.to_library(fresh)
     assert report.library_keys == {key: key for key in sorted(KEYS)}
     assert report.inputs.verdict == "ok"
+    assert _labels(fresh.simulations["s"].models[0].packages) == list(KEYS)
 
 
 def test_importing_twice_changes_nothing(made):
@@ -485,13 +491,11 @@ def test_to_library_never_writes_into_the_run(made):
     assert {path: path.stat().st_mtime_ns for path in made.run.workspace.rglob("*")} == before
 
 
-def test_a_run_on_a_deferred_grid_ref_is_not_refused_by_its_mesh(tmp_path,
-                                                                  triangulated_grid_finer):
-    """A model declared on ``mf.grid_ref(key)`` to a RECIPE: the library names no mesh
-    until it is built, the snapshot names the one the build resolved -- not a difference
-    (ledger 614). It read ``mesh ref:vor where the run had pin:...``."""
+def _on_recipe(root: Path):
+    """A project whose model ``m`` is declared on ``mf.grid_ref("vor")`` to a RECIPE
+    (``GridSpec.voronoi`` from a boundary file -- a real Triangle mesh, ledgers 263/265),
+    and its run ``r`` of simulation ``s``, written."""
 
-    root = tmp_path / "proj"
     root.mkdir()
     boundary = root / "boundary.gpkg"
     gpd.GeoDataFrame({"name": ["d"]}, geometry=[box(0.0, 0.0, 600.0, 600.0)],
@@ -511,6 +515,17 @@ def test_a_run_on_a_deferred_grid_ref_is_not_refused_by_its_mesh(tmp_path,
     ))
     run = project.prepare_run("r", "s")
     run.write(silent=True)
+    return project, run
+
+
+def test_a_run_on_a_deferred_grid_ref_is_not_refused_by_its_mesh(tmp_path,
+                                                                  triangulated_grid_finer):
+    """A model declared on ``mf.grid_ref(key)`` to a RECIPE: the library names no mesh
+    until it is built, the snapshot names the one the build resolved -- not a difference
+    (ledger 614). It read ``mesh ref:vor where the run had pin:...``."""
+
+    root = tmp_path / "proj"
+    project, run = _on_recipe(root)
     _refusal(project, run)
     # A fresh library takes the mesh under the run's own grid_ref key.
     fresh = _fresh(SimpleNamespace(root=root))
@@ -524,3 +539,57 @@ def test_a_run_on_a_deferred_grid_ref_is_not_refused_by_its_mesh(tmp_path,
         replace(model, grid=GridRef("finer")),))
     with pytest.raises(ValueError, match=r"mesh pin:\w+ where the run had pin:"):
         _refusal(fresh, fresh.runs["r"])
+
+
+def test_a_recipe_under_the_runs_grid_key_is_never_replaced(tmp_path):
+    """The run declared ``grid_ref("vor")`` and the library holds the RECIPE there: the
+    recipe stays, ``overwrite=True`` included, and the mesh the run built goes beside it
+    under ``"m/<pin>"`` (ledger 615). It collided, and ``overwrite=True``
+    replaced the recipe with the built mesh."""
+
+    project, run = _on_recipe(tmp_path / "proj")
+    recipe = project.grids["vor"]
+    for overwrite in (False, True):
+        report = run.to_library(project, overwrite=overwrite)
+        assert project.grids["vor"] is recipe
+        key = report.grids["m"]
+        assert key.startswith("m/") and report.kept_recipes == (("vor", key),)
+        assert ("simulation", "s") in report.identical and report.replaced == ()
+    assert "kept_recipes=1" in repr(report) and "recipe kept" in report._repr_html_()
+    # A library holding the recipe and no simulation: the import is declared on the mesh.
+    other = mf.Project(tmp_path / "other", name="other")
+    other.add_grid("vor", recipe)
+    report = run.to_library(other)
+    assert other.grids["vor"].method == "voronoi" and report.kept_recipes == (("vor", key),)
+    assert other.simulations["s"].models[0].grid == GridRef(key)
+    assert ("grid", key) in report.added and report.inputs.verdict == "ok"
+    assert grid_pin(other.grids[key].obj) == key.split("/", 1)[1]
+    assert other.save().simulations == 1
+    # A recipe under "m/<pin>" too: nothing left to put the mesh under, so it raises.
+    third = mf.Project(tmp_path / "third", name="third")
+    third.add_grid("vor", recipe)
+    third.add_grid(key, recipe)
+    with pytest.raises(KeyError, match=r"RECIPE under 'm/\w+'.*never replaced"):
+        run.to_library(third, overwrite=True)
+    assert third.simulations.names() == [] and third.packages.names() == []
+
+
+def test_a_built_mesh_under_the_runs_grid_key_is_reused_or_collides(
+        tmp_path, triangulated_grid_finer):
+    """A BUILT mesh under the run's ``grid_ref`` key: the same pin, vertices and cells is
+    that mesh (the key reused); another mesh collides, naming ``overwrite=``."""
+
+    _, run = _on_recipe(tmp_path / "proj")
+    first = mf.Project(tmp_path / "first", name="first")
+    assert run.to_library(first).grids == {"m": "vor"}
+    same = mf.Project(tmp_path / "same", name="same")
+    same.add_grid("vor", first.grids["vor"].obj)
+    report = run.to_library(same)
+    assert ("grid", "vor") in report.identical and report.grids == {"m": "vor"}
+    assert report.kept_recipes == ()
+    assert same.simulations["s"].models[0].grid == GridRef("vor")
+    different = mf.Project(tmp_path / "different", name="different")
+    different.add_grid("vor", triangulated_grid_finer)
+    with pytest.raises(KeyError, match=r"grid 'vor'.*overwrite=True"):
+        run.to_library(different)
+    assert different.simulations.names() == []

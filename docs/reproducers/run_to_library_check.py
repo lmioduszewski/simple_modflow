@@ -99,9 +99,9 @@ def checks(root: Path) -> None:
     differing = settings[~settings["identical"]] if "identical" in settings else settings
     print(f"    differing settings: {sorted(set(map(str, differing.iloc[:, :3].values.tolist())))}")
     # (c) to_library's own check.
-    fresh = mf.Project(root / "toy", name="fresh")
+    fresh = mf.Project(root / "fresh", name="fresh")   # one Project per root
     try:
-        fresh.runs["edited"].to_library(fresh)
+        project.runs["edited"].to_library(fresh)
     except ValueError as error:
         rows = [line.strip() for line in str(error).splitlines() if line.startswith("  ")]
         print(f"(c) to_library refused: {rows}")

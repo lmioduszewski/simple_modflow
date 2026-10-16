@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 614 entries (619 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 615 entries (620 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 615 | A grid RECIPE in the library is never replaced by a run's mesh | 2026-10-16 |
 | 614 | A `grid_ref` to a RECIPE is not compared with a mesh | 2026-10-16 |
 | 613 | A run's own packages, simulation and mesh go into a project's library: `run.to_library(project)`, checked f... | 2026-10-16 |
 | 612 | An unfingerprinted run is checked against its FROZEN record, not its re-resolved declaration | 2026-10-16 |
@@ -22981,7 +22982,8 @@ same day, which is the useful part of the result.
         only, so it builds the same in session as after `save()`/`load()` and
         `with_grid(remap=True)` still finds what its arrays are on. Same pin, vertices and
         cells = identical; a grid held as a RECIPE under the key is never BUILT to be
-        compared -- it collides.
+        compared -- ~~it collides.~~ -- **RESTATED by ledger 615:** it is never
+        replaced either; the mesh goes beside it under `"<model>/<grid_pin>"`.
       - **The check builds and WRITES the import, exactly as registered, in a scratch
         directory** and compares file by file (`run_record.written_differences`, the
         ledger 611 comparison; a `LibraryReport` carries its verdict in
@@ -23011,6 +23013,15 @@ same day, which is the useful part of the result.
       **Not built:** a public `run.packages`; importing a bare MF6 folder; a
       `CalibratedInputs.to_library` return-type change (decisions: no); a one-call remap
       verb (decisions: no).
+      **Not done (the user decides refuse vs warn):** `mf.Project(root)` where a project
+      is SAVED is an empty library, and its `save()` writes `project_spec.json` with only
+      what it holds -- measured, two saved packages read back as none. It predates this
+      entry; the to_library idiom met it because the docs constructed a second
+      `Project` at the run's root. The docs, the tour notebook, the reproducers and the
+      `to_library` example now teach ONE `Project` per root -- `mf.Project.load(root)`
+      where one is saved, else `mf.Project(root, name=)` -- which also keeps a second
+      live one from hiding the first's areas of interest (ledger 312, newest wins).
+      `save()` itself is unchanged.
 
 614. **A `grid_ref` to a RECIPE is not compared with a mesh (2026-10-16).**
       `_simulation_differences` (ledger 613) labels a model's mesh `ref:<key>` when
@@ -23023,7 +23034,29 @@ same day, which is the useful part of the result.
       triangulate a mesh per call, and a recipe edited since the run is what `drift()`
       reports. **Given up:** a library model re-pointed at another RECIPE key passes this
       check; one re-pointed at another BUILT mesh is still refused.
-      **Left as designed (needs the user):** importing such a run into its OWN project
+      ~~**Left as designed (needs the user):** importing such a run into its OWN project
       collides on the grid key -- the run's recipe declared `grid_ref("vor")`, which holds
       the recipe there, and a grid key is never prefixed -- so it takes `overwrite=True`,
-      which replaces the recipe with the built mesh.
+      which replaces the recipe with the built mesh.~~ -- **RESTATED by ledger
+      615:** the recipe is never replaced; the mesh goes beside it.
+
+615. **A grid RECIPE in the library is never replaced by a run's mesh (2026-10-16).**
+      The coordinator's call on ledger 614's open question. A run declared on
+      `mf.grid_ref("vor")`, imported into a project holding a RECIPE there (a
+      `GridSpec.voronoi`), collided, and `overwrite=True` replaced the recipe with the
+      built mesh -- the project's way to make the next grid was gone. **Chosen:** the
+      recipe stays, `overwrite=True` included; the mesh the run built is registered
+      under `"<model>/<grid_pin>"` and the imported model declared on that key, and
+      `LibraryReport.kept_recipes` names both keys (`(("vor", "m/66b3935b4082e2f1"),)`).
+      In the run's own project the library's simulation, on the recipe, is then
+      `identical` (ledger 614: a recipe ref is not compared with a mesh) and
+      stays on the recipe; the mesh is registered all the same, as the record of what the
+      run ran on. A BUILT mesh under the key is the same mesh when pin, vertices and
+      cells agree (key reused) and collides otherwise, naming `overwrite=`, as before. A
+      recipe under `"<model>/<grid_pin>"` too leaves nowhere to put the mesh: `KeyError`,
+      whatever `overwrite` says.
+      **Found on the way:** a run prepared in THIS session (`project.prepare_run(...)`,
+      not reopened) holds its spec and no manifest summary block, so `package_keys` read
+      `{}` and `_declared_spec` put no library slot back as `mf.ref` -- its lazy refs
+      came back INLINE, resolved, and its declared `grid_ref` key was not seen. Both now
+      read the spec the manifest was written from (`_summary_block`, `_recipe_spec`).
